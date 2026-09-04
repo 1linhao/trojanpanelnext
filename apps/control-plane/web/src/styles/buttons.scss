@@ -1,0 +1,118 @@
+.liquid-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: var(--ui-control-size-height, 38px);
+  padding: var(--ui-control-size-padding, 8px 16px);
+  border: 1px solid var(--rim);
+  border-radius: 999px;
+  color: var(--ink);
+  background: var(--glass-input);
+  box-shadow: inset 0 1px 0 var(--spec-soft), var(--shadow-soft);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 650;
+  line-height: 1.2;
+  cursor: pointer;
+}
+@media (hover: hover) and (pointer: fine) {
+  .liquid-button:hover:not(:disabled) {
+    color: var(--accent);
+    background: var(--glass-strong);
+  }
+}
+.liquid-button.is-primary {
+  color: var(--on-accent);
+  border-color: transparent;
+  background: linear-gradient(135deg, var(--accent), var(--accent-deep));
+}
+@media (hover: hover) and (pointer: fine) {
+  .liquid-button.is-primary:hover:not(:disabled) {
+    color: var(--on-accent);
+    background: linear-gradient(135deg, var(--accent-deep), var(--accent));
+  }
+}
+.liquid-button.is-danger {
+  color: var(--bad-fg);
+  background: var(--bad-bg);
+}
+.liquid-button.is-icon-only {
+  width: 38px;
+  padding: 0;
+  border-radius: 13px;
+}
+.liquid-button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 58%, transparent);
+  outline-offset: 2px;
+}
+.liquid-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.liquid-button.is-warning {
+  color: var(--warn-fg);
+  background: var(--warn-bg);
+}
+.liquid-button.is-success {
+  color: var(--ok-fg);
+  background: var(--ok-bg);
+}
+
+/* Embedded action groups reuse the mobile navigation item contract without
+   stacking a second tinted material surface over their parent panel. */
+.liquid-tabs {
+  display: inline-flex;
+  gap: 3px;
+  padding: 7px;
+  border: 1px solid var(--ui-navigation-border);
+  border-radius: 999px;
+  background: transparent;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.liquid-tabs button,
+.liquid-code-editor__toolbar button,
+.liquid-palette-picker__menu button,
+.liquid-select__option {
+  min-height: 32px;
+  padding: 0 13px;
+  border: 0;
+  border-radius: 999px;
+  color: var(--ui-ink);
+  background: transparent;
+  box-shadow: none;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.liquid-tabs button.on,
+.liquid-palette-picker__menu button.is-selected,
+.liquid-select__option.is-selected {
+  color: var(--ui-navigation-item-selected-ink);
+  background: var(--ui-navigation-mobile-selected-bg);
+  box-shadow: var(--ui-navigation-mobile-selected-shadow);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .liquid-tabs button:hover:not(:disabled):not(.on),
+  .liquid-code-editor__toolbar button:hover:not(:disabled),
+  .liquid-palette-picker__menu button:hover:not(:disabled),
+  .liquid-select__option:hover:not(:disabled) {
+    background: var(--ui-navigation-item-hover-bg);
+  }
+}
+
+.liquid-tabs button:disabled,
+.liquid-code-editor__toolbar button:disabled,
+.liquid-palette-picker__menu button:disabled,
+.liquid-select__option:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}

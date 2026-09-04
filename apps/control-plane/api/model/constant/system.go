@@ -1,0 +1,41 @@
+package constant
+
+// 系统设置
+const (
+	// SystemName 系统名称
+	SystemName string = "trojan-panel"
+	// WebFilePath 伪装站点文件夹路径
+	WebFilePath string = "webfile"
+	// WebFileName 伪装站点文件名称
+	WebFileName string = "webfile.zip"
+	// LogPath 日志文件夹路径
+	LogPath string = "logs"
+	// ConfigPath 配置文件夹路径
+	ConfigPath   string = "config"
+	TemplatePath string = "config/template"
+	// LogoImagePath 系统logo文件路径
+	LogoImagePath string = "config/template/logo.png"
+	LogoImageUrl  string = "https://raw.githubusercontent.com/trojanpanel/trojanpanel.github.io/main/docs/logo.png"
+	// ConfigFilePath 配置文件路径
+	ConfigFilePath string = "config/config.ini"
+	// RbacModelFilePath rbac配置文件路径
+	RbacModelFilePath string = "config/rbac_model.conf"
+	// ClashTemplateFilePath Clash.Meta客户端默认模板
+	ClashTemplateFilePath string = "config/template/template-clash-meta.yaml"
+	// SingBoxTunTemplateFilePath sing-box TUN客户端模板
+	SingBoxTunTemplateFilePath string = "config/template/template-sing-box-tun.json"
+	// SingBoxOutboundTemplateFilePath sing-box仅出站模板
+	SingBoxOutboundTemplateFilePath string = "config/template/template-sing-box-outbound.json"
+	// XrayTemplateFilePath Xray模板
+	XrayTemplateFilePath string = "config/template/template-xray.json"
+
+	ExportPath               string = "config/export"
+	ExportAccountTemplate    string = "config/export/AccountTemplate.json"
+	ExportNodeServerTemplate string = "config/export/NodeServerTemplate.json"
+
+	TrojanPanelCertFilePath string = "/tpdata/trojan-panel/cert/"
+	TrojanPanelCrtFile      string = "trojan-panel.crt"
+	TrojanPanelKeyFile      string = "trojan-panel.key"
+
+	TrojanPanelVersion = "v2.3.1"
+)

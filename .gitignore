@@ -1,0 +1,7 @@
+/.artifacts/
+/.local/
+/node_modules/
+*.local
+*.local.json
+*.local.yaml
+*.local.yml

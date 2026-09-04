@@ -1,0 +1,28 @@
+// Icons are bare outlines, never miniature tiles inside a button.
+.app-icon {
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  overflow: visible;
+  vertical-align: middle;
+  color: inherit;
+}
+
+.cap.small > .app-icon,
+.liquid-input__clear .app-icon,
+.liquid-select__clear .app-icon,
+.liquid-tag .app-icon {
+  width: 18px;
+  height: 18px;
+}
+
+.app-icon--loading {
+  animation: app-icon-spin var(--ui-motion-spin) linear infinite;
+}
+
+@keyframes app-icon-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

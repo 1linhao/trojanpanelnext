@@ -1,0 +1,223 @@
+diff --git a/forwardproxy.go b/forwardproxy.go
+index f92fe25..8bb11b6 100644
+--- a/forwardproxy.go
++++ b/forwardproxy.go
+@@ -255,6 +255,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyht
+ 	if h.AuthCredentials != nil {
+ 		authErr = h.checkCredentials(r)
+ 	}
++	trafficKey := ""
++	if authErr == nil {
++		trafficKey = proxyAuthPassword(r)
++	}
+ 	if h.ProbeResistance != nil && len(h.ProbeResistance.Domain) > 0 && reqHost == h.ProbeResistance.Domain {
+ 		return serveHiddenPage(w, authErr)
+ 	}
+@@ -344,12 +348,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyht
+ 
+ 		switch r.ProtoMajor {
+ 		case 1: // http1: hijack the whole flow
+-			return serveHijack(w, targetConn)
++			return serveHijack(w, targetConn, trafficKey)
+ 		case 2: // http2: keep reading from "request" and writing into same response
+ 			fallthrough
+ 		case 3:
+ 			defer r.Body.Close()
+-			return dualStream(targetConn, r.Body, w, r.Header.Get("Padding") != "")
++			return dualStream(targetConn, r.Body, w, trafficKey, r.Header.Get("Padding") != "")
+ 		}
+ 
+ 		panic("There was a check for http version, yet it's incorrect")
+@@ -443,7 +447,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyht
+ 			fmt.Errorf("failed to read response: %v", err))
+ 	}
+ 
+-	return forwardResponse(w, response)
++	return forwardResponseWithTraffic(w, response, trafficKey)
+ }
+ 
+ func (h Handler) checkCredentials(r *http.Request) error {
+@@ -628,7 +632,7 @@ func serveHiddenPage(w http.ResponseWriter, authErr error) error {
+ 
+ // Hijacks the connection from ResponseWriter, writes the response and proxies data between targetConn
+ // and hijacked connection.
+-func serveHijack(w http.ResponseWriter, targetConn net.Conn) error {
++func serveHijack(w http.ResponseWriter, targetConn net.Conn, trafficKey string) error {
+ 	w.WriteHeader(http.StatusOK)
+ 	clientConn, brw, err := http.NewResponseController(w).Hijack()
+ 	if err != nil {
+@@ -648,7 +652,7 @@ func serveHijack(w http.ResponseWriter, targetConn net.Conn) error {
+ 			fmt.Errorf("failed to flush to client: %v", err))
+ 	}
+ 
+-	return dualStream(targetConn, clientConn, clientConn, false)
++	return dualStream(targetConn, clientConn, clientConn, trafficKey, false)
+ }
+ 
+ const (
+@@ -661,26 +665,36 @@ const (
+ // Copies data target->clientReader and clientWriter->target, and flushes as needed
+ // Returns when clientWriter-> target stream is done.
+ // Caddy should finish writing target -> clientReader.
+-func dualStream(target net.Conn, clientReader io.ReadCloser, clientWriter io.Writer, padding bool) error {
+-	stream := func(w io.Writer, r io.Reader, paddingType int) error {
++func dualStream(target net.Conn, clientReader io.ReadCloser, clientWriter io.Writer, trafficKey string, padding bool) error {
++	stream := func(w io.Writer, r io.Reader, paddingType int) (int64, error) {
+ 		// copy bytes from r to w
+ 		bufPtr := bufferPool.Get().(*[]byte)
+ 		buf := *bufPtr
+ 		buf = buf[0:cap(buf)]
+-		_, _err := flushingIoCopy(w, r, buf, paddingType)
++		written, _err := flushingIoCopy(w, r, buf, paddingType)
+ 		bufferPool.Put(bufPtr)
+ 
+ 		if cw, ok := w.(closeWriter); ok {
+ 			_ = cw.CloseWrite()
+ 		}
+-		return _err
++		return written, _err
+ 	}
+ 	if padding {
+-		go stream(target, clientReader, RemovePadding)
+-		return stream(clientWriter, target, AddPadding)
++		go func() {
++			written, _ := stream(target, clientReader, RemovePadding)
++			recordTraffic(trafficKey, 0, uint64(written))
++		}()
++		written, err := stream(clientWriter, target, AddPadding)
++		recordTraffic(trafficKey, uint64(written), 0)
++		return err
+ 	}
+-	go stream(target, clientReader, NoPadding) //nolint: errcheck
+-	return stream(clientWriter, target, NoPadding)
++	go func() {
++		written, _ := stream(target, clientReader, NoPadding)
++		recordTraffic(trafficKey, 0, uint64(written))
++	}()
++	written, err := stream(clientWriter, target, NoPadding)
++	recordTraffic(trafficKey, uint64(written), 0)
++	return err
+ }
+ 
+ type closeWriter interface {
+@@ -762,6 +776,10 @@ func flushingIoCopy(dst io.Writer, src io.Reader, buf []byte, paddingType int) (
+ 
+ // Removes hop-by-hop headers, and writes response into ResponseWriter.
+ func forwardResponse(w http.ResponseWriter, response *http.Response) error {
++	return forwardResponseWithTraffic(w, response, "")
++}
++
++func forwardResponseWithTraffic(w http.ResponseWriter, response *http.Response, trafficKey string) error {
+ 	w.Header().Del("Server") // remove Server: Caddy, append via instead
+ 	w.Header().Add("Via", strconv.Itoa(response.ProtoMajor)+"."+strconv.Itoa(response.ProtoMinor)+" caddy")
+ 
+@@ -775,7 +793,8 @@ func forwardResponse(w http.ResponseWriter, response *http.Response) error {
+ 	bufPtr := bufferPool.Get().(*[]byte)
+ 	buf := *bufPtr
+ 	buf = buf[0:cap(buf)]
+-	_, err := io.CopyBuffer(w, response.Body, buf)
++	written, err := io.CopyBuffer(w, response.Body, buf)
++	recordTraffic(trafficKey, uint64(written), 0)
+ 	bufferPool.Put(bufPtr)
+ 	return err
+ }
+diff --git a/trojan_panel_traffic.go b/trojan_panel_traffic.go
+new file mode 100644
+index 0000000..4b48e29
+--- /dev/null
++++ b/trojan_panel_traffic.go
+@@ -0,0 +1,94 @@
++package forwardproxy
++
++import (
++	"encoding/base64"
++	"encoding/json"
++	"net/http"
++	"strings"
++	"sync"
++
++	caddy "github.com/caddyserver/caddy/v2"
++)
++
++func init() {
++	caddy.RegisterModule(TrafficAPI{})
++}
++
++type TrafficAPI struct{}
++
++func (TrafficAPI) CaddyModule() caddy.ModuleInfo {
++	return caddy.ModuleInfo{
++		ID:  "admin.api.trojan_panel_naiveproxy_traffic",
++		New: func() caddy.Module { return new(TrafficAPI) },
++	}
++}
++
++func (TrafficAPI) Routes() []caddy.AdminRoute {
++	return []caddy.AdminRoute{{
++		Pattern: "/trojan-panel/naiveproxy/traffic",
++		Handler: caddy.AdminHandlerFunc(func(w http.ResponseWriter, r *http.Request) error {
++			if r.Method != http.MethodGet {
++				w.WriteHeader(http.StatusMethodNotAllowed)
++				return nil
++			}
++			reset := r.URL.Query().Get("reset") == "true"
++			w.Header().Set("Content-Type", "application/json")
++			return json.NewEncoder(w).Encode(trafficSnapshot(reset))
++		}),
++	}}
++}
++
++type userTraffic struct {
++	Rx uint64 `json:"rx"`
++	Tx uint64 `json:"tx"`
++}
++
++var trafficCounters = struct {
++	sync.Mutex
++	users map[string]userTraffic
++}{
++	users: make(map[string]userTraffic),
++}
++
++func recordTraffic(key string, rx uint64, tx uint64) {
++	if key == "" || (rx == 0 && tx == 0) {
++		return
++	}
++	trafficCounters.Lock()
++	defer trafficCounters.Unlock()
++	traffic := trafficCounters.users[key]
++	traffic.Rx += rx
++	traffic.Tx += tx
++	trafficCounters.users[key] = traffic
++}
++
++func trafficSnapshot(reset bool) map[string]userTraffic {
++	trafficCounters.Lock()
++	defer trafficCounters.Unlock()
++	snapshot := make(map[string]userTraffic, len(trafficCounters.users))
++	for key, traffic := range trafficCounters.users {
++		snapshot[key] = traffic
++	}
++	if reset {
++		trafficCounters.users = make(map[string]userTraffic)
++	}
++	return snapshot
++}
++
++func proxyAuthPassword(r *http.Request) string {
++	parts := strings.SplitN(r.Header.Get("Proxy-Authorization"), " ", 2)
++	if len(parts) != 2 || strings.ToLower(parts[0]) != "basic" {
++		return ""
++	}
++	decoded, err := base64.StdEncoding.DecodeString(parts[1])
++	if err != nil {
++		return ""
++	}
++	credentials := string(decoded)
++	index := strings.IndexByte(credentials, ':')
++	if index < 0 || index+1 >= len(credentials) {
++		return ""
++	}
++	return credentials[index+1:]
++}
++var _ caddy.AdminRouter = (*TrafficAPI)(nil)

@@ -1,0 +1,51 @@
+:root {
+  --ui-button-hover-lift: -3px;
+  --ui-button-press-scale: 0.97;
+}
+
+[data-ui-interaction='nav-lift'] {
+  transition-property: transform, box-shadow, background-color, border-color,
+    color;
+  transition-duration: var(--ui-motion-slow, 300ms);
+  transition-timing-function: var(
+    --ui-motion-easing-emphasized,
+    cubic-bezier(0.2, 0.8, 0.2, 1)
+  );
+  will-change: transform;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  [data-ui-interaction='nav-lift']:not(:disabled):not(
+      [aria-disabled='true']
+    )[data-ui-hovered='true'] {
+    transform: translateY(var(--ui-button-hover-lift));
+    box-shadow: var(
+      --ui-button-interaction-shadow,
+      var(--ui-surface-shadow, none)
+    );
+  }
+}
+
+[data-ui-interaction='nav-lift']:not(:disabled):not(
+    [aria-disabled='true']
+  ):active {
+  transform: scale(var(--ui-button-press-scale));
+}
+
+:root[data-ui-motion='reduced'] {
+  --ui-button-hover-lift: 0px;
+  --ui-button-press-scale: 1;
+}
+
+:root[data-ui-motion='none'] {
+  --ui-button-hover-lift: 0px;
+  --ui-button-press-scale: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-ui-motion]) [data-ui-interaction='nav-lift'] {
+    transition-duration: 1ms;
+    --ui-button-hover-lift: 0px;
+    --ui-button-press-scale: 1;
+  }
+}

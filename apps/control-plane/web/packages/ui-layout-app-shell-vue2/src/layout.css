@@ -1,0 +1,302 @@
+.tp-ui-shell {
+  position: relative;
+  z-index: 1;
+  min-height: 100vh;
+  color: var(--ui-ink);
+  background: var(--ui-canvas-bg);
+}
+
+.tp-ui-shell__topbar {
+  border: 1px solid var(--ui-surface-border);
+  background: var(--ui-surface-bg);
+  box-shadow: var(--ui-surface-shadow);
+  -webkit-backdrop-filter: var(--ui-surface-backdrop);
+  backdrop-filter: var(--ui-surface-backdrop);
+}
+
+.tp-ui-shell__side {
+  position: fixed;
+  z-index: 30;
+  top: 1rem;
+  bottom: 1rem;
+  left: 1rem;
+  display: flex;
+  flex-direction: column;
+  width: 14.75rem;
+  padding: 1.25rem 0.875rem 0.875rem;
+  border: 1px solid var(--ui-navigation-border);
+  border-radius: 2rem;
+  background: var(--ui-navigation-bg);
+  box-shadow: var(--ui-navigation-shadow);
+  -webkit-backdrop-filter: var(--ui-navigation-backdrop);
+  backdrop-filter: var(--ui-navigation-backdrop);
+  overflow-x: clip;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+
+.tp-ui-shell__side::-webkit-scrollbar,
+.tp-ui-shell__mobile-nav::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.tp-ui-shell__brand,
+.tp-ui-shell__nav-item,
+.tp-ui-shell__user {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.tp-ui-shell__brand {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0 0.5rem 1.125rem;
+  text-align: left;
+}
+
+.tp-ui-shell__brand-mark {
+  display: grid;
+  width: 2.625rem;
+  height: 2.625rem;
+  flex: 0 0 2.625rem;
+  place-items: center;
+  border-radius: 0.875rem;
+  background: var(--ui-accent);
+  color: var(--ui-on-accent);
+  font-size: 1.25rem;
+  font-weight: 800;
+}
+
+.tp-ui-shell__brand strong,
+.tp-ui-shell__brand small {
+  display: block;
+}
+
+.tp-ui-shell__brand strong {
+  font-size: 0.9375rem;
+  letter-spacing: -0.01em;
+}
+
+.tp-ui-shell__brand small {
+  margin-top: var(--ui-space-1);
+  color: var(--ui-ink-muted);
+  font-size: 0.7rem;
+}
+
+.tp-ui-shell__nav-label {
+  margin: 0.625rem 0 0.125rem;
+  padding: 0 0.625rem;
+  color: var(--ui-ink-muted);
+  font-size: 0.65625rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+
+.tp-ui-shell__nav-item {
+  display: flex;
+  align-items: center;
+  gap: 0.6875rem;
+  width: 100%;
+  min-height: 2.5rem;
+  margin: 0.125rem 0;
+  padding: 0 0.75rem;
+  border-radius: 0.875rem;
+  color: var(--ui-ink);
+  font-size: 0.84375rem;
+  font-weight: 600;
+  text-align: left;
+}
+
+.tp-ui-shell__nav-item:hover:not(:disabled) {
+  background: var(--ui-navigation-item-hover-bg);
+}
+
+.tp-ui-shell__nav-item.is-active {
+  color: var(--ui-navigation-item-selected-ink);
+  background: var(--ui-navigation-item-selected-bg);
+  box-shadow: var(--ui-navigation-item-selected-shadow);
+}
+
+.tp-ui-shell__nav-item:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.tp-ui-shell__nav-icon {
+  display: grid;
+  width: 1.25rem;
+  height: 1.25rem;
+  flex: 0 0 1.25rem;
+  place-items: center;
+}
+
+.tp-ui-shell__nav-icon > * {
+  width: 100%;
+  height: 100%;
+}
+
+.tp-ui-shell__main {
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+  min-height: 100vh;
+  margin-left: 16.75rem;
+  padding: 1rem 1.25rem 6.875rem;
+}
+
+.tp-ui-shell__topbar {
+  position: sticky;
+  z-index: 20;
+  top: 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.875rem;
+  max-width: 91.25rem;
+  min-height: 0;
+  margin: 0 auto 1.25rem;
+  padding: 0.75rem 1.125rem;
+  border-radius: 999px;
+}
+
+.tp-ui-shell__topbar h1 {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  font-size: 1.1875rem;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tp-ui-shell__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-space-2);
+  margin-left: auto;
+}
+
+.tp-ui-shell__user {
+  width: 100%;
+  padding: var(--ui-space-2) var(--ui-space-3);
+  border-radius: var(--ui-radius-md);
+}
+
+.tp-ui-shell__content {
+  display: grid;
+  gap: 1.125rem;
+  max-width: 91.25rem;
+  min-width: 0;
+  margin: 0 auto;
+}
+
+.tp-ui-shell__mobile-nav {
+  display: none;
+}
+
+@media (max-width: 1060px) {
+  .tp-ui-shell__side {
+    display: none;
+  }
+
+  .tp-ui-shell__main {
+    margin-left: 0;
+  }
+
+  .tp-ui-shell__mobile-nav {
+    position: fixed;
+    z-index: 40;
+    right: 0.75rem;
+    bottom: 0.75rem;
+    left: 0.75rem;
+    display: flex;
+    justify-content: flex-start;
+    gap: 0.1875rem;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 0.4375rem;
+    border: 1px solid var(--ui-navigation-border);
+    border-radius: 999px;
+    background: var(--ui-navigation-mobile-bg);
+    box-shadow: var(--ui-navigation-shadow);
+    -webkit-backdrop-filter: var(--ui-navigation-mobile-backdrop);
+    backdrop-filter: var(--ui-navigation-mobile-backdrop);
+    overscroll-behavior-x: contain;
+    scroll-behavior: var(--ui-motion-scroll-behavior, auto);
+    scrollbar-width: none;
+    touch-action: pan-x;
+  }
+
+  .tp-ui-shell__mobile-nav .tp-ui-shell__nav-item {
+    display: grid;
+    flex: 1 1 0;
+    gap: 0.125rem;
+    min-width: 0;
+    min-height: 0;
+    margin: 0;
+    padding: 0.3125rem 0.25rem;
+    place-items: center;
+    border-radius: 999px;
+    scroll-snap-align: center;
+    text-align: center;
+  }
+
+  .tp-ui-shell__mobile-nav.is-scrollable .tp-ui-shell__nav-item {
+    flex: 1 0 3.875rem;
+    min-width: 3.875rem;
+  }
+
+  .tp-ui-shell__mobile-nav .tp-ui-shell__nav-item.is-active {
+    background: var(--ui-navigation-mobile-selected-bg);
+    box-shadow: var(--ui-navigation-mobile-selected-shadow);
+  }
+
+  .tp-ui-shell__mobile-nav .tp-ui-shell__nav-icon {
+    width: 1.5rem;
+    height: 1.5rem;
+    flex-basis: 1.5rem;
+  }
+
+  .tp-ui-shell__mobile-nav .tp-ui-shell__nav-item > span:last-child {
+    font-size: 0.5625rem;
+    font-weight: 700;
+  }
+}
+
+@media (min-width: 1061px) {
+  .tp-ui-shell__mobile-nav {
+    display: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .tp-ui-shell__main {
+    padding: 0.75rem 0.75rem 6.5rem;
+  }
+
+  .tp-ui-shell__topbar {
+    top: 0.75rem;
+    gap: var(--ui-space-2);
+    margin-bottom: 0.875rem;
+    padding: 0.625rem 0.75rem;
+  }
+
+  .tp-ui-shell__actions {
+    gap: 0.3125rem;
+  }
+}
+
+@media (max-width: 720px) {
+  .tp-ui-shell__topbar {
+    flex-wrap: wrap;
+    border-radius: 1.5rem;
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "sourceRef": "444822da8c8c3aff7635607409b980e9aaf3bf8c",
+  "components": [
+    {
+      "name": "trojan-panel",
+      "sourcePath": "trojan-panel",
+      "targetPath": "apps/control-plane/api",
+      "repository": "git@github.com:1linhao/trojan-panel.git",
+      "importPolicy": "sanitize",
+      "expectedImportedFiles": 191
+    },
+    {
+      "name": "trojan-panel-ui",
+      "sourcePath": "trojan-panel-ui",
+      "targetPath": "apps/control-plane/web",
+      "repository": "git@github.com:1linhao/trojan-panel-ui.git",
+      "importPolicy": "exact",
+      "expectedImportedFiles": 214
+    },
+    {
+      "name": "trojan-panel-core",
+      "sourcePath": "trojan-panel-core",
+      "targetPath": "apps/node-agent",
+      "repository": "git@github.com:1linhao/trojan-panel-core.git",
+      "importPolicy": "exact",
+      "expectedImportedFiles": 106
+    },
+    {
+      "name": "trojan-panel-install-script",
+      "sourcePath": "trojan-panel-install-script",
+      "targetPath": "deploy/installer",
+      "repository": "git@github.com:1linhao/trojan-panel-install-script.git",
+      "importPolicy": "sanitize",
+      "expectedImportedFiles": 25
+    },
+    {
+      "name": "trojanpanel.github.io",
+      "sourcePath": "trojanpanel.github.io",
+      "targetPath": "apps/docs-site",
+      "repository": "git@github.com:1linhao/trojanpanel.github.io.git",
+      "importPolicy": "sanitize",
+      "expectedImportedFiles": 46
+    }
+  ]
+}

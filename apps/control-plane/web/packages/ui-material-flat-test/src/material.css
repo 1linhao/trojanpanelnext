@@ -1,0 +1,69 @@
+:root[data-ui-material='flat-test'] {
+  color-scheme: light;
+  --ui-canvas-bg: #ffffff;
+  --ui-surface-bg: #ffffff;
+  --ui-surface-border: #161616;
+  --ui-surface-shadow: 4px 4px 0 #161616;
+  --ui-surface-backdrop: none;
+  --ui-ink: #111111;
+  --ui-ink-muted: #4c4c4c;
+  --ui-accent: #0057d9;
+  --ui-on-accent: #ffffff;
+  --ui-focus-ring: #ff2da0;
+  --ui-control-bg: #ffffff;
+  --ui-control-border: #161616;
+  --ui-control-height: 2.6rem;
+  --ui-button-interaction-shadow: 3px 3px 0 var(--ui-surface-border);
+  --ui-dialog-bg: var(--ui-surface-bg);
+  --ui-dialog-border: var(--ui-surface-border);
+  --ui-dialog-control-bg: var(--ui-control-bg);
+  --ui-dialog-control-border: var(--ui-control-border);
+  --ui-dialog-divider: var(--ui-surface-border);
+  --ui-dialog-ink: var(--ui-ink);
+  --ui-dialog-material-backdrop: none;
+  --ui-dialog-shadow: var(--ui-surface-shadow);
+  --ui-navigation-backdrop: none;
+  --ui-navigation-bg: var(--ui-surface-bg);
+  --ui-navigation-border: var(--ui-surface-border);
+  --ui-navigation-item-hover-bg: #e8e8e8;
+  --ui-navigation-item-selected-bg: var(--ui-accent);
+  --ui-navigation-item-selected-ink: var(--ui-on-accent);
+  --ui-navigation-item-selected-shadow: none;
+  --ui-navigation-mobile-backdrop: none;
+  --ui-navigation-mobile-bg: var(--ui-navigation-bg);
+  --ui-navigation-mobile-selected-bg: var(--ui-accent);
+  --ui-navigation-mobile-selected-shadow: none;
+  --ui-navigation-shadow: var(--ui-surface-shadow);
+  --ui-overlay-backdrop-bg: rgba(0, 0, 0, 0.42);
+  --ui-overlay-material-backdrop: none;
+  --ui-radius-sm: 0;
+  --ui-radius-md: 0;
+  --ui-radius-lg: 0;
+  --ui-overlay-z: 2000;
+}
+
+:root[data-ui-material='flat-test'][data-theme='dark'] {
+  color-scheme: dark;
+  --ui-canvas-bg: #0d0d0d;
+  --ui-surface-bg: #161616;
+  --ui-surface-border: #f2f2f2;
+  --ui-surface-shadow: 4px 4px 0 #f2f2f2;
+  --ui-ink: #ffffff;
+  --ui-ink-muted: #c7c7c7;
+  --ui-control-bg: #0d0d0d;
+  --ui-control-border: #f2f2f2;
+  --ui-navigation-item-hover-bg: #303030;
+  --ui-on-accent: #ffffff;
+}
+
+:root[data-ui-material='flat-test'][data-palette='violet'] {
+  --ui-accent: #6f2cff;
+}
+
+:root[data-ui-material='flat-test'][data-palette='emerald'] {
+  --ui-accent: #007a52;
+}
+
+:root[data-ui-material='flat-test'][data-palette='amber'] {
+  --ui-accent: #b85c00;
+}

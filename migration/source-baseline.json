@@ -1,0 +1,90 @@
+{
+  "schemaVersion": 1,
+  "historyPolicy": "security-sanitized-snapshot-without-parents",
+  "capturedAt": "2026-09-04T18:02:27+08:00",
+  "workspace": {
+    "repository": "git@github.com:1linhao/trojanpanel-fork.git",
+    "commit": "444822da8c8c3aff7635607409b980e9aaf3bf8c",
+    "tree": "43bc23cb20d959d97647967e495a380de29b2493",
+    "committedAt": "2026-09-04T12:34:50+08:00"
+  },
+  "sources": [
+    {
+      "name": "trojan-panel",
+      "sourcePath": "trojan-panel",
+      "targetPath": "apps/control-plane/api",
+      "repository": "git@github.com:1linhao/trojan-panel.git",
+      "commit": "38c02c60eb200dbf19c971f7e607ba5e87f1fb30",
+      "tree": "e3a1ecd1f1d8673a8263af0e544ed34599891ae0",
+      "files": 191,
+      "importPolicy": "sanitize",
+      "expectedImportedFiles": 191
+    },
+    {
+      "name": "trojan-panel-ui",
+      "sourcePath": "trojan-panel-ui",
+      "targetPath": "apps/control-plane/web",
+      "repository": "git@github.com:1linhao/trojan-panel-ui.git",
+      "commit": "3b51f722158e6f38cde34e2060399ed2f83faba6",
+      "tree": "5f27ce122b37b016d12b4763e937ea6817bb79a7",
+      "files": 214,
+      "importPolicy": "exact",
+      "expectedImportedFiles": 214
+    },
+    {
+      "name": "trojan-panel-core",
+      "sourcePath": "trojan-panel-core",
+      "targetPath": "apps/node-agent",
+      "repository": "git@github.com:1linhao/trojan-panel-core.git",
+      "commit": "54581b1395bd41279de3027e46beb67351393fe0",
+      "tree": "4b59464317c429cd98e12d01f3613ae906242c93",
+      "files": 106,
+      "importPolicy": "exact",
+      "expectedImportedFiles": 106
+    },
+    {
+      "name": "trojan-panel-install-script",
+      "sourcePath": "trojan-panel-install-script",
+      "targetPath": "deploy/installer",
+      "repository": "git@github.com:1linhao/trojan-panel-install-script.git",
+      "commit": "39ba03a5df8312e88ac7493eb52db88764b4bd03",
+      "tree": "eeeb65d107eb86af43099453b8f30ce220bc6a0e",
+      "files": 25,
+      "importPolicy": "sanitize",
+      "expectedImportedFiles": 25
+    },
+    {
+      "name": "trojanpanel.github.io",
+      "sourcePath": "trojanpanel.github.io",
+      "targetPath": "apps/docs-site",
+      "repository": "git@github.com:1linhao/trojanpanel.github.io.git",
+      "commit": "a5517b1416ac5cc5e858e267d409bf2213ccfc20",
+      "tree": "e73e734bce18fff48e4fb2176a7c890708ef3f6e",
+      "files": 114,
+      "importPolicy": "sanitize",
+      "expectedImportedFiles": 46
+    }
+  ],
+  "totalSourceFiles": 650,
+  "totalImportedFiles": 582,
+  "sanitization": {
+    "schemaVersion": 1,
+    "policy": "security-sanitized-snapshot",
+    "replacements": {
+      "apiFixtureJwt": 2,
+      "docsJwt": 1,
+      "docsPrivateKeys": 3,
+      "docsPasswords": 1,
+      "installerAllowMarker": 1
+    },
+    "exclusions": {
+      "generatedDocsPath": "apps/docs-site/docs",
+      "removedGeneratedDocs": 68
+    }
+  },
+  "tooling": {
+    "map": "migration/tooling/snapshot-map.json",
+    "sanitizer": "migration/tooling/sanitize-snapshot.mjs",
+    "generator": "migration/tooling/create-snapshot"
+  }
+}

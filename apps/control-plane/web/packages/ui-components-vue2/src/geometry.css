@@ -1,0 +1,189 @@
+.tp-ui-button,
+.tp-ui-input {
+  box-sizing: border-box;
+  min-height: var(--ui-control-size-height, var(--ui-control-height));
+  border: 1px solid var(--ui-control-border);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-control-bg);
+  color: var(--ui-ink);
+  font: inherit;
+}
+
+.tp-ui-input {
+  transition: transform var(--ui-motion-fast),
+    border-color var(--ui-motion-fast), box-shadow var(--ui-motion-fast);
+}
+
+.tp-ui-panel,
+.tp-ui-sheet,
+.tp-ui-dialog {
+  box-sizing: border-box;
+}
+
+.tp-ui-panel,
+.tp-ui-sheet {
+  position: relative;
+  isolation: isolate;
+  border: 1px solid var(--ui-surface-border);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface-bg);
+  box-shadow: var(--ui-surface-shadow);
+  -webkit-backdrop-filter: var(--ui-surface-backdrop);
+  backdrop-filter: var(--ui-surface-backdrop);
+}
+
+/* The motion adapter enables this only around a view-transition capture and
+   removes it on completion. Idle surfaces must not become backdrop roots. */
+[data-ui-view-transitions='active'] .tp-ui-panel,
+[data-ui-view-transitions='active'] .tp-ui-sheet,
+[data-ui-view-transitions='active'] .tp-ui-dialog {
+  view-transition-name: var(--ui-view-transition-name, none);
+}
+
+.tp-ui-panel__body,
+.tp-ui-sheet__body {
+  display: contents;
+}
+
+.tp-ui-dialog-layer {
+  position: fixed;
+  inset: 0;
+  z-index: var(--ui-overlay-z, 5000);
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  box-sizing: border-box;
+  overscroll-behavior: contain;
+  background: var(--ui-overlay-backdrop-bg, transparent);
+  -webkit-backdrop-filter: var(--ui-overlay-backdrop-filter, var(--ui-overlay-material-backdrop, none));
+  backdrop-filter: var(--ui-overlay-backdrop-filter, var(--ui-overlay-material-backdrop, none));
+}
+
+.tp-ui-dialog {
+  display: flex;
+  flex-direction: column;
+  width: var(--ui-dialog-width, 720px);
+  max-width: 100%;
+  max-height: min(90dvh, 920px);
+  min-height: 0;
+  overflow: hidden;
+  border-radius: var(--ui-dialog-radius, 24px);
+  border: 1px solid var(--ui-dialog-border, var(--ui-surface-border));
+  color: var(--ui-dialog-ink, var(--ui-ink));
+  background: var(--ui-dialog-bg, var(--ui-surface-bg));
+  box-shadow: var(--ui-dialog-shadow, var(--ui-surface-shadow));
+  -webkit-backdrop-filter: var(--ui-dialog-backdrop, var(--ui-dialog-material-backdrop, var(--ui-surface-backdrop)));
+  backdrop-filter: var(--ui-dialog-backdrop, var(--ui-dialog-material-backdrop, var(--ui-surface-backdrop)));
+  outline: none;
+}
+.tp-ui-dialog__header {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 62px;
+  padding: 18px 22px;
+  border-bottom: 1px solid var(--ui-dialog-divider, var(--ui-surface-border));
+}
+.tp-ui-dialog__title { font-size: 18px; font-weight: 700; overflow-wrap: anywhere; }
+.tp-ui-dialog__close {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 11px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  border: 1px solid var(--ui-dialog-control-border, var(--ui-control-border));
+  color: inherit;
+  background: var(--ui-dialog-control-bg, var(--ui-control-bg));
+}
+.tp-ui-dialog__body {
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 22px;
+}
+.tp-ui-dialog__footer {
+  flex: 0 0 auto;
+  padding: 16px 22px 20px;
+  border-top: 1px solid var(--ui-dialog-divider, var(--ui-surface-border));
+}
+
+@media (max-width: 760px) {
+  .tp-ui-dialog-layer {
+    padding: max(10px, env(safe-area-inset-top)) 10px
+      max(10px, env(safe-area-inset-bottom));
+  }
+  .tp-ui-dialog {
+    width: 100%;
+    max-height: calc(100dvh - max(10px, env(safe-area-inset-top)) - max(10px, env(safe-area-inset-bottom)));
+    border-radius: var(--ui-dialog-mobile-radius, 22px);
+  }
+  .tp-ui-dialog__body { padding: 18px; }
+}
+
+.tp-ui-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ui-space-2);
+  padding: var(--ui-control-size-padding, 0 var(--ui-space-4));
+  cursor: pointer;
+}
+
+.tp-ui-input {
+  width: 100%;
+  padding: 0 var(--ui-space-3);
+  outline: none;
+}
+
+.tp-ui-button:focus-visible,
+.tp-ui-input:focus-visible {
+  box-shadow: 0 0 0 3px var(--ui-focus-ring);
+}
+
+.tp-ui-button[data-ui-tone='accent'] {
+  background: var(--ui-accent);
+  border-color: var(--ui-accent);
+  color: var(--ui-on-accent);
+}
+
+.tp-ui-button:disabled,
+.tp-ui-input:disabled {
+  cursor: not-allowed;
+  opacity: 0.56;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-ui-motion]) .tp-ui-button,
+  :root:not([data-ui-motion]) .tp-ui-input {
+    transition-duration: 0s;
+  }
+}
+.tp-ui-button[data-ui-size='sm'],
+.tp-ui-input[data-ui-size='sm'],
+[data-ui-control][data-ui-size='sm'] {
+  --ui-control-size-height: 32px;
+  --ui-control-size-padding: 0 12px;
+  --ui-control-size-padding-y: 0;
+  --ui-control-size-padding-x: 12px;
+}
+.tp-ui-button[data-ui-size='lg'],
+.tp-ui-input[data-ui-size='lg'],
+[data-ui-control][data-ui-size='lg'] {
+  --ui-control-size-height: 48px;
+  --ui-control-size-padding: 0 20px;
+  --ui-control-size-padding-y: 0;
+  --ui-control-size-padding-x: 20px;
+}
+
+[data-ui-control][data-ui-size='md'] {
+  --ui-control-size-padding-y: 0;
+  --ui-control-size-padding-x: 14px;
+}

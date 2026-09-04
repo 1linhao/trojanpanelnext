@@ -1,0 +1,66 @@
+/* Shared frosted surfaces; component geometry and motion live in their own layers. */
+
+html,
+body,
+#app {
+  min-height: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+  color: var(--ink);
+  background: var(--bg-base);
+  font-family: var(--font);
+}
+
+body {
+  transition: color var(--ui-motion-normal) var(--ui-motion-easing-standard), background var(--ui-motion-normal) var(--ui-motion-easing-standard);
+}
+
+#app > :not(.ambient) {
+  position: relative;
+  z-index: 1;
+}
+
+#app .app-container,
+#app .dashboard-container {
+  position: relative;
+  padding: 24px;
+  color: var(--ink);
+  background: transparent;
+}
+
+.auth-theme-toggle {
+  position: fixed;
+  z-index: 10;
+  top: 22px;
+  right: 22px;
+}
+
+.liquid-theme-toggle {
+  display: inline-grid;
+  place-items: center;
+  width: 38px;
+  min-width: 38px;
+  height: 38px;
+  padding: 0;
+  border: 1px solid var(--rim);
+  border-radius: 50%;
+  color: var(--ink-2);
+  background: var(--glass-input);
+  box-shadow: inset 0 1px 0 var(--spec), var(--shadow-soft);
+  -webkit-backdrop-filter: var(--ui-backdrop-control);
+  backdrop-filter: var(--ui-backdrop-control);
+  font-size: 19px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.liquid-theme-toggle:hover {
+  color: var(--accent);
+}
+
+@media (max-width: 992px) {
+  #app .app-container,
+  #app .dashboard-container {
+    padding: 16px 6px;
+  }
+}

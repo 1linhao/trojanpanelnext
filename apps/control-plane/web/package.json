@@ -1,0 +1,80 @@
+{
+  "name": "trojan-panel",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Trojan Panel UI",
+  "author": "jonssonyan <https://jonssonyan.com>",
+  "workspaces": [
+    "packages/*",
+    "examples/*"
+  ],
+  "scripts": {
+    "preserve": "node scripts/build-ui-packages.mjs",
+    "serve": "vite",
+    "prebuild": "node scripts/build-ui-packages.mjs",
+    "build": "vite build",
+    "lint": "eslint --ext .js,.vue src tests/ui-cleanup.test.js",
+    "lint:kernel-upgrade": "eslint --ext .js,.vue src/api/kernel-upgrade.js src/lang/en.js src/lang/index.js src/lang/zh.js src/router/index.js src/views/node-server/list/compoments/NodeServerForm.vue src/views/node-server/list/index.vue src/views/kernel-upgrade",
+    "lint:prettier": "prettier --write \"**/*.{js,cjs,ts,json,tsx,css,less,scss,vue,html,md}\"",
+    "test:ui-libraries": "node scripts/check-ui-workspace.mjs",
+    "test:ui-cleanup": "node --test tests/ui-cleanup.test.js",
+    "build:ui-labs": "node scripts/build-ui-labs.mjs",
+    "serve:ui-labs": "node scripts/serve-ui-labs.mjs",
+    "test:ui-labs:e2e": "node tests/ui-labs.e2e.js",
+    "test:live-stack:e2e": "node tests/live-stack.e2e.js",
+    "test:dashboard-traffic:e2e": "node tests/dashboard-traffic-date.e2e.js",
+    "test:ui-style:e2e": "node tests/ui-style-regression.e2e.js",
+    "preview": "vite preview",
+    "test:vite-proxy": "node --test tests/vite-proxy.test.mjs"
+  },
+  "dependencies": {
+    "axios": "0.25.0",
+    "copy-to-clipboard": "^3.3.3",
+    "core-js": "3.20.3",
+    "js-cookie": "3.0.1",
+    "js-yaml": "^3.14.1",
+    "normalize.css": "7.0.0",
+    "nprogress": "0.2.0",
+    "vue": "2.7.16",
+    "vue-i18n": "7.3.2",
+    "vue-router": "3.5.3",
+    "vuex": "3.6.2"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.28.0",
+    "@babel/plugin-transform-modules-commonjs": "^7.27.1",
+    "@vitejs/plugin-vue2": "2.3.4",
+    "eslint": "^7.32.0",
+    "eslint-plugin-vue": "^8.3.0",
+    "javascript-obfuscator": "^4.0.0",
+    "prettier": "^2.5.1",
+    "sass": "1.103.1",
+    "stylelint": "16.23.1",
+    "vite": "7.3.6"
+  },
+  "eslintConfig": {
+    "root": true,
+    "env": {
+      "node": true,
+      "browser": true,
+      "es2021": true
+    },
+    "extends": [
+      "plugin:vue/essential",
+      "eslint:recommended"
+    ],
+    "parserOptions": {
+      "ecmaVersion": 2021,
+      "sourceType": "module"
+    },
+    "rules": {}
+  },
+  "browserslist": [
+    "> 1%",
+    "last 2 versions",
+    "not dead"
+  ],
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  }
+}

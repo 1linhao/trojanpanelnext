@@ -1,0 +1,79 @@
+.liquid-table {
+  border-radius: var(--r-md);
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--ink);
+  background: transparent;
+}
+.liquid-table__definitions { display: none; }
+
+.liquid-table__scroll {
+  width: 100%;
+  overflow: auto;
+  scrollbar-gutter: stable both-edges;
+  overscroll-behavior-x: contain;
+}
+
+.liquid-table table {
+  width: 100%;
+  min-width: max-content;
+  border-collapse: separate;
+  border-spacing: 0;
+  table-layout: fixed;
+}
+
+.liquid-table th,
+.liquid-table td {
+  min-width: 90px;
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--hairline);
+  vertical-align: middle;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.liquid-table th {
+  color: var(--table-header-ink);
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  background: transparent;
+}
+
+.liquid-table tbody tr:hover td { background: var(--glass-soft); }
+.liquid-table.is-bordered th,
+.liquid-table.is-bordered td { border-right: 1px solid var(--hairline); }
+.liquid-table__empty-row td { height: 92px; text-align: center; color: var(--ink-2); }
+
+.liquid-form { width: 100%; }
+.liquid-form-item { position: relative; display: flex; flex-direction: column; align-items: stretch; width: 100%; min-height: 42px; margin: 0 0 20px; }
+.liquid-form-item::after { display: block; clear: both; content: ''; }
+.liquid-form-item__label { display: block; width: 100%; min-height: auto; padding: 0 0 7px; color: var(--ink); font-size: 14px; line-height: 22px; text-align: left; }
+.liquid-form-item__content { position: relative; min-width: 0; min-height: 42px; margin-left: 0; line-height: normal; }
+.liquid-form-item__error { padding-top: 4px; color: var(--bad-fg); font-size: 12px; line-height: 18px; }
+.liquid-form.is-label-left .liquid-form-item__label { text-align: left; }
+.liquid-form.is-label-right .liquid-form-item__label { text-align: left; }
+.liquid-form.is-label-top .liquid-form-item__label { padding: 0 0 7px; text-align: left; }
+
+.liquid-descriptions { display: grid; gap: 1px; overflow: hidden; border-radius: 14px; background: var(--hairline); }
+.liquid-descriptions__item { min-width: 0; background: var(--glass); }
+.liquid-descriptions dt { padding: 10px 12px 4px; color: var(--ink-2); font-size: 12px; }
+.liquid-descriptions dd { min-height: 38px; margin: 0; padding: 3px 12px 10px; color: var(--ink); }
+
+.liquid-message-host { position: fixed; z-index: 7000; top: 20px; left: 50%; display: flex; flex-direction: column; gap: 10px; width: min(92vw, 440px); transform: translateX(-50%); pointer-events: none; }
+.liquid-message { padding: 12px 16px; border: 1px solid var(--rim); border-radius: 14px; color: var(--ink); background: var(--glass-popover); box-shadow: var(--shadow-soft); opacity: 0; transform: translateY(-8px); transition: var(--ui-motion-normal) var(--ui-motion-easing-standard); backdrop-filter: var(--ui-backdrop-message); }
+.liquid-message.is-visible { opacity: 1; transform: translateY(0); }
+.liquid-message.is-success { border-color: var(--ok-fg); }
+.liquid-message.is-warning { border-color: var(--warn-fg); }
+.liquid-message.is-error { border-color: var(--bad-fg); }
+@media (max-width: 760px) {
+  .liquid-descriptions { grid-template-columns: 1fr; }
+}
+
+/* Content only: geometry and material belong to the shared dialog packages. */
+.dialog-footer { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.ui-feedback-description { margin: 0; color: var(--ink-2); line-height: 1.6; overflow-wrap: anywhere; }
+.ui-feedback-dialog form { margin-top: 18px; }
+.ui-feedback-error { min-height: 20px; padding-top: 4px; color: var(--bad-fg); font-size: 12px; }

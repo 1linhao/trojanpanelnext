@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>TP UI Minimal Lab</title>
+    <link rel="stylesheet" href="../../packages/ui-contracts/dist/base.css" />
+    <link
+      rel="stylesheet"
+      href="../../packages/ui-components-vue2/dist/geometry.css"
+    />
+    <link
+      rel="stylesheet"
+      href="../../packages/ui-material-frosted/dist/material.css"
+    />
+    <link
+      rel="stylesheet"
+      href="../../packages/ui-motion-native/dist/motion.css"
+    />
+    <link rel="stylesheet" href="../integration-lab/lab.css" />
+    <link rel="stylesheet" href="./minimal.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "@tp-ui/contracts": "../../packages/ui-contracts/dist/index.js",
+          "@tp-ui/components-vue2": "../../packages/ui-components-vue2/dist/index.js",
+          "@tp-ui/material-frosted": "../../packages/ui-material-frosted/dist/index.js",
+          "@tp-ui/motion-native": "../../packages/ui-motion-native/dist/index.js"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script src="../../vendor/vue.js"></script>
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>

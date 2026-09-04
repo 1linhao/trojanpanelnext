@@ -1,0 +1,7 @@
+/* Material only assigns variables through the public surface contract. */
+:root[data-ui-material='frosted'] [data-ui-overlay='modal'] {
+  --ui-overlay-material-backdrop: blur(10px) saturate(115%);
+}
+:root[data-ui-material='frosted'] [data-ui-surface='overlay'] {
+  --ui-dialog-material-backdrop: blur(28px) saturate(135%);
+}

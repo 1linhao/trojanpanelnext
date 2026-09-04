@@ -1,0 +1,168 @@
+syntax = "proto3";
+
+option go_package = ".;core";
+
+import "google/protobuf/any.proto";
+
+service ApiNodeService {
+  rpc AddNode(NodeAddDto) returns (Response) {}
+  rpc RemoveNode(NodeRemoveDto) returns (Response) {}
+}
+
+service ApiNodeServerService {
+  rpc GetNodeServerInfo(NodeServerInfoDto) returns (Response) {}
+}
+
+service ApiAccountService {
+  rpc RemoveAccount(AccountRemoveDto) returns (Response) {}
+}
+
+service ApiStateService {
+  rpc GetNodeState(NodeStateDto) returns (Response) {}
+  rpc GetNodeServerState(NodeServerStateDto) returns (Response) {}
+}
+
+service ApiKernelService {
+  rpc GetKernelInventory(KernelInventoryRequest) returns (Response) {}
+  rpc StartKernelOperation(KernelOperationRequest) returns (Response) {}
+  rpc GetKernelOperation(KernelOperationStateRequest) returns (Response) {}
+}
+
+message NodeAddDto {
+  uint64 nodeTypeId = 1;
+  uint64 port = 2;
+  string domain = 3;
+
+  string xrayTemplate = 4;
+  string xrayFlow = 5;
+  string xraySSMethod = 6;
+  string xrayProtocol = 7;
+  string xraySettings = 8;
+  string xrayStreamSettings = 9;
+  string xrayTag = 10;
+  string xraySniffing = 11;
+  string xrayAllocate = 12;
+
+  reserved 13 to 24;
+  reserved "trojanGoSni", "trojanGoMuxEnable", "trojanGoWebsocketEnable",
+    "trojanGoWebsocketPath", "trojanGoWebsocketHost", "trojanGoSSEnable",
+    "trojanGoSSMethod", "trojanGoSSPassword", "hysteriaProtocol",
+    "hysteriaObfs", "hysteriaUpMbps", "hysteriaDownMbps";
+
+  string hysteria2ObfsPassword = 25;
+  int64 hysteria2UpMbps = 26;
+  int64 hysteria2DownMbps = 27;
+}
+
+message NodeRemoveDto {
+  uint64 nodeTypeId = 1;
+  uint64 port = 2;
+}
+
+message NodeServerInfoDto {}
+
+message NodeServerInfoVo {
+  float cpuUsed = 1;
+  float memUsed = 2;
+  float diskUsed = 3;
+}
+
+message AccountRemoveDto {
+  string password = 1;
+}
+
+message NodeStateDto {
+  uint64 nodeTypeId = 1;
+  uint64 port = 2;
+}
+
+message NodeStateVo {
+  uint64 status = 1;
+}
+
+message NodeServerStateDto {}
+
+message NodeServerStateVo {
+  string version = 2;
+}
+
+enum ManagedKernel {
+  MANAGED_KERNEL_UNSPECIFIED = 0;
+  MANAGED_KERNEL_XRAY = 1;
+  MANAGED_KERNEL_HYSTERIA2 = 2;
+}
+
+enum ReleaseChannel {
+  RELEASE_CHANNEL_UNSPECIFIED = 0;
+  RELEASE_CHANNEL_STABLE = 1;
+  RELEASE_CHANNEL_PRERELEASE = 2;
+  RELEASE_CHANNEL_LEGACY = 3;
+}
+
+enum KernelAction {
+  KERNEL_ACTION_UNSPECIFIED = 0;
+  KERNEL_ACTION_INSTALL = 1;
+  KERNEL_ACTION_ROLLBACK = 2;
+}
+
+message KernelInventoryRequest {}
+
+message KernelVersionVo {
+  string version = 1;
+  ReleaseChannel channel = 2;
+  string sha256 = 3;
+  int64 installedAt = 4;
+  bool legacy = 5;
+  bool successful = 6;
+}
+
+message KernelInventoryItemVo {
+  ManagedKernel kernel = 1;
+  bool supported = 2;
+  string currentVersion = 3;
+  string currentSha256 = 4;
+  ReleaseChannel channel = 5;
+  bool inUse = 6;
+  repeated KernelVersionVo versions = 7;
+  string error = 8;
+}
+
+message KernelInventoryVo {
+  string os = 1;
+  string arch = 2;
+  repeated KernelInventoryItemVo kernels = 3;
+}
+
+message KernelOperationRequest {
+  string idempotencyKey = 1;
+  ManagedKernel kernel = 2;
+  string version = 3;
+  ReleaseChannel channel = 4;
+  KernelAction action = 5;
+}
+
+message KernelOperationStateRequest {
+  string operationId = 1;
+}
+
+message KernelOperationVo {
+  string operationId = 1;
+  string idempotencyKey = 2;
+  ManagedKernel kernel = 3;
+  string fromVersion = 4;
+  string targetVersion = 5;
+  ReleaseChannel channel = 6;
+  KernelAction action = 7;
+  string sha256 = 8;
+  string stage = 9;
+  string error = 10;
+  string rollbackError = 11;
+  int64 createdAt = 12;
+  int64 updatedAt = 13;
+}
+
+message Response {
+  bool success = 1;
+  string msg = 2;
+  google.protobuf.Any data = 3;
+}

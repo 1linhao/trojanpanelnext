@@ -1,0 +1,6 @@
+.minimal-host {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: var(--ui-space-6);
+}
