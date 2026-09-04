@@ -21,11 +21,10 @@ ENV mariadb_ip=127.0.0.1 \
     GIN_MODE=release
 ARG TARGETOS
 ARG TARGETARCH
-ARG TARGETVARIANT
-COPY build/trojan-panel-core-${TARGETOS}-${TARGETARCH}${TARGETVARIANT} trojan-panel-core
-COPY build/xray-${TARGETOS}-${TARGETARCH}${TARGETVARIANT} bin/xray/xray
-COPY build/naiveproxy-${TARGETOS}-${TARGETARCH}${TARGETVARIANT} bin/naiveproxy/naiveproxy
-COPY build/hysteria2-${TARGETOS}-${TARGETARCH}${TARGETVARIANT} bin/hysteria2/hysteria2
+COPY build/trojan-panel-core-${TARGETOS}-${TARGETARCH} trojan-panel-core
+COPY build/xray-${TARGETOS}-${TARGETARCH} bin/xray/xray
+COPY build/naiveproxy-${TARGETOS}-${TARGETARCH} bin/naiveproxy/naiveproxy
+COPY build/hysteria2-${TARGETOS}-${TARGETARCH} bin/hysteria2/hysteria2
 # Set apk China mirror
 # RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
 RUN apk add bash tzdata ca-certificates && \

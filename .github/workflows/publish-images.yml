@@ -1,0 +1,381 @@
+name: Publish product images
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version label, for example 0.1.0-rc.1
+        required: true
+        type: string
+      publish:
+        description: Push images to GHCR
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-images-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  API_IMAGE: ghcr.io/1linhao/trojanpanelnext-api
+  WEB_IMAGE: ghcr.io/1linhao/trojanpanelnext-web
+  NODE_AGENT_IMAGE: ghcr.io/1linhao/trojanpanelnext-node-agent
+  RESCUE_XRAY_VERSION: v26.3.27
+  RESCUE_HYSTERIA_VERSION: v2.10.0
+
+jobs:
+  prepare:
+    name: prepare release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      publish: ${{ steps.release.outputs.publish }}
+    steps:
+      - id: release
+        name: Validate version and release mode
+        env:
+          DISPATCH_VERSION: ${{ inputs.version }}
+          DISPATCH_PUBLISH: ${{ inputs.publish }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == push ]]; then
+            raw_version="$GITHUB_REF_NAME"
+            publish=true
+          else
+            raw_version="$DISPATCH_VERSION"
+            publish="$DISPATCH_PUBLISH"
+          fi
+          version="${raw_version#v}"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]
+          [[ "$publish" == true || "$publish" == false ]]
+          printf 'version=%s\npublish=%s\n' "$version" "$publish" >>"$GITHUB_OUTPUT"
+
+  api-binaries:
+    name: API binary (${{ matrix.arch }})
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/control-plane/api
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: 1.23.x
+          cache: true
+          cache-dependency-path: apps/control-plane/api/go.sum
+      - name: Build immutable Linux binary
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
+        run: |
+          mkdir -p build
+          CGO_ENABLED=0 GOOS=linux GOARCH="$TARGET_ARCH" \
+            go build -trimpath -ldflags "-s -w -buildid=" \
+            -o "build/trojan-panel-linux-$TARGET_ARCH" .
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: api-binary-${{ matrix.arch }}
+          path: apps/control-plane/api/build/*
+          if-no-files-found: error
+          retention-days: 2
+
+  api-image:
+    name: API image
+    needs: [prepare, api-binaries]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: api-binary-*
+          path: apps/control-plane/api/build
+          merge-multiple: true
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Log in to GHCR
+        if: needs.prepare.outputs.publish == 'true'
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        with:
+          images: ${{ env.API_IMAGE }}
+          tags: |
+            type=raw,value=${{ needs.prepare.outputs.version }}
+            type=sha,format=long,prefix=sha-
+            type=raw,value=latest,enable=${{ !contains(needs.prepare.outputs.version, '-') }}
+      - id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: apps/control-plane/api
+          platforms: linux/amd64,linux/arm64
+          push: ${{ needs.prepare.outputs.publish == 'true' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=trojanpanelnext-api
+          cache-to: type=gha,mode=max,scope=trojanpanelnext-api
+          sbom: true
+          provenance: mode=max
+      - name: Attest published image
+        if: needs.prepare.outputs.publish == 'true'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-name: ${{ env.API_IMAGE }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+  web-image:
+    name: Web image
+    needs: prepare
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: yarn
+          cache-dependency-path: apps/control-plane/web/yarn.lock
+      - name: Build Web distribution
+        working-directory: apps/control-plane/web
+        run: |
+          npx --yes yarn@1.22.22 install --frozen-lockfile
+          npx --yes yarn@1.22.22 build
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Log in to GHCR
+        if: needs.prepare.outputs.publish == 'true'
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        with:
+          images: ${{ env.WEB_IMAGE }}
+          tags: |
+            type=raw,value=${{ needs.prepare.outputs.version }}
+            type=sha,format=long,prefix=sha-
+            type=raw,value=latest,enable=${{ !contains(needs.prepare.outputs.version, '-') }}
+      - id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: apps/control-plane/web
+          platforms: linux/amd64,linux/arm64
+          push: ${{ needs.prepare.outputs.publish == 'true' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=trojanpanelnext-web
+          cache-to: type=gha,mode=max,scope=trojanpanelnext-web
+          sbom: true
+          provenance: mode=max
+      - name: Attest published image
+        if: needs.prepare.outputs.publish == 'true'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-name: ${{ env.WEB_IMAGE }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+  node-agent-binaries:
+    name: Node Agent binaries (${{ matrix.arch }})
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/node-agent
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: 1.23.x
+          cache: true
+          cache-dependency-path: apps/node-agent/go.sum
+      - name: Build Node Agent
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
+        run: |
+          mkdir -p build
+          CGO_ENABLED=0 GOOS=linux GOARCH="$TARGET_ARCH" \
+            go build -trimpath -ldflags "-s -w -buildid=" \
+            -o "build/trojan-panel-core-linux-$TARGET_ARCH" .
+      - name: Download and verify rescue Xray and Hysteria2
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_ARCH: ${{ matrix.arch }}
+        run: |
+          set -Eeuo pipefail
+          if [[ "$TARGET_ARCH" == amd64 ]]; then
+            xray_asset=Xray-linux-64.zip
+          else
+            xray_asset=Xray-linux-arm64-v8a.zip
+          fi
+          xray_base="https://github.com/XTLS/Xray-core/releases/download/${RESCUE_XRAY_VERSION}"
+          curl -fsSLO "${xray_base}/${xray_asset}"
+          curl -fsSLO "${xray_base}/${xray_asset}.dgst"
+          expected="$(awk '$1 == "SHA2-256=" { print $2 }' "${xray_asset}.dgst")"
+          test -n "$expected"
+          printf '%s  %s\n' "$expected" "$xray_asset" | sha256sum -c -
+          unzip -p "$xray_asset" xray >"build/xray-linux-$TARGET_ARCH"
+
+          release="$(curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" \
+            "https://api.github.com/repos/apernet/hysteria/releases/tags/app%2F${RESCUE_HYSTERIA_VERSION}")"
+          asset="hysteria-linux-$TARGET_ARCH"
+          asset_url="$(jq -r --arg name "$asset" '.assets[] | select(.name == $name) | .browser_download_url' <<<"$release")"
+          hashes_url="$(jq -r '.assets[] | select(.name == "hashes.txt") | .browser_download_url' <<<"$release")"
+          test -n "$asset_url"
+          test -n "$hashes_url"
+          curl -fsSL "$asset_url" -o "build/hysteria2-linux-$TARGET_ARCH"
+          expected="$(curl -fsSL "$hashes_url" | awk -v name="$asset" '$2 == "build/" name { print $1 }')"
+          test -n "$expected"
+          printf '%s  %s\n' "$expected" "build/hysteria2-linux-$TARGET_ARCH" | sha256sum -c -
+          chmod 755 "build/xray-linux-$TARGET_ARCH" "build/hysteria2-linux-$TARGET_ARCH"
+      - name: Build NaiveProxy traffic adapter
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
+        run: >-
+          OUTPUT="${GITHUB_WORKSPACE}/apps/node-agent/build/naiveproxy-linux-${TARGET_ARCH}"
+          CGO_ENABLED=0 GOOS=linux GOARCH="${TARGET_ARCH}"
+          bash scripts/build-naiveproxy-with-traffic.sh
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: node-agent-binaries-${{ matrix.arch }}
+          path: apps/node-agent/build/*
+          if-no-files-found: error
+          retention-days: 2
+
+  node-agent-image:
+    name: Node Agent image
+    needs: [prepare, node-agent-binaries]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: node-agent-binaries-*
+          path: apps/node-agent/build
+          merge-multiple: true
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Log in to GHCR
+        if: needs.prepare.outputs.publish == 'true'
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        with:
+          images: ${{ env.NODE_AGENT_IMAGE }}
+          tags: |
+            type=raw,value=${{ needs.prepare.outputs.version }}
+            type=sha,format=long,prefix=sha-
+            type=raw,value=latest,enable=${{ !contains(needs.prepare.outputs.version, '-') }}
+      - id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: apps/node-agent
+          platforms: linux/amd64,linux/arm64
+          push: ${{ needs.prepare.outputs.publish == 'true' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=trojanpanelnext-node-agent
+          cache-to: type=gha,mode=max,scope=trojanpanelnext-node-agent
+          sbom: true
+          provenance: mode=max
+      - name: Attest published image
+        if: needs.prepare.outputs.publish == 'true'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-name: ${{ env.NODE_AGENT_IMAGE }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+  manifest:
+    name: release manifest
+    needs: [prepare, api-image, web-image, node-agent-image]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Write product release manifest
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          PUBLISHED: ${{ needs.prepare.outputs.publish }}
+          API_DIGEST: ${{ needs.api-image.outputs.digest }}
+          WEB_DIGEST: ${{ needs.web-image.outputs.digest }}
+          NODE_AGENT_DIGEST: ${{ needs.node-agent-image.outputs.digest }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          for digest in "$API_DIGEST" "$WEB_DIGEST" "$NODE_AGENT_DIGEST"; do
+            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          done
+          jq -n \
+            --arg schemaVersion "1" \
+            --arg version "$VERSION" \
+            --arg sourceCommit "$GITHUB_SHA" \
+            --argjson published "$PUBLISHED" \
+            --arg apiImage "$API_IMAGE" \
+            --arg apiDigest "$API_DIGEST" \
+            --arg webImage "$WEB_IMAGE" \
+            --arg webDigest "$WEB_DIGEST" \
+            --arg nodeAgentImage "$NODE_AGENT_IMAGE" \
+            --arg nodeAgentDigest "$NODE_AGENT_DIGEST" \
+            '{
+              schemaVersion:($schemaVersion | tonumber),
+              version:$version,
+              sourceCommit:$sourceCommit,
+              published:$published,
+              images:{
+                api:{name:$apiImage,digest:$apiDigest},
+                web:{name:$webImage,digest:$webDigest},
+                nodeAgent:{name:$nodeAgentImage,digest:$nodeAgentDigest}
+              }
+            }' >release-manifest.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-manifest-${{ needs.prepare.outputs.version }}
+          path: release-manifest.json
+          if-no-files-found: error
+          retention-days: 30

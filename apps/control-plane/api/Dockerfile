@@ -13,8 +13,7 @@ ENV mariadb_ip=127.0.0.1 \
     GIN_MODE=release
 ARG TARGETOS
 ARG TARGETARCH
-ARG TARGETVARIANT
-COPY build/trojan-panel-${TARGETOS}-${TARGETARCH}${TARGETVARIANT} trojan-panel
+COPY build/trojan-panel-${TARGETOS}-${TARGETARCH} trojan-panel
 # Set apk China mirror
 # RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
 RUN apk add bash tzdata ca-certificates && \

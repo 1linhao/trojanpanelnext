@@ -1,13 +1,26 @@
-# TrojanPanel
+# TrojanPanel Next
 
-TrojanPanel 产品 monorepo。控制面、Web、节点 Agent、公共安装器和文档站从
-workspace 基线 `444822da8c8c3aff7635607409b980e9aaf3bf8c` 迁移到一个无父提交的安全净化 root commit。
+TrojanPanel Next 是一个支持 Xray、Trojan-Go、Hysteria 和 NaiveProxy 的多用户 Web
+管理面板，提供用户与节点管理、系统看板、证书管理和分布式部署能力。
 
-迁移前历史保留在原组件仓库；机器可读来源见
-`migration/source-baseline.json`。其中逐项记录了原始 commit/tree、导入策略、
-示例凭据脱敏和已跟踪文档编译产物排除情况。
+本仓库统一维护以下产品组件：
 
-本次迁移使用的映射、生成器和净化器已固化在 `migration/tooling/`；生成器可通过
-`--source-workspace` 指向保留的旧 workspace 后重放。
+| 组件 | 说明 |
+| --- | --- |
+| `apps/control-plane/api` | 控制面后端服务 |
+| `apps/control-plane/web` | Web 管理界面 |
+| `apps/node-agent` | 节点 Agent 与代理内核运行管理 |
+| `deploy/installer` | 安装和部署工具 |
+| `apps/docs-site` | 使用与安装文档 |
 
-当前目录是 M0 内容快照。统一工作区、契约、CI 和发布流程将在后续独立提交中建立。
+## 使用文档
+
+- [中文安装说明](deploy/installer/README_ZH.md)
+- [English installation guide](deploy/installer/README.md)
+- [文档站源码](apps/docs-site/vpress)
+
+## 项目来源
+
+TrojanPanel Next 是基于 [TrojanPanel](https://github.com/trojanpanel) 原始项目演进的
+社区维护版本，不是原组织的官方发布。原始组件、精确来源版本和迁移说明见
+[NOTICE.md](NOTICE.md)。

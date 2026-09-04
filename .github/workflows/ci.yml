@@ -1,0 +1,171 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  migration:
+    name: migration and secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out complete history
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify immutable migration baseline
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          baseline=migration-baseline-2026-09-04
+          test "$(git rev-list --count "$baseline")" -eq 1
+          test "$(git rev-list --parents -n 1 "$baseline" | awk '{print NF-1}')" -eq 0
+          test -z "$(git ls-tree -r "$baseline" | awk '$1 == 160000 {print}')"
+          jq -e '
+            .historyPolicy == "security-sanitized-snapshot-without-parents" and
+            .workspace.commit == "444822da8c8c3aff7635607409b980e9aaf3bf8c" and
+            .totalSourceFiles == 650 and
+            .totalImportedFiles == 582
+          ' migration/source-baseline.json >/dev/null
+
+      - name: Scan complete Git history for secrets
+        run: >-
+          docker run --rm
+          -v "$PWD:/repo"
+          ghcr.io/gitleaks/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
+          detect --source=/repo --no-banner --redact --exit-code=1
+
+  api:
+    name: control-plane API
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/control-plane/api
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: 1.23.x
+          cache: true
+          cache-dependency-path: apps/control-plane/api/go.sum
+      - name: Test
+        run: go test ./...
+      - name: Build
+        run: CGO_ENABLED=0 go build -trimpath -o /tmp/trojanpanelnext-api .
+
+  web:
+    name: control-plane Web
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/control-plane/web
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: yarn
+          cache-dependency-path: apps/control-plane/web/yarn.lock
+      - name: Install dependencies
+        run: npx --yes yarn@1.22.22 install --frozen-lockfile
+      - name: Lint
+        run: npx --yes yarn@1.22.22 lint
+      - name: Verify UI packages
+        run: npx --yes yarn@1.22.22 test:ui-libraries
+      - name: Run UI cleanup tests
+        run: npx --yes yarn@1.22.22 test:ui-cleanup
+      - name: Run Vite proxy tests
+        run: npx --yes yarn@1.22.22 test:vite-proxy
+      - name: Build
+        run: npx --yes yarn@1.22.22 build
+
+  node-agent:
+    name: node Agent
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/node-agent
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: 1.23.x
+          cache: true
+          cache-dependency-path: apps/node-agent/go.sum
+      - name: Test
+        run: go test ./...
+      - name: Build
+        run: CGO_ENABLED=0 go build -trimpath -o /tmp/trojanpanelnext-node-agent .
+
+  installer:
+    name: installer scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Check Bash syntax
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          count=0
+          while IFS= read -r -d '' script; do
+            bash -n "$script"
+            count=$((count + 1))
+          done < <(find deploy/installer -type f -name '*.sh' -print0)
+          test "$count" -gt 0
+          printf 'validated %d shell scripts\n' "$count"
+
+  docs:
+    name: documentation site
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/docs-site
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Install dependencies
+        run: npx --yes pnpm@8.15.9 install --frozen-lockfile
+      - name: Build
+        env:
+          NODE_OPTIONS: --openssl-legacy-provider
+        run: npx --yes pnpm@8.15.9 run docs:build
+
+  gate:
+    name: gate
+    if: always()
+    needs: [migration, api, web, node-agent, installer, docs]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every CI job to pass
+        env:
+          MIGRATION_RESULT: ${{ needs.migration.result }}
+          API_RESULT: ${{ needs.api.result }}
+          WEB_RESULT: ${{ needs.web.result }}
+          NODE_AGENT_RESULT: ${{ needs.node-agent.result }}
+          INSTALLER_RESULT: ${{ needs.installer.result }}
+          DOCS_RESULT: ${{ needs.docs.result }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          for result in \
+            "$MIGRATION_RESULT" \
+            "$API_RESULT" \
+            "$WEB_RESULT" \
+            "$NODE_AGENT_RESULT" \
+            "$INSTALLER_RESULT" \
+            "$DOCS_RESULT"; do
+            test "$result" = success
+          done

@@ -236,10 +236,11 @@ cat >"$destination/.gitignore" <<'EOF'
 EOF
 
 cat >"$destination/README.md" <<EOF
-# TrojanPanel
+# TrojanPanel Next
 
-TrojanPanel 产品 monorepo。控制面、Web、节点 Agent、公共安装器和文档站从
-workspace 基线 \`${source_ref}\` 迁移到一个无父提交的安全净化 root commit。
+\`trojanpanelnext\` 是由 TrojanPanel 社区项目演进而来的产品 monorepo。控制面、Web、
+节点 Agent、公共安装器和文档站从 workspace 基线 \`${source_ref}\` 迁移到一个
+无父提交的安全净化 root commit。
 
 迁移前历史保留在原组件仓库；机器可读来源见
 \`migration/source-baseline.json\`。其中逐项记录了原始 commit/tree、导入策略、
