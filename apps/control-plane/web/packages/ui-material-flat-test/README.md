@@ -1,5 +1,7 @@
 # @tp-ui/material-flat-test
 
+简体中文 | [English](README_EN.md)
+
 用于证明材质可替换性的高对比纯色材质。它不是生产主题，但必须与 Frosted 一样完整实现公开材质契约。
 
 ## 职责

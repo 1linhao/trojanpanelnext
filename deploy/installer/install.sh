@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin:~/bin
-export PATH
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
 
 ECHO_TYPE="echo -e"
+YQ_VERSION="v4.53.6"
 
 TP_DATA="${TP_DATA:-/tpdata}"
 WEB_PATH="${WEB_PATH:-${TP_DATA}/web}"
-STATIC_HTML="${STATIC_HTML:-https://github.com/trojanpanel/install-script/releases/download/v1.0/html.tar.gz}"
+TP_PKI_BUNDLE_DIR="${TP_PKI_BUNDLE_DIR:-${TP_DATA}/trojanpanelnext-pki}"
 
 MARIADB_CONTAINER="${MARIADB_CONTAINER:-trojan-panel-mariadb}"
 REDIS_CONTAINER="${REDIS_CONTAINER:-trojan-panel-redis}"
@@ -17,14 +17,13 @@ UI_CONTAINER="${UI_CONTAINER:-trojan-panel-ui}"
 CORE_CONTAINER="${CORE_CONTAINER:-trojan-panel-core}"
 WEB_CADDY_CONTAINER="${WEB_CADDY_CONTAINER:-trojan-panel-web-caddy}"
 NODE_CADDY_CONTAINER="${NODE_CADDY_CONTAINER:-trojan-panel-node-caddy}"
-LEGACY_NODE_CADDY_CONTAINER="${LEGACY_NODE_CADDY_CONTAINER:-trojan-panel-caddy}"
 
 CADDY_IMAGE="${CADDY_IMAGE:-caddy:2.8.4}"
 MARIADB_IMAGE="${MARIADB_IMAGE:-mariadb:10.7.3}"
 REDIS_IMAGE="${REDIS_IMAGE:-redis:6.2.7}"
-PANEL_IMAGE="${PANEL_IMAGE:-ghcr.io/1linhao/trojan-panel:singbox}"
-UI_IMAGE="${UI_IMAGE:-ghcr.io/1linhao/trojan-panel-ui:singbox}"
-CORE_IMAGE="${CORE_IMAGE:-ghcr.io/1linhao/trojan-panel-core:singbox}"
+PANEL_IMAGE="${PANEL_IMAGE:-ghcr.io/1linhao/trojanpanelnext-api:latest}"
+UI_IMAGE="${UI_IMAGE:-ghcr.io/1linhao/trojanpanelnext-web:latest}"
+CORE_IMAGE="${CORE_IMAGE:-ghcr.io/1linhao/trojanpanelnext-node-agent:latest}"
 IMAGE_BUNDLE_DIR="${IMAGE_BUNDLE_DIR:-}"
 
 MARIADB_PORT="${MARIADB_PORT:-9507}"
@@ -37,7 +36,7 @@ UI_PORT="${UI_PORT:-8888}"
 CORE_PORT="${CORE_PORT:-8082}"
 GRPC_PORT="${GRPC_PORT:-8100}"
 NODE_SERVER_ID="${NODE_SERVER_ID:-0}"
-GRPC_TLS_MODE="${GRPC_TLS_MODE:-legacy}"
+GRPC_TLS_MODE="${GRPC_TLS_MODE:-mtls}"
 GRPC_TLS_SERVER_NAME="${GRPC_TLS_SERVER_NAME:-}"
 GRPC_CLIENT_CA_PATH="${GRPC_CLIENT_CA_PATH:-${TP_DATA}/trojan-panel-core/pki/client-ca.crt}"
 GRPC_CLIENT_CERT_PATH="${GRPC_CLIENT_CERT_PATH:-${TP_DATA}/trojan-panel/pki/client.crt}"
@@ -47,17 +46,19 @@ KERNEL_RUNTIME_PATH="${KERNEL_RUNTIME_PATH:-${TP_DATA}/trojan-panel-core/runtime
 NODE_CADDY_HTTP_PORT="${NODE_CADDY_HTTP_PORT:-80}"
 NODE_CADDY_HTTPS_PORT="${NODE_CADDY_HTTPS_PORT:-8863}"
 
-SOURCE_BASE="${SOURCE_BASE:-${TP_DATA}/source}"
-PANEL_REPO="${PANEL_REPO:-https://github.com/1linhao/trojan-panel.git}"
-PANEL_BRANCH="${PANEL_BRANCH:-feature/sing-box-subscribe}"
-UI_REPO="${UI_REPO:-https://github.com/1linhao/trojan-panel-ui.git}"
-UI_BRANCH="${UI_BRANCH:-feature/sing-box-subscribe}"
-GO_VERSION="${GO_VERSION:-1.22.5}"
-PANEL_SERVICE="${PANEL_SERVICE:-trojan-panel-source}"
-UI_DIST="${UI_DIST:-${TP_DATA}/trojan-panel-ui/dist}"
-
 TP_FORCE="${TP_FORCE:-0}"
 TP_PURGE_DATA="${TP_PURGE_DATA:-0}"
+TP_PURPOSE=""
+TP_CONFIG_ROOT="${TP_CONFIG_ROOT:-}"
+TP_TEMP_TOOLS_DIR=""
+
+cleanup() {
+  if [[ -n "${TP_TEMP_TOOLS_DIR}" && -d "${TP_TEMP_TOOLS_DIR}" ]]; then
+    rm -rf -- "${TP_TEMP_TOOLS_DIR}"
+  fi
+}
+
+trap cleanup EXIT
 
 echo_content() {
   case $1 in
@@ -72,59 +73,24 @@ echo_content() {
 usage() {
   cat <<EOF
 Usage:
-  $0 web
-  $0 web-source
-  $0 node
-  $0 remove-web
-  $0 remove-node
+  $0 install  --mode web|node --config <file>
+  $0 remove   --mode web|node --config <file> [--purge-data]
+  $0 validate --mode web|node --config <file>
 
-Required for web and web-source:
-  env.yaml keys:
-    trojan_panel.web_hostname
-
-Optional for web:
-  env.yaml keys:
-    trojan_panel.web_mail
-    trojan_panel.mariadb_password
-    trojan_panel.redis_password
-    trojan_panel.panel_image
-    trojan_panel.ui_image
-    trojan_panel.image_bundle_dir
-
-Optional for web-source:
-  env.yaml keys:
-    trojan_panel.panel_repo
-    trojan_panel.panel_branch
-    trojan_panel.ui_repo
-    trojan_panel.ui_branch
-    trojan_panel.go_version
-    trojan_panel.source_base
-
-Required for node:
-  env.yaml keys:
-    trojan_panel.node_hostname
-    trojan_panel.mariadb_host
-    trojan_panel.mariadb_password
-    trojan_panel.redis_host
-    trojan_panel.redis_password
-
-Optional for node:
-  env.yaml keys:
-    trojan_panel.node_mail
-    trojan_panel.core_image
-    trojan_panel.image_bundle_dir
-    trojan_panel.mariadb_user
-    trojan_panel.mariadb_port
-    trojan_panel.redis_port
-    trojan_panel.node_caddy_http_port
-    trojan_panel.node_caddy_https_port
+Options:
+  --mode <mode>      Server purpose: web control plane or node agent
+  --config <file>    YAML configuration file
+  --force            Recreate existing containers during installation
+  --purge-data       Delete generated data during removal
+  -h, --help         Show this help
 
 Examples:
-  $0 web ./env.yaml
-  $0 web-source ./env.yaml
-  $0 node ./env.yaml
-  $0 remove-web ./env.yaml
-  $0 remove-node ./env.yaml
+  $0 validate --mode web --config ./examples/web.yaml
+  $0 install --mode web --config ./examples/web.yaml
+  $0 install --mode node --config ./examples/node-agent.yaml
+
+The command is non-interactive. The value of --mode must match
+trojanpanelnext.purpose in the configuration file.
 EOF
 }
 
@@ -188,24 +154,26 @@ install_base_tools() {
   command -v curl >/dev/null 2>&1 || install_packages curl
   command -v tar >/dev/null 2>&1 || install_packages tar
   command -v od >/dev/null 2>&1 || install_packages coreutils
+  command -v sha256sum >/dev/null 2>&1 || install_packages coreutils
+  command -v openssl >/dev/null 2>&1 || install_packages openssl
 }
 
 install_yq() {
+  local destination="${1:-/usr/local/bin/yq}"
   if command -v yq >/dev/null 2>&1; then
     return
   fi
 
   install_base_tools
-  local arch
+  local arch checksum
   case "$(uname -m)" in
   x86_64 | amd64)
     arch="amd64"
+    checksum="c5f056448f973ae7d39b5401949648a78f2dc1947d6a8eb65be60d5c504b9385"
     ;;
   aarch64 | arm64)
     arch="arm64"
-    ;;
-  armv7l | armv7)
-    arch="arm"
+    checksum="88a1016bc1d657375a35864e4f44b6f333df8ff97b559f51bba0adcb2169df09"
     ;;
   *)
     echo_content red "Unsupported architecture for yq: $(uname -m)"
@@ -213,41 +181,37 @@ install_yq() {
     ;;
   esac
 
-  echo_content green "---> Install yq"
-  curl -fsSL "https://github.com/mikefarah/yq/releases/latest/download/yq_linux_${arch}" -o /usr/local/bin/yq
-  chmod +x /usr/local/bin/yq
+  echo_content green "---> Install yq ${YQ_VERSION}"
+  local download
+  download="$(mktemp)"
+  curl -fsSL "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${arch}" -o "${download}"
+  printf '%s  %s\n' "${checksum}" "${download}" | sha256sum -c -
+  install -m 0755 "${download}" "${destination}"
+  rm -f "${download}"
 }
 
 yaml_read_raw() {
   local file="$1"
   local key="$2"
-  local value
-  value="$(yq -r ".trojan_panel.${key} // \"\"" "${file}")"
-  if command -v envsubst >/dev/null 2>&1; then
-    value="$(printf '%s' "${value}" | envsubst)"
-  fi
-  printf '%s' "${value}"
+  yq -r "${TP_CONFIG_ROOT}.${key} // \"\"" "${file}"
 }
 
-cfg_first() {
+detect_config_root() {
   local file="$1"
-  shift
-  local key value
-  for key in "$@"; do
-    value="$(yaml_read_raw "${file}" "${key}")"
-    if [[ -n "${value}" && "${value}" != "null" ]]; then
-      printf '%s' "${value}"
-      return
-    fi
-  done
+  if yq -e '.trojanpanelnext != null' "${file}" >/dev/null 2>&1; then
+    TP_CONFIG_ROOT='.trojanpanelnext'
+  else
+    echo_content red "Configuration must contain a 'trojanpanelnext' root object"
+    exit 1
+  fi
 }
 
 cfg_apply() {
   local file="$1"
   local var_name="$2"
-  shift 2
+  local key="$3"
   local value
-  value="$(cfg_first "${file}" "$@")"
+  value="$(yaml_read_raw "${file}" "${key}")"
   if [[ -n "${value}" ]]; then
     printf -v "${var_name}" '%s' "${value}"
   fi
@@ -256,6 +220,7 @@ cfg_apply() {
 load_config() {
   local action="$1"
   local file="${2:-}"
+  local allow_yq_install="${3:-1}"
   if [[ -z "${file}" ]]; then
     echo_content red "Config file is required"
     usage
@@ -266,8 +231,19 @@ load_config() {
     exit 1
   fi
 
-  install_yq
+  if ! command -v yq >/dev/null 2>&1; then
+    if [[ "${allow_yq_install}" == "1" ]]; then
+      install_yq
+    else
+      TP_TEMP_TOOLS_DIR="$(mktemp -d /tmp/trojanpanelnext-tools.XXXXXX)"
+      install_yq "${TP_TEMP_TOOLS_DIR}/yq"
+      export PATH="${TP_TEMP_TOOLS_DIR}:${PATH}"
+    fi
+  fi
   TP_CONFIG_FILE="${file}"
+  detect_config_root "${file}"
+
+  cfg_apply "${file}" TP_PURPOSE purpose
 
   cfg_apply "${file}" CADDY_IMAGE caddy_image
   cfg_apply "${file}" MARIADB_IMAGE mariadb_image
@@ -276,11 +252,10 @@ load_config() {
   cfg_apply "${file}" UI_IMAGE ui_image
   cfg_apply "${file}" CORE_IMAGE core_image
   cfg_apply "${file}" IMAGE_BUNDLE_DIR image_bundle_dir
-  cfg_apply "${file}" LEGACY_NODE_CADDY_CONTAINER legacy_node_caddy_container
 
   cfg_apply "${file}" MARIADB_PORT mariadb_port
   cfg_apply "${file}" MARIADB_USER mariadb_user
-  cfg_apply "${file}" MARIADB_DATABASE database mariadb_database
+  cfg_apply "${file}" MARIADB_DATABASE database
   cfg_apply "${file}" ACCOUNT_TABLE account_table
   cfg_apply "${file}" REDIS_PORT redis_port
   cfg_apply "${file}" PANEL_PORT panel_port
@@ -295,33 +270,107 @@ load_config() {
   cfg_apply "${file}" GRPC_CLIENT_KEY_PATH grpc_client_key_path
   cfg_apply "${file}" GRPC_SERVER_CA_PATH grpc_server_ca_path
   cfg_apply "${file}" KERNEL_RUNTIME_PATH kernel_runtime_path
-  cfg_apply "${file}" NODE_CADDY_HTTP_PORT node_caddy_http_port caddy_port
-  cfg_apply "${file}" NODE_CADDY_HTTPS_PORT node_caddy_https_port caddy_remote_port
+  cfg_apply "${file}" TP_PKI_BUNDLE_DIR pki_bundle_dir
+  cfg_apply "${file}" NODE_CADDY_HTTP_PORT node_caddy_http_port
+  cfg_apply "${file}" NODE_CADDY_HTTPS_PORT node_caddy_https_port
   cfg_apply "${file}" TP_FORCE force
   cfg_apply "${file}" TP_PURGE_DATA purge_data
-  cfg_apply "${file}" SOURCE_BASE source_base
-  cfg_apply "${file}" PANEL_REPO panel_repo
-  cfg_apply "${file}" PANEL_BRANCH panel_branch
-  cfg_apply "${file}" UI_REPO ui_repo
-  cfg_apply "${file}" UI_BRANCH ui_branch
-  cfg_apply "${file}" GO_VERSION go_version
-  cfg_apply "${file}" PANEL_SERVICE panel_service
-  cfg_apply "${file}" UI_DIST ui_dist
-
   case "${action}" in
-  web | deploy-web | web-source | deploy-web-source)
-    cfg_apply "${file}" TP_WEB_DOMAIN web_hostname web_domain hostname domain
-    cfg_apply "${file}" TP_EMAIL web_mail web_email email mail
+  web)
+    TP_WEB_DOMAIN=""
+    TP_EMAIL=""
+    MARIADB_PASSWORD=""
+    REDIS_PASSWORD=""
+    cfg_apply "${file}" TP_WEB_DOMAIN hostname
+    cfg_apply "${file}" TP_EMAIL email
     cfg_apply "${file}" MARIADB_PASSWORD mariadb_password
     cfg_apply "${file}" REDIS_PASSWORD redis_password
     ;;
-  node | deploy-node)
-    cfg_apply "${file}" TP_NODE_DOMAIN node_hostname node_domain hostname domain
-    cfg_apply "${file}" TP_EMAIL node_mail node_email email mail
+  node)
+    TP_NODE_DOMAIN=""
+    TP_EMAIL=""
+    MARIADB_HOST=""
+    MARIADB_PASSWORD=""
+    REDIS_HOST=""
+    REDIS_PASSWORD=""
+    cfg_apply "${file}" TP_NODE_DOMAIN hostname
+    cfg_apply "${file}" TP_EMAIL email
     cfg_apply "${file}" MARIADB_HOST mariadb_host
     cfg_apply "${file}" MARIADB_PASSWORD mariadb_password
     cfg_apply "${file}" REDIS_HOST redis_host
     cfg_apply "${file}" REDIS_PASSWORD redis_password
+    ;;
+  esac
+}
+
+require_one_of() {
+  local name="$1"
+  local value="$2"
+  shift 2
+  local allowed
+  for allowed in "$@"; do
+    if [[ "${value}" == "${allowed}" ]]; then
+      return
+    fi
+  done
+  echo_content red "${name} has unsupported value: ${value}"
+  exit 1
+}
+
+require_port() {
+  local name="$1"
+  local value="${!name:-}"
+  if [[ ! "${value}" =~ ^[0-9]+$ ]] || ((value < 1 || value > 65535)); then
+    echo_content red "${name} must be an integer between 1 and 65535"
+    exit 1
+  fi
+}
+
+validate_config() {
+  local mode="$1"
+
+  if [[ -n "${TP_PURPOSE}" && "${TP_PURPOSE}" != "${mode}" ]]; then
+    echo_content red "Configuration purpose '${TP_PURPOSE}' does not match --mode '${mode}'"
+    exit 1
+  fi
+  require_value TP_PURPOSE
+  local schema_version
+  schema_version="$(yaml_read_raw "${TP_CONFIG_FILE}" schema_version)"
+  if [[ "${schema_version}" != "1" ]]; then
+    echo_content red "trojanpanelnext.schema_version must be 1"
+    exit 1
+  fi
+
+  require_one_of force "${TP_FORCE}" 0 1
+  require_one_of purge_data "${TP_PURGE_DATA}" 0 1
+  require_port MARIADB_PORT
+  require_port REDIS_PORT
+
+  case "${mode}" in
+  web)
+    require_value TP_WEB_DOMAIN
+    require_port PANEL_PORT
+    require_port UI_PORT
+    require_value PANEL_IMAGE
+    require_value UI_IMAGE
+    ;;
+  node)
+    require_value TP_NODE_DOMAIN
+    require_value MARIADB_HOST
+    require_value MARIADB_PASSWORD
+    require_value REDIS_HOST
+    require_value REDIS_PASSWORD
+    require_value CORE_IMAGE
+    require_port CORE_PORT
+    require_port GRPC_PORT
+    require_port NODE_CADDY_HTTP_PORT
+    require_port NODE_CADDY_HTTPS_PORT
+    require_one_of grpc_tls_mode "${GRPC_TLS_MODE}" mtls
+    require_value TP_PKI_BUNDLE_DIR
+    ;;
+  *)
+    echo_content red "Unsupported purpose: ${mode}"
+    exit 1
     ;;
   esac
 }
@@ -361,7 +410,8 @@ write_web_generated_secrets() {
     return
   fi
   MARIADB_PASSWORD="${MARIADB_PASSWORD}" REDIS_PASSWORD="${REDIS_PASSWORD}" \
-    yq -i '.trojan_panel.mariadb_password = strenv(MARIADB_PASSWORD) | .trojan_panel.redis_password = strenv(REDIS_PASSWORD)' "${file}"
+    yq -i '.trojanpanelnext.mariadb_password = strenv(MARIADB_PASSWORD) | .trojanpanelnext.redis_password = strenv(REDIS_PASSWORD)' "${file}"
+  chmod 600 "${file}"
 }
 
 init_web_secrets() {
@@ -435,20 +485,70 @@ prepare_dirs() {
     "${TP_DATA}/custom/node-caddy"
 }
 
+generate_web_client_pki() {
+  if [[ -f "${TP_PKI_BUNDLE_DIR}/client-ca.crt" && \
+    -f "${TP_PKI_BUNDLE_DIR}/client-ca.key" && \
+    -f "${TP_PKI_BUNDLE_DIR}/client.crt" && \
+    -f "${TP_PKI_BUNDLE_DIR}/client.key" ]]; then
+    return
+  fi
+
+  if find "${TP_PKI_BUNDLE_DIR}" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null | grep -q .; then
+    echo_content red "PKI directory is incomplete: ${TP_PKI_BUNDLE_DIR}"
+    exit 1
+  fi
+
+  echo_content green "---> Generate control-plane mTLS identity"
+  local temporary_pki
+  temporary_pki="$(mktemp -d)"
+  openssl req -x509 -newkey rsa:3072 -sha256 -days 3650 -nodes \
+    -subj "/CN=TrojanPanel Next Control CA" \
+    -keyout "${temporary_pki}/client-ca.key" \
+    -out "${temporary_pki}/client-ca.crt" >/dev/null 2>&1
+  openssl req -newkey rsa:3072 -sha256 -nodes \
+    -subj "/CN=trojanpanelnext-control-plane" \
+    -keyout "${temporary_pki}/client.key" \
+    -out "${temporary_pki}/client.csr" >/dev/null 2>&1
+  cat >"${temporary_pki}/client.ext" <<'EOF'
+basicConstraints=CA:FALSE
+keyUsage=digitalSignature,keyEncipherment
+extendedKeyUsage=clientAuth
+EOF
+  openssl x509 -req -sha256 -days 825 \
+    -in "${temporary_pki}/client.csr" \
+    -CA "${temporary_pki}/client-ca.crt" \
+    -CAkey "${temporary_pki}/client-ca.key" \
+    -CAcreateserial \
+    -extfile "${temporary_pki}/client.ext" \
+    -out "${temporary_pki}/client.crt" >/dev/null 2>&1
+
+  mkdir -p "${TP_PKI_BUNDLE_DIR}"
+  chmod 700 "${TP_PKI_BUNDLE_DIR}"
+  install -m 0600 "${temporary_pki}/client-ca.key" "${TP_PKI_BUNDLE_DIR}/client-ca.key"
+  install -m 0644 "${temporary_pki}/client-ca.crt" "${TP_PKI_BUNDLE_DIR}/client-ca.crt"
+  install -m 0600 "${temporary_pki}/client.key" "${TP_PKI_BUNDLE_DIR}/client.key"
+  install -m 0644 "${temporary_pki}/client.crt" "${TP_PKI_BUNDLE_DIR}/client.crt"
+  rm -rf -- "${temporary_pki}"
+}
+
 install_pki_material() {
-  local bundle="${TP_PKI_BUNDLE_DIR:-./trojan-panel-pki}"
-  if [[ -f "${bundle}/client-ca.crt" ]]; then
-    install -m 0644 "${bundle}/client-ca.crt" \
-      "${TP_DATA}/trojan-panel-core/pki/client-ca.crt"
-  fi
-  if [[ -f "${bundle}/client.crt" ]]; then
-    install -m 0644 "${bundle}/client.crt" \
-      "${TP_DATA}/trojan-panel/pki/client.crt"
-  fi
-  if [[ -f "${bundle}/client.key" ]]; then
-    install -m 0600 "${bundle}/client.key" \
-      "${TP_DATA}/trojan-panel/pki/client.key"
-  fi
+  local mode="$1"
+  case "${mode}" in
+  web)
+    generate_web_client_pki
+    mkdir -p "$(dirname "${GRPC_CLIENT_CERT_PATH}")" "$(dirname "${GRPC_CLIENT_KEY_PATH}")"
+    install -m 0644 "${TP_PKI_BUNDLE_DIR}/client.crt" "${GRPC_CLIENT_CERT_PATH}"
+    install -m 0600 "${TP_PKI_BUNDLE_DIR}/client.key" "${GRPC_CLIENT_KEY_PATH}"
+    ;;
+  node)
+    if [[ ! -f "${TP_PKI_BUNDLE_DIR}/client-ca.crt" ]]; then
+      echo_content red "Missing control-plane CA: ${TP_PKI_BUNDLE_DIR}/client-ca.crt"
+      exit 1
+    fi
+    mkdir -p "$(dirname "${GRPC_CLIENT_CA_PATH}")"
+    install -m 0644 "${TP_PKI_BUNDLE_DIR}/client-ca.crt" "${GRPC_CLIENT_CA_PATH}"
+    ;;
+  esac
 }
 
 persist_container_path() {
@@ -549,8 +649,23 @@ prepare_static_web() {
     return
   fi
   echo_content green "---> Prepare camouflage web files"
-  curl -fsSL "${STATIC_HTML}" -o "${WEB_PATH}/html.tar.gz"
-  tar -zxvf "${WEB_PATH}/html.tar.gz" -C "${WEB_PATH}" >/dev/null
+  cat >"${WEB_PATH}/index.html" <<'EOF'
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Welcome</title>
+  <style>
+    body { align-items: center; background: #f5f7fa; color: #243447; display: flex;
+      font: 16px/1.6 system-ui, sans-serif; justify-content: center; margin: 0; min-height: 100vh; }
+    main { background: #fff; border-radius: 16px; box-shadow: 0 12px 40px #1d2d3d1a;
+      max-width: 36rem; padding: 3rem; text-align: center; }
+  </style>
+</head>
+<body><main><h1>Welcome</h1><p>The service is online.</p></main></body>
+</html>
+EOF
 }
 
 write_web_caddyfile() {
@@ -570,46 +685,6 @@ EOF
     cat >"${caddyfile}" <<EOF
 ${domain} {
     reverse_proxy 127.0.0.1:${UI_PORT}
-}
-EOF
-  fi
-}
-
-write_web_source_caddyfile() {
-  local domain="$1"
-  local caddyfile="${TP_DATA}/custom/web-caddy/Caddyfile"
-  if [[ -n "${TP_EMAIL:-}" ]]; then
-    cat >"${caddyfile}" <<EOF
-{
-    email ${TP_EMAIL}
-}
-
-${domain} {
-    handle /api/* {
-        reverse_proxy 127.0.0.1:${PANEL_PORT}
-    }
-
-    handle {
-        root * /srv
-        encode gzip
-        try_files {path} /index.html
-        file_server
-    }
-}
-EOF
-  else
-    cat >"${caddyfile}" <<EOF
-${domain} {
-    handle /api/* {
-        reverse_proxy 127.0.0.1:${PANEL_PORT}
-    }
-
-    handle {
-        root * /srv
-        encode gzip
-        try_files {path} /index.html
-        file_server
-    }
 }
 EOF
   fi
@@ -841,126 +916,6 @@ deploy_panel_ui() {
   wait_for_container "${UI_CONTAINER}"
 }
 
-install_source_tools() {
-  install_base_tools
-  command -v git >/dev/null 2>&1 || install_packages git
-  install_go
-  install_node
-}
-
-install_go() {
-  if command -v go >/dev/null 2>&1; then
-    return
-  fi
-
-  local arch
-  case "$(uname -m)" in
-  x86_64 | amd64)
-    arch="amd64"
-    ;;
-  aarch64 | arm64)
-    arch="arm64"
-    ;;
-  armv6l)
-    arch="armv6l"
-    ;;
-  armv7l | armv7)
-    arch="armv6l"
-    ;;
-  *)
-    echo_content red "Unsupported architecture for Go: $(uname -m)"
-    exit 1
-    ;;
-  esac
-
-  echo_content green "---> Install Go ${GO_VERSION}"
-  curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${arch}.tar.gz" -o /tmp/go.tar.gz
-  rm -rf /usr/local/go
-  tar -C /usr/local -xzf /tmp/go.tar.gz
-  export PATH="/usr/local/go/bin:${PATH}"
-  ln -sf /usr/local/go/bin/go /usr/local/bin/go
-}
-
-install_node() {
-  if command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then
-    :
-  else
-    install_packages nodejs npm
-  fi
-  if ! command -v yarn >/dev/null 2>&1; then
-    npm install -g yarn
-  fi
-}
-
-sync_repo() {
-  local repo="$1"
-  local branch="$2"
-  local path="$3"
-
-  if [[ -d "${path}/.git" ]]; then
-    git -C "${path}" fetch origin "${branch}"
-    git -C "${path}" checkout "${branch}"
-    git -C "${path}" pull --ff-only origin "${branch}"
-  else
-    rm -rf "${path}"
-    git clone --branch "${branch}" "${repo}" "${path}"
-  fi
-}
-
-deploy_panel_backend_source() {
-  local src="${SOURCE_BASE}/trojan-panel"
-  local dst="${TP_DATA}/trojan-panel"
-
-  systemctl stop "${PANEL_SERVICE}" >/dev/null 2>&1 || true
-  mkdir -p "${SOURCE_BASE}" "${dst}/logs" "${dst}/config" "${dst}/webfile"
-  sync_repo "${PANEL_REPO}" "${PANEL_BRANCH}" "${src}"
-
-  echo_content green "---> Build Trojan Panel backend from source"
-  (cd "${src}" && go build -o "${dst}/trojan-panel" .)
-
-  cat >"/etc/systemd/system/${PANEL_SERVICE}.service" <<EOF
-[Unit]
-Description=Trojan Panel source backend
-After=network-online.target docker.service
-Wants=network-online.target
-
-[Service]
-Type=simple
-WorkingDirectory=${dst}
-Environment=GIN_MODE=release
-ExecStart=${dst}/trojan-panel -host=127.0.0.1 -port=${MARIADB_PORT} -user=${MARIADB_USER} -password=${MARIADB_PASSWORD} -redisHost=127.0.0.1 -redisPort=${REDIS_PORT} -redisPassword=${REDIS_PASSWORD} -serverPort=${PANEL_PORT}
-Restart=always
-RestartSec=3
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-  systemctl daemon-reload
-  systemctl enable --now "${PANEL_SERVICE}"
-  for _ in $(seq 1 30); do
-    if systemctl is-active --quiet "${PANEL_SERVICE}"; then
-      return
-    fi
-    sleep 1
-  done
-  journalctl -u "${PANEL_SERVICE}" -n 80 --no-pager || true
-  echo_content red "---> Trojan Panel source backend failed to start"
-  exit 1
-}
-
-deploy_panel_ui_source() {
-  local src="${SOURCE_BASE}/trojan-panel-ui"
-  mkdir -p "${SOURCE_BASE}" "${UI_DIST}"
-  sync_repo "${UI_REPO}" "${UI_BRANCH}" "${src}"
-
-  echo_content green "---> Build Trojan Panel UI from source"
-  (cd "${src}" && yarn install && yarn build)
-  rm -rf "${UI_DIST}"
-  mkdir -p "${UI_DIST}"
-  cp -a "${src}/dist/." "${UI_DIST}/"
-}
-
 deploy_core() {
   local domain="$1"
   local cert_data="${TP_DATA}/custom/node-caddy/data"
@@ -1021,7 +976,7 @@ deploy_web() {
   init_web_secrets
   load_image_archives
   prepare_dirs
-  install_pki_material
+  install_pki_material web
   deploy_mariadb
   deploy_redis
   write_panel_runtime_config
@@ -1038,33 +993,6 @@ deploy_web() {
   echo_content red "==============================================================\n"
 }
 
-deploy_web_source() {
-  require_value TP_WEB_DOMAIN
-
-  install_source_tools
-  install_docker
-  init_web_secrets
-  load_image_archives
-  prepare_dirs
-  install_pki_material
-  deploy_mariadb
-  deploy_redis
-  write_panel_runtime_config
-  deploy_panel_backend_source
-  deploy_panel_ui_source
-  write_web_source_caddyfile "${TP_WEB_DOMAIN}"
-  start_caddy "${WEB_CADDY_CONTAINER}" "${TP_DATA}/custom/web-caddy" "${TP_DATA}/custom/web-caddy/data" "${UI_DIST}"
-
-  echo_content red "\n=============================================================="
-  echo_content skyBlue "Trojan Panel source web side deployed"
-  echo_content yellow "URL: https://${TP_WEB_DOMAIN}"
-  echo_content yellow "Backend repo: ${PANEL_REPO} (${PANEL_BRANCH})"
-  echo_content yellow "UI repo: ${UI_REPO} (${UI_BRANCH})"
-  echo_content yellow "Default username: sysadmin"
-  echo_content yellow "Credentials are stored in the restricted deployment configuration and are not printed."
-  echo_content red "==============================================================\n"
-}
-
 deploy_node() {
   require_value TP_NODE_DOMAIN
   require_value MARIADB_HOST
@@ -1076,12 +1004,9 @@ deploy_node() {
   install_docker
   load_image_archives
   prepare_dirs
-  install_pki_material
+  install_pki_material node
   prepare_static_web
   write_node_caddyfile "${TP_NODE_DOMAIN}"
-  if [[ "${TP_FORCE}" == "1" && "${LEGACY_NODE_CADDY_CONTAINER}" != "${NODE_CADDY_CONTAINER}" ]]; then
-    remove_container_if_force "${LEGACY_NODE_CADDY_CONTAINER}"
-  fi
   start_caddy "${NODE_CADDY_CONTAINER}" "${TP_DATA}/custom/node-caddy" "${TP_DATA}/custom/node-caddy/data" "${WEB_PATH}"
   wait_for_cert "${TP_NODE_DOMAIN}" "${TP_DATA}/custom/node-caddy/data"
   deploy_core "${TP_NODE_DOMAIN}"
@@ -1096,17 +1021,14 @@ deploy_node() {
 
 remove_web() {
   docker rm -f "${WEB_CADDY_CONTAINER}" "${UI_CONTAINER}" "${PANEL_CONTAINER}" "${REDIS_CONTAINER}" "${MARIADB_CONTAINER}" >/dev/null 2>&1 || true
-  systemctl disable --now "${PANEL_SERVICE}" >/dev/null 2>&1 || true
-  rm -f "/etc/systemd/system/${PANEL_SERVICE}.service"
-  systemctl daemon-reload >/dev/null 2>&1 || true
   if [[ "${TP_PURGE_DATA}" == "1" ]]; then
-    rm -rf "${TP_DATA}/custom/web-caddy" "${TP_DATA}/trojan-panel" "${TP_DATA}/trojan-panel-ui" "${TP_DATA}/mariadb" "${TP_DATA}/redis" "${SOURCE_BASE}"
+    rm -rf "${TP_DATA}/custom/web-caddy" "${TP_DATA}/trojan-panel" "${TP_DATA}/trojan-panel-ui" "${TP_DATA}/mariadb" "${TP_DATA}/redis"
   fi
   echo_content skyBlue "---> Trojan Panel web side removed"
 }
 
 remove_node() {
-  docker rm -f "${CORE_CONTAINER}" "${NODE_CADDY_CONTAINER}" "${LEGACY_NODE_CADDY_CONTAINER}" >/dev/null 2>&1 || true
+  docker rm -f "${CORE_CONTAINER}" "${NODE_CADDY_CONTAINER}" >/dev/null 2>&1 || true
   if [[ "${TP_PURGE_DATA}" == "1" ]]; then
     rm -rf "${TP_DATA}/custom/node-caddy" "${TP_DATA}/trojan-panel-core"
   fi
@@ -1114,42 +1036,102 @@ remove_node() {
 }
 
 main() {
-  local action="${1:-}"
-  case "${action}" in
+  local command="${1:-}"
+  local mode=""
+  local config_file=""
+  local force_override=""
+  local purge_override=""
+
+  case "${command}" in
   -h | --help | help | "")
     usage
+    return
     ;;
-  web | deploy-web)
-    require_root
-    load_config "${action}" "${2:-}"
-    deploy_web
-    ;;
-  web-source | deploy-web-source)
-    require_root
-    load_config "${action}" "${2:-}"
-    deploy_web_source
-    ;;
-  node | deploy-node)
-    require_root
-    load_config "${action}" "${2:-}"
-    deploy_node
-    ;;
-  remove-web)
-    require_root
-    [[ -n "${2:-}" ]] && load_config "${action}" "${2:-}"
-    remove_web
-    ;;
-  remove-node)
-    require_root
-    [[ -n "${2:-}" ]] && load_config "${action}" "${2:-}"
-    remove_node
+  install | remove | validate)
+    shift
     ;;
   *)
-    echo_content red "Unknown action: ${action}"
+    echo_content red "Unknown command: ${command}"
     usage
     exit 1
     ;;
   esac
+
+  while (($# > 0)); do
+    case "$1" in
+    --mode)
+      [[ $# -ge 2 ]] || { echo_content red "--mode requires a value"; exit 1; }
+      mode="$2"
+      shift 2
+      ;;
+    --config)
+      [[ $# -ge 2 ]] || { echo_content red "--config requires a value"; exit 1; }
+      config_file="$2"
+      shift 2
+      ;;
+    --force)
+      force_override=1
+      shift
+      ;;
+    --purge-data)
+      purge_override=1
+      shift
+      ;;
+    -h | --help)
+      usage
+      return
+      ;;
+    *)
+      echo_content red "Unknown option: $1"
+      usage
+      exit 1
+      ;;
+    esac
+  done
+
+  require_one_of mode "${mode}" web node
+  if [[ -z "${config_file}" ]]; then
+    echo_content red "--config is required"
+    usage
+    exit 1
+  fi
+  if [[ -n "${force_override}" && "${command}" != install ]]; then
+    echo_content red "--force is only valid with install"
+    exit 1
+  fi
+  if [[ -n "${purge_override}" && "${command}" != remove ]]; then
+    echo_content red "--purge-data is only valid with remove"
+    exit 1
+  fi
+  if [[ "${command}" == validate ]]; then
+    load_config "${mode}" "${config_file}" 0
+  else
+    require_root
+    load_config "${mode}" "${config_file}" 1
+  fi
+  [[ -n "${force_override}" ]] && TP_FORCE="${force_override}"
+  [[ -n "${purge_override}" ]] && TP_PURGE_DATA="${purge_override}"
+  validate_config "${mode}"
+
+  case "${command}:${mode}" in
+  validate:web | validate:node)
+    echo_content green "Configuration is valid for ${mode} purpose: ${config_file}"
+    ;;
+  install:web)
+    deploy_web
+    ;;
+  install:node)
+    deploy_node
+    ;;
+  remove:web)
+    remove_web
+    ;;
+  remove:node)
+    remove_node
+    ;;
+  esac
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

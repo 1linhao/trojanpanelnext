@@ -1,5 +1,7 @@
 # @tp-ui/components-vue2
 
+简体中文 | [English](README_EN.md)
+
 Vue 2 无皮肤组件包，负责控件行为、DOM anatomy、可访问性、Overlay 生命周期和稳定几何；所有视觉值均通过 `@tp-ui/contracts` 的语义变量获取。
 
 ## 职责

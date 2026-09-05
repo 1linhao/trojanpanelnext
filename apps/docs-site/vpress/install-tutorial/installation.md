@@ -1,200 +1,69 @@
-# 自动安装教程
+# 安装 TrojanPanel Next
 
-## 准备
+TrojanPanel Next 使用配置驱动的非交互安装器。每台服务器只选择一种用途：`web` 主控或 `node` Agent。
 
-#### 系统要求
+## 准备仓库
 
-系统:: CentOS 7+ / Ubuntu 18+ / Debian 10+
+```bash
+git clone https://github.com/1linhao/trojanpanelnext.git
+cd trojanpanelnext/deploy/installer
+```
 
-CPU: linux/amd64 / linux/arm/v6 / linux/arm/v7 / linux/arm64 / linux/s390x / linux/ppc64le / linux/386
+## 安装 Web 主控
 
-内存: ≥ 1G
+```bash
+cp examples/web.yaml ./web.yaml
+chmod 600 ./web.yaml
+```
 
-#### 相关端口
+编辑 `web.yaml` 中的 `hostname` 和 `email`，确保域名已经解析到主控服务器。
 
-| 端口   | 描述                      |
-|------|-------------------------|
-| 80   | 伪装Web                   |
-| 8863 | Caddy/Nginx转发           |
-| 8888 | Trojan Panel前端          |
-| 8081 | Trojan Panel后端          |
-| 8082 | Trojan Panel Core       |
-| 8100 | Trojan Panel Core API端口 |
-| 9507 | MariaDB                 |
-| 6378 | Redis                   |
+```bash
+./install.sh validate --mode web --config ./web.yaml
+sudo ./install.sh install --mode web --config ./web.yaml
+```
 
-提示:
+首次安装生成的 MariaDB 与 Redis 密码会写回 `web.yaml`。请妥善保存该文件，不要提交到 Git。
 
-1. 如果使用的服务器控制面板有防火墙设置需要自己在控制面板自行开放以上端口。
+安装器同时在 `/tpdata/trojanpanelnext-pki` 生成主控 mTLS 身份。Node Agent 只需要其中的
+`client-ca.crt`；CA 私钥与主控客户端证书不得离开 Web 主控。
 
-2. 如果没有没有远程节点，尽量关闭`9507`和`6378`端口。
+## 安装 Node Agent
 
-#### 注意
+```bash
+cp examples/node-agent.yaml ./node-agent.yaml
+chmod 600 ./node-agent.yaml
+```
 
-1. 控制面板和节点都推荐部署在**国外服务器**上，否则会由于网络问题使用一键安装脚本会因为远程下载文件超时报错。
+编辑节点域名，并从 Web 主控的 `web.yaml` 填入 MariaDB 和 Redis 连接信息。通过可信的
+文件传输或密钥管理系统，将 Web 主控的 `/tpdata/trojanpanelnext-pki/client-ca.crt`
+复制到 Node 的同一路径。
 
-2. 提前准备一个解析到服务的**二级域名**。
+```bash
+./install.sh validate --mode node --config ./node-agent.yaml
+sudo ./install.sh install --mode node --config ./node-agent.yaml
+```
 
-3. 数据库和Redis的密码**尽量设置复杂**（数据库密码不支持部分特殊字符），否则存在被撞库的安全风险。
+## 更新容器
 
-4. 建议的安装顺序: [网络加速](../tutorial/performance-tuning.md#网络加速) > Trojan Panel Backend > Trojan Panel
-   Frontend -> Trojan Panel Core
+更新配置中的镜像版本后，使用 `--force` 重新创建容器：
 
-   建议在脚本运行中需要手动输入的部分，如果没有特殊需求或者不知道这个选项是干什么的，
-   **除数据库密码和Redis密码自定义以外，其他默认即可**。
+```bash
+sudo ./install.sh install --mode web --config ./web.yaml --force
+```
 
-5. 如果是远程多节点的情况，节点服务器**只需要安装一次**Trojan Panel Core，在面板界面才可以操作远程服务器从而远程自动化管理节点。
+## 卸载
 
-6. 如果使用Caddy2自动申请/续签证书，需要开放Caddy端口（默认80）并且**保证Caddy端口没有被其他进程占用**。
+保留数据：
 
-## 一键安装脚本
+```bash
+sudo ./install.sh remove --mode web --config ./web.yaml
+```
 
-1. 联机版（推荐）
+同时删除生成数据：
 
-   ```shell
-   source <(curl -L https://github.com/trojanpanel/install-script/raw/main/install_script.sh)
-   ```
+```bash
+sudo ./install.sh remove --mode node --config ./node-agent.yaml --purge-data
+```
 
-2. 单机版
-
-   ```shell
-   source <(curl -L https://github.com/trojanpanel/install-script/raw/main/install_script_standalone.sh)
-   ```
-
-3. [安装旧版](https://github.com/trojanpanel/install-script/blob/main/README_ARCHIVE.md)
-
-## 安装Trojan Panel
-
-1. 设置伪装Web
-
-推荐使用Caddy 2，可以作为伪装Web也可以自动申请/续签证书。
-
-2. 请输入Caddy的端口(默认:80)
-
-默认即可，除非80端口被墙或者被其他进程占用。
-
-3. 请输入Caddy的转发端口(用于申请证书,默认:8863)
-
-默认即可，除非8863端口被墙。
-
-4. 请输入你的域名(必填)
-
-输入你提前解析到本机的域名。
-
-5. 请输入你的邮箱(可选)
-
-默认即可，或输入一个合法的邮箱地址。
-
-6. 请选择设置证书的方式?(1/自动申请和续签证书 2/手动设置证书路径 默认:1/自动申请和续签证书)
-
-推荐自动申请和续签证书，如果自己有证书或者自动申请和续签证书失败可以选择手动设置证书路径（24小时内申请2次以上可能会导致自动申请证书失败，如果搭建频繁，建议选择手动设置证书路径）。
-
-6. 请选择申请证书的方式(1/acme 2/zerossl 默认:1/acme)
-
-默认即可，选择自动申请证书的方式。
-
-7. 请输入证书的.crt文件路径(必填)
-
-使用.crt文件的绝对路径，例如：`/root/www.google.com.crt`
-
-8. 请输入证书的.key文件路径(必填)
-
-使用.key文件的绝对路径，例如：`/root/www.google.com.key`
-
-9. 请输入数据库的用户名(默认:root)
-
-默认即可，除非有自定义数据库用户的需求。
-
-10. 请输入数据库的密码(必填)
-
-输入一个较为复杂且你能记得住的密码。
-
-11. 请输入Redis的密码(必填)
-
-输入一个较为复杂且你能记得住的密码。
-
-12. 请输入数据库的IP地址(默认:本地数据库)
-
-如果数据库安装在本机则默认即可，如果数据库安装在其他服务器这里填远程服务器的IP地址。
-
-13. 请输入数据库的端口(默认:本地数据库端口)
-
-如果数据库安装在本机则默认即可，如果数据库安装在其他服务器这里填远程服务器的数据库端口。
-
-14. 请输入数据库的用户名(默认:root)
-
-默认即可，除非有自定义数据库用户的需求。
-
-15. 请输入数据库的密码(必填)
-
-如果数据库安装在本机则填写本机数据库密码，如果数据库安装在其他服务器这里填远程服务器的数据库密码。
-
-16. 请输入Redis的IP地址(默认:本机Redis)
-
-如果Redis安装在本机则默认即可，如果Redis安装在其他服务器这里填远程服务器的IP地址。
-
-17. 请输入Redis的端口(默认:本机Redis端口)
-
-如果Redis安装在本机则默认即可，如果Redis安装在其他服务器这里填远程服务器的Redis端口。
-
-18. 请输入Redis的密码(必填)
-
-如果Redis安装在本机则填写本机Redis密码，如果Redis安装在其他服务器这里填远程服务器的Redis密码。
-
-19. 请输入Trojan Panel前端端口(默认:8888)
-
-默认即可，除非有自定义Trojan Panel前端端口的需求。
-
-20. 请选择Trojan Panel前端是否开启https?(0/关闭 1/开启 默认:1/开启)
-
-默认即可，除非有自定义择Trojan Panel前端是否开启https的需求。如果开启https，则管理面板地址为`https://你的域名:端口`
-，如果未开启https，则管理面板地址为`http://你的域名:端口`。
-
-**提示**
-
-1. 安装结束后，访问**你的域名**如果是一个静态网页，说明已经安装成功。
-
-2. 安装成功后，Trojan Panel管理面板地址: `你的域名:8888`
-   系统管理员 默认用户名: `sysadmin` 默认密码: `123456` 请及时登陆管理面板修改密码。
-
-## 安装Trojan Panel Core
-
-1. 请输入数据库的IP地址(默认:本地数据库)
-
-如果数据库安装在本机则默认即可，如果数据库安装在其他服务器这里填远程服务器的IP地址。
-
-2. 请输入数据库的端口(默认:本地数据库端口)
-
-如果数据库安装在本机则默认即可，如果数据库安装在其他服务器这里填远程服务器的数据库端口。
-
-3. 请输入数据库的用户名(默认:root)
-
-默认即可，除非有自定义数据库用户的需求。
-
-4. 请输入数据库的密码(必填)
-
-如果数据库安装在本机则填写本机数据库密码，如果数据库安装在其他服务器这里填远程服务器的数据库密码。
-
-5. 请输入数据库名称(默认:trojan_panel_db)
-
-默认即可，除非有自定义数据库名称的需求。
-
-6. 请输入数据库的用户表名称(默认:account)
-
-默认即可，除非有自定义数据库的用户表的需求。
-
-7. 请输入Redis的IP地址(默认:本机Redis)
-
-如果Redis安装在本机则默认即可，如果Redis安装在其他服务器这里填远程服务器的IP地址。
-
-8. 请输入Redis的端口(默认:本机Redis端口)
-
-如果Redis安装在本机则默认即可，如果Redis安装在其他服务器这里填远程服务器的Redis端口。
-
-9. 请输入Redis的密码(必填)
-
-如果Redis安装在本机则填写本机Redis密码，如果Redis安装在其他服务器这里填远程服务器的Redis密码。
-
-10. 请输入API的端口(默认:8100)
-
-默认即可，除非8100端口被墙。
+完整参数和配置字段见仓库中的[安装器说明](https://github.com/1linhao/trojanpanelnext/tree/main/deploy/installer)。

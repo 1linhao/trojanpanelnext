@@ -1,9 +1,8 @@
 {
-  "name": "trojan-panel-doc",
+  "name": "trojanpanelnext-docs",
   "version": "1.0.0",
   "main": "index.js",
-  "repository": "git@github.com:trojanpanel/trojan-panel-doc.git",
-  "author": "jonssonyan <https://jonssonyan.com>",
+  "repository": "https://github.com/1linhao/trojanpanelnext.git",
   "private": true,
   "scripts": {
     "docs:dev": "vuepress dev vpress",

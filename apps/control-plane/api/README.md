@@ -1,21 +1,22 @@
-## Trojan Panel
+# TrojanPanel Next API
 
-Trojan Panel Backend
+简体中文 | [English](README_EN.md)
 
-## Build
+控制面后端服务，提供账号、节点、订阅、系统设置和管理接口。
 
-[compile.bat](./compile.bat)
+## 开发
 
-## Other
+```bash
+go test ./...
+go build ./...
+```
 
-Telegram Channel: https://t.me/jonssonyan_channel
+Windows 构建辅助脚本：[compile.bat](compile.bat)
 
-You can subscribe to my channel on YouTube: https://www.youtube.com/@jonssonyan
+## 支持
 
-## Support
-
+- [TrojanPanel 原项目](https://github.com/trojanpanel)
 - [trojan](https://github.com/trojan-gfw/trojan)
-- [trojan-go](https://github.com/p4gefau1t/trojan-go)
 - [Xray-core](https://github.com/XTLS/Xray-core)
-- [hysteria](https://github.com/HyNetwork/hysteria)
+- [hysteria](https://github.com/apernet/hysteria)
 - [naiveproxy](https://github.com/klzgrad/naiveproxy)

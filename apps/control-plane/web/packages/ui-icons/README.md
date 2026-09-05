@@ -1,5 +1,7 @@
 # @tp-ui/icons
 
+简体中文 | [English](README_EN.md)
+
 框架轻耦合的语义图标注册表。所有图标使用统一 viewBox、线宽和光学对齐，默认继承 `currentColor`。
 
 ## 职责

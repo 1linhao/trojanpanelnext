@@ -1,5 +1,7 @@
 # @tp-ui/layout-app-shell-vue2
 
+简体中文 | [English](README_EN.md)
+
 Vue 2 应用外壳布局包。它只负责 Header、桌面导航、移动导航、内容视口和响应式几何，并通过意图事件与业务应用通信。
 
 ## 职责

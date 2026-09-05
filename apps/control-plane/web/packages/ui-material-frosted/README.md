@@ -1,5 +1,7 @@
 # @tp-ui/material-frosted
 
+简体中文 | [English](README_EN.md)
+
 Trojan Panel 生产磨砂玻璃材质包。它实现 contracts 登记的完整材质变量，通过根主题属性和语义 Surface 改变视觉，不修改组件 DOM。
 
 ## 职责

@@ -15,8 +15,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  migration:
-    name: migration and secret scan
+  repository:
+    name: repository checks and secret scan
     runs-on: ubuntu-latest
     steps:
       - name: Check out complete history
@@ -24,20 +24,8 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Verify immutable migration baseline
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          baseline=migration-baseline-2026-09-04
-          test "$(git rev-list --count "$baseline")" -eq 1
-          test "$(git rev-list --parents -n 1 "$baseline" | awk '{print NF-1}')" -eq 0
-          test -z "$(git ls-tree -r "$baseline" | awk '$1 == 160000 {print}')"
-          jq -e '
-            .historyPolicy == "security-sanitized-snapshot-without-parents" and
-            .workspace.commit == "444822da8c8c3aff7635607409b980e9aaf3bf8c" and
-            .totalSourceFiles == 650 and
-            .totalImportedFiles == 582
-          ' migration/source-baseline.json >/dev/null
+      - name: Verify bilingual README contract
+        run: node scripts/check-readme-languages.mjs
 
       - name: Scan complete Git history for secrets
         run: >-
@@ -124,6 +112,8 @@ jobs:
           done < <(find deploy/installer -type f -name '*.sh' -print0)
           test "$count" -gt 0
           printf 'validated %d shell scripts\n' "$count"
+      - name: Test installer CLI contract
+        run: bash deploy/installer/tests/installer_cli_test.sh
 
   docs:
     name: documentation site
@@ -146,12 +136,12 @@ jobs:
   gate:
     name: gate
     if: always()
-    needs: [migration, api, web, node-agent, installer, docs]
+    needs: [repository, api, web, node-agent, installer, docs]
     runs-on: ubuntu-latest
     steps:
       - name: Require every CI job to pass
         env:
-          MIGRATION_RESULT: ${{ needs.migration.result }}
+          REPOSITORY_RESULT: ${{ needs.repository.result }}
           API_RESULT: ${{ needs.api.result }}
           WEB_RESULT: ${{ needs.web.result }}
           NODE_AGENT_RESULT: ${{ needs.node-agent.result }}
@@ -161,7 +151,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           for result in \
-            "$MIGRATION_RESULT" \
+            "$REPOSITORY_RESULT" \
             "$API_RESULT" \
             "$WEB_RESULT" \
             "$NODE_AGENT_RESULT" \

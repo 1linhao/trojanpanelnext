@@ -1,4 +1,6 @@
-# Trojan Panel UI · Frosted Glass
+# TrojanPanel Next Web UI
+
+简体中文 | [English](README_EN.md)
 
 Trojan Panel 的响应式 Web 管理界面。本分支采用统一的磨砂玻璃（Frosted Glass）设计语言，覆盖管理员与普通用户页面，并适配桌面和手机浏览器。
 
@@ -12,6 +14,20 @@ Trojan Panel 的响应式 Web 管理界面。本分支采用统一的磨砂玻�
 - 响应式管理页面以及管理员、普通用户两种界面权限
 
 > 浏览器顶栏和底栏是否采用网页主题色由浏览器及系统版本决定。Via、Chrome 等浏览器需开启“跟随网页颜色”或同类选项。
+
+## 测试页面效果
+
+### 登录
+
+![登录页面](docs/screenshots/login.png)
+
+### 节点
+
+![节点页面](docs/screenshots/nodes.png)
+
+### 我的
+
+![我的页面](docs/screenshots/profile.png)
 
 ## 本地开发
 
@@ -57,10 +73,9 @@ npm run test:live-stack:e2e
 
 构建产物位于 `dist/`，可通过 Nginx 或项目 Docker 镜像部署。
 
-## 相关项目
+## 支持
 
-- [Trojan Panel](https://github.com/trojanpanel/trojan-panel)
-- [Trojan Panel UI 上游项目](https://github.com/trojanpanel/trojan-panel-ui)
+- [TrojanPanel 原项目](https://github.com/trojanpanel)
 - [trojan](https://github.com/trojan-gfw/trojan)
 - [trojan-go](https://github.com/p4gefau1t/trojan-go)
 - [Xray-core](https://github.com/XTLS/Xray-core)

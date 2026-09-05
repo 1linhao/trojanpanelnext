@@ -1,28 +1,32 @@
-# 木马面板内核
+# TrojanPanel Next Node Agent
 
-木马面板内核
+[简体中文](README.md) | English
 
-## 支持的节点类型
+Trojan Panel Core
+
+## Supported node types
 
 1. Xray
 2. Hysteria2
 3. NaiveProxy
 
-Trojan-Go 与 Hysteria v1 已退役。为兼容历史数据库，其类型编号仍保留且禁止复用。
+Trojan-Go and Hysteria v1 are retired. Their historical numeric type IDs remain
+reserved for database compatibility and must not be reused.
 
-默认数据处理：
+Default data processing：
 
-1. 读取/写入 account 表中的 username, pass, hash, quota, download, upload, ip_limit, download_speed_limit, upload_speed_limit。
-   pass, hash 需要哈希处理，quota, upload, download, download_speed_limit, upload_speed_limit 单位是 byte
+1. Read/write username, pass, hash, quota, download, upload, ip_limit, download_speed_limit, upload_speed_limit in
+   account. pass, hash needs to be hashed, quota, upload, download, download_speed_limit, upload_speed_limit unit is
+   byte
 
-主要逻辑：
+Main logic：
 
-1. API实时更新（数据库到应用）有效账户：account.quota < 0 or account.download +
+1. API real-time update (database to application) valid account: account.quota < 0 or account.download +
    account.upload < account.quota
-2. 定期更新 account.download、account.upload
-3. account.quota=0, 该用户被禁用
+2. Regularly update account.download, account.upload
+3. account.quota=0, the user is disabled
 
-## 创建数据库表语句示例
+## Create database table statement example
 
 ```sql
 create table trojan_panel_db.account
@@ -41,26 +45,17 @@ create table trojan_panel_db.account
 );
 ```
 
-## 版本关系
-
-[发行说明](https://github.com/trojanpanel/install-script/blob/main/README_ARCHIVE_ZH.md#%E5%8F%91%E8%A1%8C%E8%AF%B4%E6%98%8E)
-
-## 防止循环依赖
+## Prevent circular dependencies
 
 router->api->middleware->app->service/dao->core
 
-## 构建
+## Build
 
 [compile.bat](compile.bat)
 
-## 其他
+## Support
 
-Telegram Channel: https://t.me/jonssonyan_channel
-
-You can subscribe to my channel on YouTube: https://www.youtube.com/@jonssonyan
-
-## 致谢
-
+- [Original TrojanPanel project](https://github.com/trojanpanel)
 - [trojan](https://github.com/trojan-gfw/trojan)
 - [Xray-core](https://github.com/XTLS/Xray-core)
 - [hysteria](https://github.com/apernet/hysteria)

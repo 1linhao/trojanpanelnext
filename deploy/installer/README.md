@@ -1,118 +1,98 @@
-[中文](README_ZH.md)
+# TrojanPanel Next 安装器
 
-<div align="center">
-<a href="https://github.com/trojanpanel"><img src="https://github.com/trojanpanel/install-script/assets/46235235/bfc4f96a-e8b6-499d-956f-a9c212059294" alt="Trojan Panel" width="150" /></a>
-<h1>Trojan Panel</h1>
-<p>
-<a href="https://github.com/trojanpanel/install-script/stargazers"><img src="https://img.shields.io/github/stars/trojanpanel/install-script" alt="GitHub stars"></a>
-<a href="https://github.com/trojanpanel/install-script/forks"><img src="https://img.shields.io/github/forks/trojanpanel/install-script" alt="GitHub forks"></a>
-<a href="https://github.com/trojanpanel/install-script/issues"><img src="https://img.shields.io/github/issues/trojanpanel/install-script" alt="GitHub issues"></a>
-<a href="https://github.com/trojanpanel/install-script/releases"><img src="https://img.shields.io/github/v/release/trojanpanel/install-script" alt="GitHub release"></a>
-<a href="https://hub.docker.com/r/jonssonyan/trojan-panel"><img src="https://img.shields.io/docker/pulls/jonssonyan/trojan-panel" alt="Docker pulls"></a>
-</p>
-<h3>Multi-user web administration panel supporting Xray/Trojan-Go/Hysteria/NaiveProxy</h3>
-<a href="https://github.com/trojanpanel/install-script/assets/46235235/7ac2bba1-b442-442d-b48e-b52f92e0bad8"><img src="https://github.com/trojanpanel/install-script/assets/46235235/7ac2bba1-b442-442d-b48e-b52f92e0bad8" alt="Trojan Panel"/></a>
-</div>
+简体中文 | [English](README_EN.md)
 
-## Features
+安装器使用一个脚本、一份 YAML 配置和一个明确的服务器用途完成部署，全程无交互。
 
-- Speed build: One-click installation of scripts, lowering the deployment threshold, and quickly building the system
-- Globalization: System language support 中文/English/한국인/فارسی
-- Multi-agent support: Node type supports Xray/Trojan-Go/Hysteria/NaiveProxy
-- Distributed: The front-end and back-end are developed separately, reducing the coupling between modules, and can be
-  freely combined and deployed on multiple servers
-- Powerful: Support login registration/user management/node management/mail management/blacklist management/custom
-  camouflage website/system Kanban, etc.
-- What you see is what you get: Support multi-node management, automatic management of remote nodes, automatic
-  application/renewal of certificates, editing nodes in the panel, remote service real-time modification of node
-  configuration
+## 用途模式
 
-## Recommended OS
+| 模式 | 用途 | 部署内容 |
+| --- | --- | --- |
+| `web` | Web 主控 | API、Web UI、MariaDB、Redis、Caddy |
+| `node` | Node Agent | 节点 Agent、代理内核运行环境、证书与伪装站 |
 
-OS: CentOS 7+ / Ubuntu 18+ / Debian 10+
+Web 主控应先安装。Node Agent 使用 Web 主控配置文件中生成的 MariaDB 和 Redis 密码。
 
-CPU: linux/amd64 / linux/arm/v6 / linux/arm/v7 / linux/arm64 / linux/s390x / linux/ppc64le / linux/386
+## 系统要求
 
-Memory: ≥ 1G
+| 项目 | 要求 |
+| --- | --- |
+| 操作系统 | Ubuntu 20.04+、Debian 11+ 或同类 systemd Linux |
+| 权限 | 安装和卸载需要 `root` |
+| CPU | `linux/amd64` 或 `linux/arm64` |
+| 内存 | 至少 1 GiB |
+| 网络 | 域名已解析到目标服务器，防火墙放行所配置端口 |
 
-## Installation
+## Web 主控安装
 
-- Online(recommended)
+复制配置模板：
 
-    ```shell
-    source <(curl -L https://github.com/trojanpanel/install-script/raw/main/install_script.sh)
-    ```
-
-- Standalone
-
-    ```shell
-    source <(curl -L https://github.com/trojanpanel/install-script/raw/main/install_script_standalone.sh)
-    ```
-
-- [Install old version](README_ARCHIVE.md)
-
-### Custom split deployment
-
-This fork includes `custom_install.sh` for non-interactive split deployment.
-
-- Web side: deploys Caddy HTTPS, Trojan Panel UI, backend, MariaDB, and Redis. It does not deploy `trojan-panel-core`.
-- Node side: deploys Caddy camouflage/certificate and `trojan-panel-core`, connected to the web side MariaDB/Redis.
-- GHCR images: defaults use `ghcr.io/1linhao/trojan-panel:singbox`, `ghcr.io/1linhao/trojan-panel-ui:singbox`, and `ghcr.io/1linhao/trojan-panel-core:singbox`. Keep the GitHub Packages visibility Public so VPS hosts can pull them anonymously.
-
-Download the web side config:
-
-```shell
-curl -fsSL https://raw.githubusercontent.com/1linhao/trojan-panel-install-script/feature/sing-box-subscribe/examples/web.env.yaml -o ./web.env.yaml
+```bash
+cp examples/web.yaml ./web.yaml
+chmod 600 ./web.yaml
 ```
 
-Edit `./web.env.yaml`, then deploy the web side:
+编辑 `hostname` 和 `email`，然后先校验再安装：
 
-```shell
-curl -fsSL https://raw.githubusercontent.com/1linhao/trojan-panel-install-script/feature/sing-box-subscribe/custom_install.sh -o /tmp/tp-custom.sh && \
-chmod +x /tmp/tp-custom.sh && \
-bash /tmp/tp-custom.sh web ./web.env.yaml
+```bash
+./install.sh validate --mode web --config ./web.yaml
+sudo ./install.sh install --mode web --config ./web.yaml
 ```
 
-Download the node side config:
+首次安装会生成 MariaDB 与 Redis 密码，写回 `web.yaml` 并将文件权限设为 `600`。
+安装器还会在 `pki_bundle_dir` 自动生成主控 mTLS 身份；CA 私钥只保留在 Web 主控。
 
-```shell
-curl -fsSL https://raw.githubusercontent.com/1linhao/trojan-panel-install-script/feature/sing-box-subscribe/examples/node.env.yaml -o ./node.env.yaml
+Node Agent 安装前，通过可信的文件传输或密钥管理系统，将 Web 主控中的
+`/tpdata/trojanpanelnext-pki/client-ca.crt` 复制到 Node 的同一路径。只复制公开 CA
+证书，不要复制 `client-ca.key`、`client.key` 或 `client.crt`。
+
+## Node Agent 安装
+
+复制配置模板：
+
+```bash
+cp examples/node-agent.yaml ./node-agent.yaml
+chmod 600 ./node-agent.yaml
 ```
 
-Edit `./node.env.yaml`, then deploy the node side:
+填写节点域名、Web 主控地址以及 Web 配置中的数据库和 Redis 密码，并确认公开 CA
+证书已放入 `pki_bundle_dir`：
 
-```shell
-curl -fsSL https://raw.githubusercontent.com/1linhao/trojan-panel-install-script/feature/sing-box-subscribe/custom_install.sh -o /tmp/tp-custom.sh && \
-chmod +x /tmp/tp-custom.sh && \
-bash /tmp/tp-custom.sh node ./node.env.yaml
+```bash
+./install.sh validate --mode node --config ./node-agent.yaml
+sudo ./install.sh install --mode node --config ./node-agent.yaml
 ```
 
-## Other
+`--mode` 必须和配置中的 `trojanpanelnext.purpose` 一致，模式不匹配时安装器会立即退出。
 
-Telegram Channel: https://t.me/jonssonyan_channel
+## 重建与卸载
 
-You can subscribe to my channel on YouTube: https://www.youtube.com/@jonssonyan
+重新创建已有容器：
 
-## Documentation
+```bash
+sudo ./install.sh install --mode web --config ./web.yaml --force
+```
 
-Visit [https://trojanpanel.github.io](https://trojanpanel.github.io) to view the full documentation
+保留数据卸载服务：
 
-## Change Log
+```bash
+sudo ./install.sh remove --mode web --config ./web.yaml
+```
 
-Visit [https://trojanpanel.github.io/change/change-log.html](https://trojanpanel.github.io/change/change-log.html) to view the full log
+删除服务及生成数据：
 
-## Bugs & Issues
+```bash
+sudo ./install.sh remove --mode node --config ./node-agent.yaml --purge-data
+```
 
-[Issues](https://github.com/trojanpanel/install-script/issues)
+## 配置文件
 
-## Thanks
+[Web 主控模板](examples/web.yaml)包含域名、镜像、服务端口、mTLS 身份目录以及主控内部凭据。
 
-- [trojan](https://github.com/trojan-gfw/trojan)
-- [trojan-go](https://github.com/p4gefau1t/trojan-go)
-- [Xray-core](https://github.com/XTLS/Xray-core)
-- [hysteria](https://github.com/HyNetwork/hysteria)
-- [naiveproxy](https://github.com/klzgrad/naiveproxy)
+[Node Agent 模板](examples/node-agent.yaml)包含节点域名、主控数据库连接、Redis 连接、gRPC、公开 CA 目录与证书路径。
 
-## Stargazers over time
+配置中的密码不会打印到终端。请将实际配置作为敏感文件保存，不要提交到 Git。
 
-[![Stargazers over time](https://starchart.cc/trojanpanel/install-script.svg)](https://github.com/trojanpanel/install-script)
+## 支持
+
+本项目来源：[TrojanPanel 原项目](https://github.com/trojanpanel)。

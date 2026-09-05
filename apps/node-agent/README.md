@@ -1,30 +1,30 @@
-# Trojan Panel Core
+# TrojanPanel Next Node Agent
 
-Trojan Panel Core
+简体中文 | [English](README_EN.md)
 
-## Supported node types
+木马面板内核
+
+## 支持的节点类型
 
 1. Xray
 2. Hysteria2
 3. NaiveProxy
 
-Trojan-Go and Hysteria v1 are retired. Their historical numeric type IDs remain
-reserved for database compatibility and must not be reused.
+Trojan-Go 与 Hysteria v1 已退役。为兼容历史数据库，其类型编号仍保留且禁止复用。
 
-Default data processing：
+默认数据处理：
 
-1. Read/write username, pass, hash, quota, download, upload, ip_limit, download_speed_limit, upload_speed_limit in
-   account. pass, hash needs to be hashed, quota, upload, download, download_speed_limit, upload_speed_limit unit is
-   byte
+1. 读取/写入 account 表中的 username, pass, hash, quota, download, upload, ip_limit, download_speed_limit, upload_speed_limit。
+   pass, hash 需要哈希处理，quota, upload, download, download_speed_limit, upload_speed_limit 单位是 byte
 
-Main logic：
+主要逻辑：
 
-1. API real-time update (database to application) valid account: account.quota < 0 or account.download +
+1. API实时更新（数据库到应用）有效账户：account.quota < 0 or account.download +
    account.upload < account.quota
-2. Regularly update account.download, account.upload
-3. account.quota=0, the user is disabled
+2. 定期更新 account.download、account.upload
+3. account.quota=0, 该用户被禁用
 
-## Create database table statement example
+## 创建数据库表语句示例
 
 ```sql
 create table trojan_panel_db.account
@@ -43,26 +43,17 @@ create table trojan_panel_db.account
 );
 ```
 
-## Version relationship
-
-[Release Notes](https://github.com/trojanpanel/install-script/blob/main/README_ARCHIVE_ZH.md#%E5%8F%91%E8%A1%8C%E8%AF%B4%E6%98%8E)
-
-## Prevent circular dependencies
+## 防止循环依赖
 
 router->api->middleware->app->service/dao->core
 
-## Build
+## 构建
 
 [compile.bat](compile.bat)
 
-## Other
+## 支持
 
-Telegram Channel: https://t.me/jonssonyan_channel
-
-You can subscribe to my channel on YouTube: https://www.youtube.com/@jonssonyan
-
-## Support
-
+- [TrojanPanel 原项目](https://github.com/trojanpanel)
 - [trojan](https://github.com/trojan-gfw/trojan)
 - [Xray-core](https://github.com/XTLS/Xray-core)
 - [hysteria](https://github.com/apernet/hysteria)

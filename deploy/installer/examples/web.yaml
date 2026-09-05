@@ -1,0 +1,30 @@
+trojanpanelnext:
+  schema_version: 1
+  purpose: web
+
+  # DNS A/AAAA records must point to this Web control-plane server.
+  hostname: panel.example.com
+  email: admin@example.com
+
+  caddy_image: caddy:2.8.4
+  mariadb_image: mariadb:10.7.3
+  redis_image: redis:6.2.7
+  panel_image: ghcr.io/1linhao/trojanpanelnext-api:latest
+  ui_image: ghcr.io/1linhao/trojanpanelnext-web:latest
+
+  mariadb_port: 9507
+  redis_port: 6378
+  panel_port: 8081
+  ui_port: 8888
+
+  # Empty values are generated on first installation and written back here.
+  mariadb_password: ""
+  redis_password: ""
+
+  grpc_client_cert_path: /tpdata/trojan-panel/pki/client.crt
+  grpc_client_key_path: /tpdata/trojan-panel/pki/client.key
+  grpc_server_ca_path: ""
+  pki_bundle_dir: /tpdata/trojanpanelnext-pki
+
+  force: 0
+  purge_data: 0

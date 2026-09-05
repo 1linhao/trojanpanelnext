@@ -1,5 +1,7 @@
 # @tp-ui/motion-native
 
+简体中文 | [English](README_EN.md)
+
 默认的原生动画资源包。它实现 Motion Controller、语义时序 Token 和少量框架无关工具，并为后续 WAAPI、View Transitions 或第三方动画模块保留同级替换接口。
 
 ## 职责

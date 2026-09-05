@@ -1,5 +1,7 @@
 # @tp-ui/contracts
 
+简体中文 | [English](README_EN.md)
+
 Trojan Panel 可组合 UI 的框架无关契约包。主题、材质、布局、组件、图标和动画包都以这里的枚举、模型及 CSS Custom Property 清单为共同语言。
 
 ## 职责
