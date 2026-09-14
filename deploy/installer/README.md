@@ -69,6 +69,8 @@ sudo ./install.sh install --mode web --config ./web.yaml
 Node Agent 安装前，通过可信的文件传输或密钥管理系统，将 Web 主控中的
 `/tpdata/trojanpanelnext-pki/client-ca.crt` 复制到 Node 的同一路径。只复制公开 CA
 证书，不要复制 `client-ca.key`、`client.key` 或 `client.crt`。
+安装器会把 CA 摘要写入 Core 容器环境；首次接管旧容器或 CA 内容变化时会自动重建
+Core，使新的信任根立即生效。CA 未变化时重复安装不会重启 Core。
 
 ## Node Agent 安装
 

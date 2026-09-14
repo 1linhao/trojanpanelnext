@@ -321,6 +321,21 @@ bash -c '
 ' installer-test "${INSTALLER}" >"${external_cases_dir}/migration.out"
 test "$(grep -c 'recreate container' "${external_cases_dir}/migration.out")" = 1
 
+# Core reads the client CA at startup. A legacy container without the marker,
+# or a container pinned to another CA, must be recreated; an unchanged CA is a
+# no-op on later installer replays.
+bash -c '
+  set -Eeuo pipefail
+  source "$1"
+  container_exists() { return 0; }
+  container_env_value() { printf "%s\n" "${CURRENT_VALUE:-}"; }
+  docker() { printf "%s\n" "$*"; }
+  CURRENT_VALUE= recreate_container_if_env_changed core TP_CLIENT_CA_SHA256 abc ""
+  CURRENT_VALUE=old recreate_container_if_env_changed core TP_CLIENT_CA_SHA256 abc ""
+  CURRENT_VALUE=abc recreate_container_if_env_changed core TP_CLIENT_CA_SHA256 abc ""
+' installer-test "${INSTALLER}" >"${external_cases_dir}/client-ca-migration.out"
+test "$(grep -c 'recreate container' "${external_cases_dir}/client-ca-migration.out")" = 2
+
 # External mode must fail closed when a stale Caddy container cannot be
 # removed; otherwise install would claim success while 80/443 may stay owned.
 assert_fails bash -c '

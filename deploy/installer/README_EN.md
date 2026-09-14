@@ -66,6 +66,7 @@ sudo ./install.sh install --mode web --config ./web.yaml
 The first installation generates MariaDB and Redis passwords, writes them back to `web.yaml`, and changes its permissions to `600`. It also creates the control-plane mTLS identity in `pki_bundle_dir`; the CA private key stays on the Web control plane.
 
 Before installing a Node Agent, transfer `/tpdata/trojanpanelnext-pki/client-ca.crt` from the Web control plane to the same path on the Node through a trusted file-transfer or secret-management channel. Copy only the public CA certificate; never copy `client-ca.key`, `client.key`, or `client.crt`.
+The installer records the CA digest in the Core container environment. It recreates Core when adopting a legacy unmarked container or when the CA changes, so the new trust root takes effect immediately; unchanged replays do not restart Core.
 
 ## Install a Node Agent
 

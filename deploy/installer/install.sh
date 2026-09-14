@@ -1498,6 +1498,8 @@ deploy_panel_ui() {
 
 deploy_core() {
   local domain="$1"
+  local client_ca_sha256
+  client_ca_sha256="$(sha256sum "${GRPC_CLIENT_CA_PATH}" | awk '{print $1}')"
   local cert_data="${TP_DATA}/custom/node-caddy/data"
   local crt_path="${cert_data}/caddy/certificates/acme-v02.api.letsencrypt.org-directory/${domain}/${domain}.crt"
   local key_path="${cert_data}/caddy/certificates/acme-v02.api.letsencrypt.org-directory/${domain}/${domain}.key"
@@ -1509,6 +1511,7 @@ deploy_core() {
   write_core_runtime_config "${crt_path}" "${key_path}"
   remove_container_if_force "${CORE_CONTAINER}"
   recreate_container_if_env_changed "${CORE_CONTAINER}" TP_TLS_MODE "${TLS_MODE}" acme
+  recreate_container_if_env_changed "${CORE_CONTAINER}" TP_CLIENT_CA_SHA256 "${client_ca_sha256}" ""
   if container_running "${CORE_CONTAINER}"; then
     echo_content skyBlue "---> Trojan Panel Core already running"
     if [[ "${TLS_MODE}" == "external" ]]; then
@@ -1556,6 +1559,7 @@ deploy_core() {
     -e "NODE_SERVER_ID=${NODE_SERVER_ID}" \
     -e "grpc_tls_mode=${GRPC_TLS_MODE}" \
     -e "grpc_client_ca_path=${GRPC_CLIENT_CA_PATH}" \
+    -e "TP_CLIENT_CA_SHA256=${client_ca_sha256}" \
     -e "TP_KERNEL_RUNTIME=${TP_DATA}/trojan-panel-core/runtime" \
     -e "TP_EXTERNAL_DIR=${EXTERNAL_ROUTES_DIR}" \
     -e "TP_TLS_MODE=${TLS_MODE}" \
