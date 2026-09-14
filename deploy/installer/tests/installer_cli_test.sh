@@ -45,6 +45,7 @@ export -f yq
 
 bash -n "${INSTALLER}"
 "${INSTALLER}" --help | grep -q 'install.*--mode web|node'
+"${INSTALLER}" --help | grep -q 'refresh-cert.*--mode node'
 assert_fails "${INSTALLER}" deploy --mode web --config /dev/null
 assert_fails "${INSTALLER}" validate --mode invalid --config /dev/null
 assert_fails "${INSTALLER}" validate --mode web
@@ -81,5 +82,243 @@ cp "${pki_dir}/client-ca.crt" "${node_pki_dir}/client-ca.crt"
 bash -c 'set -Eeuo pipefail; source "$1"; TP_PKI_BUNDLE_DIR="$2"; GRPC_CLIENT_CA_PATH="$3/client-ca.crt"; install_pki_material node' \
   installer-test "${INSTALLER}" "${node_pki_dir}" "${node_runtime_dir}"
 cmp "${pki_dir}/client-ca.crt" "${node_runtime_dir}/client-ca.crt"
+
+# --- external TLS mode -------------------------------------------------------
+EXAMPLES="$(dirname "${INSTALLER}")/examples"
+
+external_cases_dir="$(mktemp -d)"
+external_tls_dir="$(mktemp -d)"
+external_pairs_dir="$(mktemp -d)"
+external_data_dir="$(mktemp -d)"
+external_mismatch_dir="$(mktemp -d)"
+external_wrong_domain_dir="$(mktemp -d)"
+external_refresh_dir="$(mktemp -d)"
+trap 'rm -f "${legacy_config}" "${missing_purpose_config}"; rm -rf -- "${pki_dir}" "${node_pki_dir}" "${node_runtime_dir}" "${external_cases_dir}" "${external_tls_dir}" "${external_pairs_dir}" "${external_data_dir}" "${external_mismatch_dir}" "${external_wrong_domain_dir}" "${external_refresh_dir}"' EXIT
+
+# The shipped template points at a real external certificate directory, which
+# cannot exist on a test host. Validate the template against a local pair.
+openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
+  -subj "/CN=node.example.com" \
+  -keyout "${external_tls_dir}/privkey.pem" -out "${external_tls_dir}/fullchain.pem" >/dev/null 2>&1
+sed "s#tls_cert_dir: /etc/vps-factory/certs/node.example.com#tls_cert_dir: ${external_tls_dir}#" \
+  "${EXAMPLES}/external-node.yaml" >"${external_cases_dir}/ready.yaml"
+
+"${INSTALLER}" validate --mode node --config "${external_cases_dir}/ready.yaml" | grep -q 'valid for node purpose'
+"${INSTALLER}" validate --mode node --config "${external_cases_dir}/ready.yaml" | grep -q 'External TLS material'
+"${INSTALLER}" validate --mode web --config "${EXAMPLES}/external-web.yaml" | grep -q 'valid for web purpose'
+assert_fails "${INSTALLER}" validate --mode web --config "${external_cases_dir}/ready.yaml"
+
+# Defaults stay acme, so the pre-existing templates must keep validating.
+"${INSTALLER}" validate --mode web --config "${EXAMPLES}/web.yaml" | grep -q 'valid for web purpose'
+"${INSTALLER}" validate --mode node --config "${EXAMPLES}/node-agent.yaml" | grep -q 'valid for node purpose'
+
+sed '/tls_cert_dir:/d' "${EXAMPLES}/external-node.yaml" >"${external_cases_dir}/missing-cert-dir.yaml"
+sed "s#tls_cert_dir: /etc/vps-factory/certs/node.example.com#tls_cert_dir: ${external_tls_dir}#; s/tls_mode: external/tls_mode: bogus/" \
+  "${EXAMPLES}/external-node.yaml" >"${external_cases_dir}/bogus-tls-mode.yaml"
+sed "s#tls_cert_dir: /etc/vps-factory/certs/node.example.com#tls_cert_dir: ${external_tls_dir}#; s/bind_address: 127.0.0.1/bind_address: not-an-ip/" \
+  "${EXAMPLES}/external-node.yaml" >"${external_cases_dir}/bogus-bind.yaml"
+sed "s#tls_cert_dir: /etc/vps-factory/certs/node.example.com#tls_cert_dir: ${external_cases_dir}#" \
+  "${EXAMPLES}/external-node.yaml" >"${external_cases_dir}/empty-cert-dir.yaml"
+assert_fails "${INSTALLER}" validate --mode node --config "${external_cases_dir}/missing-cert-dir.yaml"
+assert_fails "${INSTALLER}" validate --mode node --config "${external_cases_dir}/bogus-tls-mode.yaml"
+assert_fails "${INSTALLER}" validate --mode node --config "${external_cases_dir}/bogus-bind.yaml"
+sed "s#tls_cert_dir: /etc/vps-factory/certs/node.example.com#tls_cert_dir: ${external_tls_dir}#; s/bind_address: 127.0.0.1/bind_address: dead/" \
+  "${EXAMPLES}/external-node.yaml" >"${external_cases_dir}/hex-word-bind.yaml"
+assert_fails "${INSTALLER}" validate --mode node --config "${external_cases_dir}/hex-word-bind.yaml"
+sed "s#tls_cert_dir: /etc/vps-factory/certs/node.example.com#tls_cert_dir: ${external_tls_dir}#; s/bind_address: 127.0.0.1/bind_address: \"::1\"/" \
+  "${EXAMPLES}/external-node.yaml" >"${external_cases_dir}/ipv6-bind.yaml"
+"${INSTALLER}" validate --mode node --config "${external_cases_dir}/ipv6-bind.yaml" | grep -q 'valid for node purpose'
+# A tls_cert_dir that exists but holds no pair must fail the same way.
+assert_fails "${INSTALLER}" validate --mode node --config "${external_cases_dir}/empty-cert-dir.yaml"
+
+# Validation rejects syntactically valid but mismatched key material and a
+# certificate that does not cover the configured node hostname.
+cp "${external_tls_dir}/fullchain.pem" "${external_mismatch_dir}/fullchain.pem"
+openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
+  -subj "/CN=other.example.com" \
+  -keyout "${external_mismatch_dir}/privkey.pem" -out "${external_wrong_domain_dir}/fullchain.pem" >/dev/null 2>&1
+cp "${external_mismatch_dir}/privkey.pem" "${external_wrong_domain_dir}/privkey.pem"
+sed "s#tls_cert_dir: /etc/vps-factory/certs/node.example.com#tls_cert_dir: ${external_mismatch_dir}#" \
+  "${EXAMPLES}/external-node.yaml" >"${external_cases_dir}/mismatched-key.yaml"
+sed "s#tls_cert_dir: /etc/vps-factory/certs/node.example.com#tls_cert_dir: ${external_wrong_domain_dir}#" \
+  "${EXAMPLES}/external-node.yaml" >"${external_cases_dir}/wrong-domain.yaml"
+assert_fails "${INSTALLER}" validate --mode node --config "${external_cases_dir}/mismatched-key.yaml"
+assert_fails "${INSTALLER}" validate --mode node --config "${external_cases_dir}/wrong-domain.yaml"
+
+# Nested (named directory) layout and same-stem layout.
+mkdir -p "${external_pairs_dir}/site"
+openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes -subj "/CN=node.example.com" \
+  -keyout "${external_pairs_dir}/site/server.key" -out "${external_pairs_dir}/site/server.crt" >/dev/null 2>&1
+
+read -r -d '' external_probe <<'EOS' || true
+set -Eeuo pipefail
+source "$1"
+PROBE_ROOT="$2"
+TLS_CERT_DIR="${PROBE_CERT_DIR}"
+TLS_CERT_FILE="${PROBE_CERT_FILE:-}"
+TLS_KEY_FILE="${PROBE_KEY_FILE:-}"
+MANAGED_CERT_DIR="${PROBE_ROOT}/trojan-panel-core/cert"
+EXTERNAL_MANAGED_DIR="${PROBE_ROOT}/trojanpanelnext-external"
+TP_DATA="${PROBE_ROOT}"
+TP_WEB_DOMAIN=""
+TP_NODE_DOMAIN="node.example.com"
+UI_LISTEN="127.0.0.1:8888"
+PANEL_PORT=8081
+CORE_PORT=8082
+GRPC_PORT=8100
+NODE_CADDY_HTTP_PORT=80
+WEB_PATH="${PROBE_ROOT}/web"
+TLS_CERT_PAIR="$(discover_external_cert)"
+printf 'PAIR=%s\n' "${TLS_CERT_PAIR}"
+install_external_cert "${TLS_CERT_PAIR}"
+EXTERNAL_ROUTES_NOTE="- probe"
+write_external_entry_contract node
+EOS
+
+PROBE_CERT_DIR="${external_tls_dir}" PROBE_CERT_FILE= PROBE_KEY_FILE= \
+  bash -c "${external_probe}" installer-test "${INSTALLER}" "${external_data_dir}" >/dev/null
+test "$(stat -c '%a' "${external_data_dir}/trojan-panel-core/cert/privkey.pem")" = 600
+test "$(stat -c '%a' "${external_data_dir}/trojan-panel-core/cert/fullchain.pem")" = 644
+test "$(stat -c '%a' "${external_data_dir}/trojan-panel-core/cert")" = 700
+cmp "${external_tls_dir}/fullchain.pem" "${external_data_dir}/trojan-panel-core/cert/fullchain.pem"
+if find "${external_data_dir}/trojan-panel-core/cert" -maxdepth 1 -name '.*.pem.*' -print -quit | grep -q .; then
+  fail "temporary TLS material was left behind"
+fi
+
+# Re-running over the same destination must not truncate the pair.
+PROBE_CERT_DIR="${external_tls_dir}" PROBE_CERT_FILE= PROBE_KEY_FILE= \
+  bash -c "${external_probe}" installer-test "${INSTALLER}" "${external_data_dir}" >/dev/null
+cmp "${external_tls_dir}/privkey.pem" "${external_data_dir}/trojan-panel-core/cert/privkey.pem"
+
+# refresh-cert reports certificate generations accurately and restarts the
+# consumer only after a changed pair has been atomically installed.
+mkdir -p "${external_refresh_dir}/source"
+cp "${external_tls_dir}/fullchain.pem" "${external_refresh_dir}/source/fullchain.pem"
+cp "${external_tls_dir}/privkey.pem" "${external_refresh_dir}/source/privkey.pem"
+bash -c '
+  set -Eeuo pipefail
+  source "$1"
+  TLS_MODE=external
+  TLS_CERT_DIR="$2/source"
+  TLS_CERT_FILE=
+  TLS_KEY_FILE=
+  TP_NODE_DOMAIN=node.example.com
+  MANAGED_CERT_DIR="$2/managed"
+  EXTERNAL_MANAGED_DIR="$2/state"
+  CORE_CONTAINER=trojan-panel-core
+  TRACE_FILE="$2/docker.trace"
+  container_exists() { return 0; }
+  wait_for_container() { :; }
+  docker() { printf "docker %s\n" "$*" >>"${TRACE_FILE}"; }
+  refresh_node_certificate
+  refresh_node_certificate
+' installer-test "${INSTALLER}" "${external_refresh_dir}" >"${external_refresh_dir}/refresh.out"
+test "$(grep -c '^changed$' "${external_refresh_dir}/refresh.out")" = 1
+test "$(grep -c '^unchanged$' "${external_refresh_dir}/refresh.out")" = 1
+test "$(grep -c '^docker restart trojan-panel-core$' "${external_refresh_dir}/docker.trace")" = 1
+
+# Pointing tls_cert_dir at the managed directory itself is a no-op copy.
+PROBE_CERT_DIR="${external_data_dir}/trojan-panel-core/cert" PROBE_CERT_FILE= PROBE_KEY_FILE= \
+  bash -c "${external_probe}" installer-test "${INSTALLER}" "${external_data_dir}" >/dev/null
+cmp "${external_tls_dir}/fullchain.pem" "${external_data_dir}/trojan-panel-core/cert/fullchain.pem"
+
+# Same-stem layout inside a named directory. This runs before a second pair is
+# added, because a directory with two pairs is deliberately ambiguous.
+PROBE_CERT_DIR="${external_pairs_dir}" PROBE_CERT_FILE= PROBE_KEY_FILE= \
+  bash -c "${external_probe}" installer-test "${INSTALLER}" "${external_data_dir}/stem" \
+  >"${external_cases_dir}/stem.out"
+grep -q "${external_pairs_dir}/site/server.crt" "${external_cases_dir}/stem.out"
+
+# A directory with two pairs is ambiguous unless tls_cert_file selects one.
+cp "${external_tls_dir}/fullchain.pem" "${external_pairs_dir}/second.crt"
+cp "${external_tls_dir}/privkey.pem" "${external_pairs_dir}/second.key"
+assert_fails env PROBE_CERT_DIR="${external_pairs_dir}" PROBE_CERT_FILE= PROBE_KEY_FILE= \
+  bash -c "${external_probe}" installer-test "${INSTALLER}" "${external_data_dir}/ambiguous"
+PROBE_CERT_DIR="${external_pairs_dir}" PROBE_CERT_FILE='second.crt' PROBE_KEY_FILE='second.key' \
+  bash -c "${external_probe}" installer-test "${INSTALLER}" "${external_data_dir}/explicit" \
+  >"${external_cases_dir}/explicit.out"
+grep -q 'second.crt|' "${external_cases_dir}/explicit.out"
+
+# certd exports each domain as fullchain.pem + chain.pem + privkey.pem. The
+# intermediate chain.pem must not make the directory look ambiguous.
+mkdir -p "${external_cases_dir}/certd"
+cp "${external_tls_dir}/fullchain.pem" "${external_cases_dir}/certd/fullchain.pem"
+cp "${external_tls_dir}/fullchain.pem" "${external_cases_dir}/certd/chain.pem"
+cp "${external_tls_dir}/privkey.pem" "${external_cases_dir}/certd/privkey.pem"
+PROBE_CERT_DIR="${external_cases_dir}/certd" PROBE_CERT_FILE= PROBE_KEY_FILE= \
+  bash -c "${external_probe}" installer-test "${INSTALLER}" "${external_data_dir}/certd" \
+  >"${external_cases_dir}/certd.out"
+grep -q 'PAIR=.*certd/fullchain.pem' "${external_cases_dir}/certd.out"
+grep -q 'certd/privkey.pem' "${external_cases_dir}/certd.out"
+test "$(stat -c '%a' "${external_data_dir}/certd/trojan-panel-core/cert/privkey.pem")" = 600
+
+# Removing an external deployment must keep working after the external
+# certificate directory has disappeared. Uninstall does not consume TLS input.
+bash -c '
+  set -Eeuo pipefail
+  source "$1"
+  require_root() { :; }
+  load_config() { TLS_MODE=external; }
+  validate_config() { :; }
+  discover_external_cert() { return 99; }
+  remove_node() { printf "REMOVED\n"; }
+  main remove --mode node --config /does/not-need-to-exist
+' installer-test "${INSTALLER}" | grep -q '^REMOVED$'
+
+# Mode/bind migrations recreate only affected containers. An old container
+# without the marker is the legacy default (acme / 0.0.0.0).
+bash -c '
+  set -Eeuo pipefail
+  source "$1"
+  container_exists() { return 0; }
+  container_env_value() { printf "%s\n" "${CURRENT_VALUE:-}"; }
+  docker() { printf "%s\n" "$*"; }
+  CURRENT_VALUE= recreate_container_if_env_changed core TP_TLS_MODE acme acme
+  CURRENT_VALUE= recreate_container_if_env_changed core TP_TLS_MODE external acme
+  CURRENT_VALUE=external recreate_container_if_env_changed core TP_TLS_MODE external acme
+' installer-test "${INSTALLER}" >"${external_cases_dir}/migration.out"
+test "$(grep -c 'recreate container' "${external_cases_dir}/migration.out")" = 1
+
+# External mode must fail closed when a stale Caddy container cannot be
+# removed; otherwise install would claim success while 80/443 may stay owned.
+assert_fails bash -c '
+  set -Eeuo pipefail
+  source "$1"
+  container_exists() { return 0; }
+  docker() { return 42; }
+  remove_caddy_container stale-caddy
+' installer-test "${INSTALLER}"
+
+# The generated core config carries the node domain used as the routes.json SNI
+# fallback, including after migration from an older config.
+bash -c '
+  set -Eeuo pipefail
+  source "$1"
+  TP_DATA="$2"
+  mkdir -p "${TP_DATA}/trojan-panel-core/config"
+  MARIADB_HOST=db.example.com
+  MARIADB_PASSWORD=db-secret
+  REDIS_HOST=redis.example.com
+  REDIS_PASSWORD=redis-secret
+  TP_NODE_DOMAIN=node.example.com
+  write_core_runtime_config cert.pem key.pem
+' installer-test "${INSTALLER}" "${external_data_dir}/core-config"
+grep -q '^domain=node.example.com$' "${external_data_dir}/core-config/trojan-panel-core/config/config.ini"
+
+# The documented manifest path, image default, and installer mount must agree.
+grep -q 'TP_EXTERNAL_DIR=/tpdata/trojan-panel-core/external' \
+  "$(dirname "${INSTALLER}")/../../apps/node-agent/Dockerfile"
+grep -q 'EXTERNAL_ROUTES_DIR}:${EXTERNAL_ROUTES_DIR}' "${INSTALLER}"
+
+# The generated on-host contract must exist, name the routes file, and never
+# leak a credential.
+test -f "${external_data_dir}/trojanpanelnext-external/README.md"
+grep -q 'trojan-panel-core/external/routes.json' "${external_data_dir}/trojanpanelnext-external/README.md"
+if grep -q '| Panel UI |' "${external_data_dir}/trojanpanelnext-external/README.md"; then
+  fail "node contract lists web-only services"
+fi
+if grep -qiE 'password|mariadb_pas|redis_pass' "${external_data_dir}/trojanpanelnext-external/README.md"; then
+  fail "external contract README leaks a credential"
+fi
 
 printf 'PASS installer CLI and purpose/config contract\n'

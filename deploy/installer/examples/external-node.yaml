@@ -1,0 +1,56 @@
+trojanpanelnext:
+  schema_version: 1
+  purpose: node
+
+  # DNS A/AAAA records must point to this Node Agent server.
+  hostname: node.example.com
+
+  # External TLS mode: no Caddy container is created. The external entry point
+  # owns HTTP-01 and only the required plain-HTTP fallback listeners. Kernel
+  # protocol ports remain direct TCP/UDP listeners and terminate their own TLS.
+  tls_mode: external
+  # Certificate directory produced by your own ACME tooling. The installer looks
+  # for fullchain.pem/privkey.pem (certd layout) or a same-stem .crt/.key pair.
+  # The pair is copied to /tpdata/trojan-panel-core/cert and mounted read-only
+  # into the core container, which never reads your original directory.
+  tls_cert_dir: /etc/vps-factory/certs/node.example.com
+  # Optional explicit names when the directory holds several pairs.
+  # tls_cert_file: fullchain.pem
+  # tls_key_file: privkey.pem
+  # Optional override of the managed copy the kernels read.
+  # managed_cert_dir: /tpdata/trojan-panel-core/cert
+
+  # This key currently affects only the Web UI and is retained for schema
+  # compatibility on Node. It does not bind Core, gRPC, or kernel listeners.
+  bind_address: 127.0.0.1
+
+  core_image: ghcr.io/1linhao/trojanpanelnext-node-agent:latest
+  # Ignored while tls_mode is external; kept for a later switch back to acme.
+  caddy_image: caddy:2.8.4
+  node_caddy_http_port: 80
+  node_caddy_https_port: 8863
+
+  # Connection to the Web control plane's MariaDB instance.
+  mariadb_host: panel.example.com
+  mariadb_port: 9507
+  mariadb_user: root
+  mariadb_password: replace-with-web-mariadb-password
+  database: trojan_panel_db
+  account_table: account
+
+  # Connection to the Web control plane's Redis instance.
+  redis_host: panel.example.com
+  redis_port: 6378
+  redis_password: replace-with-web-redis-password
+
+  grpc_port: 8100
+  core_port: 8082
+  node_server_id: 1
+  grpc_tls_mode: mtls
+  grpc_tls_server_name: node.example.com
+  grpc_client_ca_path: /tpdata/trojan-panel-core/pki/client-ca.crt
+  pki_bundle_dir: /tpdata/trojanpanelnext-pki
+  kernel_runtime_path: /tpdata/trojan-panel-core/runtime
+
+  force: 0
+  purge_data: 0

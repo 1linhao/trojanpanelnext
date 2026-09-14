@@ -13,6 +13,32 @@ The installer deploys a server non-interactively with one script, one YAML file,
 
 Install the Web control plane first. A Node Agent uses the MariaDB and Redis credentials generated in the Web configuration.
 
+## External TLS mode
+
+`tls_mode` decides who owns certificates and the public entry point:
+
+| Value | Behaviour |
+| --- | --- |
+| `acme` (default) | The installer runs a Caddy container that listens on 80/443, obtains ACME certificates, and proxies |
+| `external` | The installer creates **no reverse proxy container**; the external entry owns Web 80/443, ACME, and required plain fallbacks |
+
+With `tls_mode: external` the installer still copies the certificates from `tls_cert_dir` into
+`/tpdata/trojan-panel-core/cert` and mounts them read-only for the kernels, prepares the
+`/tpdata/web` camouflage directory, removes leftover `*-caddy` containers from a previous
+installation, and writes a host-specific contract summary to
+`/tpdata/trojanpanelnext-external/README.md`.
+
+Templates: [external-web.yaml](examples/external-web.yaml) and
+[external-node.yaml](examples/external-node.yaml). The full list of behaviour the external entry
+point has to implement is in [the external contract](../../docs/外部入口实现契约.md), with a short
+form in [EXTERNAL.md](EXTERNAL.md).
+
+Xray, NaiveProxy, and Hysteria2 listen directly on their Node protocol ports and terminate their own
+TLS by default; they do not pass through a unified L4 ingress. The node agent records kernel
+listeners in `/tpdata/trojan-panel-core/external/routes.json` for port/firewall audits and plain
+fallback rendering. It is not an nginx `stream` configuration source. Only routes marked
+`external_fallback_listener_required: true` need a plain-HTTP camouflage listener.
+
 ## Requirements
 
 | Item | Requirement |
@@ -53,6 +79,7 @@ Set the node hostname, Web control-plane address, and the database and Redis pas
 ```bash
 ./install.sh validate --mode node --config ./node-agent.yaml
 sudo ./install.sh install --mode node --config ./node-agent.yaml
+sudo ./install.sh refresh-cert --mode node --config ./node-agent.yaml
 ```
 
 `--mode` must match `trojanpanelnext.purpose`; the installer exits immediately when they differ.
@@ -72,6 +99,23 @@ The first remove command keeps generated data. `--purge-data` deletes it.
 [Web control-plane template](examples/web.yaml) contains the hostname, images, ports, mTLS identity directory, and internal credentials.
 
 [Node Agent template](examples/node-agent.yaml) contains the node hostname, control-plane database and Redis connections, gRPC settings, public CA directory, and certificate paths.
+
+External TLS mode uses [external-web.yaml](examples/external-web.yaml) and
+[external-node.yaml](examples/external-node.yaml), which add these keys:
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `tls_mode` | `acme` | `acme` or `external` |
+| `tls_cert_dir` | empty | External certificate directory; required for `external` + `node` |
+| `tls_cert_file` / `tls_key_file` | empty | Explicit file names when the directory holds several pairs |
+| `bind_address` | `0.0.0.0` | Panel UI listen address; prefer `127.0.0.1` in external mode |
+| `managed_cert_dir` | `/tpdata/trojan-panel-core/cert` | Managed certificate copy; kernels read only this directory |
+| `external_managed_dir` | `/tpdata/trojanpanelnext-external` | Contract directory |
+| `external_routes_dir` | `/tpdata/trojan-panel-core/external` | Directory where the node agent writes `routes.json` |
+
+Certificate discovery order: the files named by `tls_cert_file`/`tls_key_file`, then
+`fullchain.pem` with `privkey.pem` (the certd layout), then a same-stem `.crt`/`.key` pair
+searched three levels deep. Several pairs without an explicit choice is an error.
 
 Passwords are never printed. Treat populated configuration files as secrets and do not commit them to Git.
 

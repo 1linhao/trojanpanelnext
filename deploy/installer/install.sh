@@ -9,6 +9,9 @@ YQ_VERSION="v4.53.6"
 TP_DATA="${TP_DATA:-/tpdata}"
 WEB_PATH="${WEB_PATH:-${TP_DATA}/web}"
 TP_PKI_BUNDLE_DIR="${TP_PKI_BUNDLE_DIR:-${TP_DATA}/trojanpanelnext-pki}"
+EXTERNAL_MANAGED_DIR="${EXTERNAL_MANAGED_DIR:-${TP_DATA}/trojanpanelnext-external}"
+EXTERNAL_ROUTES_DIR="${EXTERNAL_ROUTES_DIR:-${TP_DATA}/trojan-panel-core/external}"
+MANAGED_CERT_DIR="${MANAGED_CERT_DIR:-${TP_DATA}/trojan-panel-core/cert}"
 
 MARIADB_CONTAINER="${MARIADB_CONTAINER:-trojan-panel-mariadb}"
 REDIS_CONTAINER="${REDIS_CONTAINER:-trojan-panel-redis}"
@@ -45,6 +48,14 @@ GRPC_SERVER_CA_PATH="${GRPC_SERVER_CA_PATH:-}"
 KERNEL_RUNTIME_PATH="${KERNEL_RUNTIME_PATH:-${TP_DATA}/trojan-panel-core/runtime}"
 NODE_CADDY_HTTP_PORT="${NODE_CADDY_HTTP_PORT:-80}"
 NODE_CADDY_HTTPS_PORT="${NODE_CADDY_HTTPS_PORT:-8863}"
+TLS_MODE="${TLS_MODE:-acme}"
+TLS_CERT_DIR="${TLS_CERT_DIR:-}"
+TLS_CERT_FILE="${TLS_CERT_FILE:-}"
+TLS_KEY_FILE="${TLS_KEY_FILE:-}"
+BIND_ADDRESS="${BIND_ADDRESS:-0.0.0.0}"
+UI_LISTEN=""
+TLS_CERT_PAIR=""
+EXTERNAL_ROUTES_NOTE=""
 
 TP_FORCE="${TP_FORCE:-0}"
 TP_PURGE_DATA="${TP_PURGE_DATA:-0}"
@@ -71,11 +82,13 @@ echo_content() {
 }
 
 usage() {
+  local mode="${1:-web|node}"
   cat <<EOF
 Usage:
-  $0 install  --mode web|node --config <file>
-  $0 remove   --mode web|node --config <file> [--purge-data]
-  $0 validate --mode web|node --config <file>
+  $0 install  --mode $mode --config <file>
+  $0 remove   --mode $mode --config <file> [--purge-data]
+  $0 validate --mode $mode --config <file>
+  $0 refresh-cert --mode node --config <file>
 
 Options:
   --mode <mode>      Server purpose: web control plane or node agent
@@ -88,9 +101,21 @@ Examples:
   $0 validate --mode web --config ./examples/web.yaml
   $0 install --mode web --config ./examples/web.yaml
   $0 install --mode node --config ./examples/node-agent.yaml
+  $0 install --mode node --config ./examples/external-node.yaml
 
 The command is non-interactive. The value of --mode must match
 trojanpanelnext.purpose in the configuration file.
+
+TLS ownership:
+  tls_mode: acme      (default) the installer runs a Caddy container that
+                      listens on 80/443 and obtains its own ACME certificate.
+  tls_mode: external  no Caddy container is created. The external entry
+                      point owns Web 80/443, ACME and required plain-HTTP
+                      fallback listeners. Node protocol ports stay direct.
+                      The installer only copies the
+                      certificates in tls_cert_dir to ${MANAGED_CERT_DIR}
+                      for the proxy kernels to read.
+  See deploy/installer/EXTERNAL.md for the external entry point contract.
 EOF
 }
 
@@ -273,6 +298,14 @@ load_config() {
   cfg_apply "${file}" TP_PKI_BUNDLE_DIR pki_bundle_dir
   cfg_apply "${file}" NODE_CADDY_HTTP_PORT node_caddy_http_port
   cfg_apply "${file}" NODE_CADDY_HTTPS_PORT node_caddy_https_port
+  cfg_apply "${file}" TLS_MODE tls_mode
+  cfg_apply "${file}" TLS_CERT_DIR tls_cert_dir
+  cfg_apply "${file}" TLS_CERT_FILE tls_cert_file
+  cfg_apply "${file}" TLS_KEY_FILE tls_key_file
+  cfg_apply "${file}" BIND_ADDRESS bind_address
+  cfg_apply "${file}" MANAGED_CERT_DIR managed_cert_dir
+  cfg_apply "${file}" EXTERNAL_MANAGED_DIR external_managed_dir
+  cfg_apply "${file}" EXTERNAL_ROUTES_DIR external_routes_dir
   cfg_apply "${file}" TP_FORCE force
   cfg_apply "${file}" TP_PURGE_DATA purge_data
   case "${action}" in
@@ -326,6 +359,49 @@ require_port() {
   fi
 }
 
+require_bind_address() {
+  local name="$1"
+  local value="${!name:-}"
+  local -a parts=()
+  local part nonempty=0
+
+  if [[ "${value}" == *.* ]]; then
+    IFS=. read -r -a parts <<<"${value}"
+    if [[ "${#parts[@]}" -eq 4 ]]; then
+      for part in "${parts[@]}"; do
+        if [[ ! "${part}" =~ ^[0-9]{1,3}$ ]] || ((10#${part} > 255)); then
+          nonempty=-1
+          break
+        fi
+      done
+      [[ "${nonempty}" != "-1" ]] && return
+    fi
+  elif [[ "${value}" == *:* && "${value}" =~ ^[0-9a-fA-F:]+$ && "${value}" != *:::* ]]; then
+    local remainder="${value#*::}"
+    local compressed=0
+    if [[ "${remainder}" != "${value}" ]]; then
+      compressed=1
+      [[ "${remainder}" != *::* ]] || compressed=-1
+    fi
+    IFS=: read -r -a parts <<<"${value}"
+    for part in "${parts[@]}"; do
+      [[ -z "${part}" ]] && continue
+      if [[ ! "${part}" =~ ^[0-9a-fA-F]{1,4}$ ]]; then
+        nonempty=-1
+        break
+      fi
+      nonempty=$((nonempty + 1))
+    done
+    if [[ "${compressed}" == "1" && "${nonempty}" -ge 0 && "${nonempty}" -lt 8 ]] ||
+      [[ "${compressed}" == "0" && "${nonempty}" == "8" ]]; then
+      return
+    fi
+  fi
+
+  echo_content red "${name} must be an IPv4 or IPv6 address, for example 127.0.0.1"
+  exit 1
+}
+
 validate_config() {
   local mode="$1"
 
@@ -343,8 +419,10 @@ validate_config() {
 
   require_one_of force "${TP_FORCE}" 0 1
   require_one_of purge_data "${TP_PURGE_DATA}" 0 1
+  require_one_of tls_mode "${TLS_MODE}" acme external
   require_port MARIADB_PORT
   require_port REDIS_PORT
+  require_bind_address BIND_ADDRESS
 
   case "${mode}" in
   web)
@@ -367,12 +445,24 @@ validate_config() {
     require_port NODE_CADDY_HTTPS_PORT
     require_one_of grpc_tls_mode "${GRPC_TLS_MODE}" mtls
     require_value TP_PKI_BUNDLE_DIR
+    if [[ "${TLS_MODE}" == "external" && -z "${TLS_CERT_DIR}" ]]; then
+      echo_content red "tls_cert_dir is required when tls_mode is external"
+      echo_content yellow "Point it at the directory that holds this node's certificate pair,"
+      echo_content yellow "for example /etc/vps-factory/certs/<domain>, and see deploy/installer/EXTERNAL.md"
+      exit 1
+    fi
     ;;
   *)
     echo_content red "Unsupported purpose: ${mode}"
     exit 1
     ;;
   esac
+
+  if [[ "${BIND_ADDRESS}" == *:* ]]; then
+    UI_LISTEN="[${BIND_ADDRESS}]:${UI_PORT}"
+  else
+    UI_LISTEN="${BIND_ADDRESS}:${UI_PORT}"
+  fi
 }
 
 install_docker() {
@@ -402,6 +492,29 @@ container_env_value() {
   fi
   docker inspect "${name}" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null |
     awk -F= -v key="${key}" '$1 == key {sub(/^[^=]*=/, ""); print; exit}'
+}
+
+# Recreate only when an installer-owned setting changes. Missing values are
+# treated as the legacy default so existing acme deployments keep their
+# original no-op upgrade behaviour.
+recreate_container_if_env_changed() {
+  local name="$1"
+  local key="$2"
+  local desired="$3"
+  local legacy_default="$4"
+  if ! container_exists "${name}"; then
+    return
+  fi
+
+  local current
+  current="$(container_env_value "${name}" "${key}" || true)"
+  current="${current:-${legacy_default}}"
+  if [[ "${current}" == "${desired}" ]]; then
+    return
+  fi
+
+  echo_content yellow "---> ${key} changed for ${name}: ${current} -> ${desired}; recreate container"
+  docker rm -f "${name}" >/dev/null 2>&1
 }
 
 write_web_generated_secrets() {
@@ -480,9 +593,394 @@ prepare_dirs() {
     "${TP_DATA}/trojan-panel-core/logs" \
     "${TP_DATA}/trojan-panel-core/config" \
     "${TP_DATA}/trojan-panel-core/pki" \
+    "${EXTERNAL_ROUTES_DIR}" \
     "${KERNEL_RUNTIME_PATH}" \
     "${TP_DATA}/custom/web-caddy" \
-    "${TP_DATA}/custom/node-caddy"
+    "${TP_DATA}/custom/node-caddy" \
+    "${MANAGED_CERT_DIR}" \
+    "${EXTERNAL_MANAGED_DIR}"
+}
+
+# Print every readable certificate file under TLS_CERT_DIR exactly once, walking
+# the directory to a bounded depth because ACME tooling often nests certificates
+# one directory per hostname. The second argument narrows the match to a file name
+# (for example fullchain.pem) so an explicit tls_cert_file wins over the generic
+# fallback names. Private-key file names are never treated as certificates.
+cert_files_for() {
+  local dir="$1"
+  local name="${2:-}"
+  if [[ ! -d "${dir}" ]]; then
+    return
+  fi
+  if [[ -n "${name}" ]]; then
+    if [[ -f "${dir}/${name}" ]]; then
+      printf '%s\n' "${dir}/${name}"
+    fi
+    return
+  fi
+
+  local entry
+  while IFS= read -r entry; do
+    [[ -n "${entry}" ]] && printf '%s\n' "${entry}"
+  done < <(cert_files_collect "${dir}" 0)
+}
+
+# Print certificate candidates found in one directory and its subdirectories up
+# to depth three. Conventional names found directly in the requested directory
+# come first; private-key names are never treated as certificates.
+cert_files_collect() {
+  local dir="$1"
+  local depth="$2"
+  local entry file base
+  local -a current=()
+
+  if [[ "${depth}" == "0" ]]; then
+    for file in fullchain.pem cert.pem server.crt server.pem; do
+      [[ -f "${dir}/${file}" ]] && current+=("${dir}/${file}")
+    done
+  fi
+  for file in "${dir}"/*.crt; do
+    [[ -f "${file}" ]] && current+=("${file}")
+  done
+  for file in "${dir}"/*.pem; do
+    [[ -f "${file}" ]] || continue
+    base="$(basename "${file}")"
+    case "${base}" in
+    privkey.pem | key.pem | *-key.pem | *_key.pem | key-*.pem) continue ;;
+    esac
+    case "${base}" in
+    fullchain.pem | cert.pem) [[ "${depth}" == "0" ]] && continue ;;
+    esac
+    current+=("${file}")
+  done
+
+  # Print each candidate once, in the order collected above.
+  local printed=$'\n'
+  for entry in "${current[@]}"; do
+    if [[ "${printed}" == *$'\n'"${entry}"$'\n'* ]]; then
+      continue
+    fi
+    printed+="${entry}"$'\n'
+    printf '%s\n' "${entry}"
+  done
+
+  if [[ "${depth}" -ge 3 ]]; then
+    return
+  fi
+  for entry in "${dir}"/*/; do
+    [[ -d "${entry}" ]] || continue
+    cert_files_collect "${entry%/}" "$((depth + 1))"
+  done
+}
+
+# Pick the private key for one certificate. A same-stem key wins, so a directory
+# holding several hostnames picks the right pair; otherwise the conventional
+# privkey.pem/key.pem of the certd layout is used. Prints nothing when several
+# ambiguous candidates remain, which makes the caller report the directory as
+# ambiguous instead of guessing.
+key_for_cert() {
+  local certificate="$1"
+  local dir stem
+  dir="$(dirname "${certificate}")"
+  stem="$(basename "${certificate}")"
+  stem="${stem%.*}"
+  if [[ -f "${dir}/${stem}.key" ]]; then
+    printf '%s\n' "${dir}/${stem}.key"
+    return
+  fi
+  local direct=""
+  local fallback
+  for fallback in privkey.pem key.pem; do
+    [[ -f "${dir}/${fallback}" ]] && direct+="${dir}/${fallback}"$'\n'
+  done
+  local count
+  count="$(printf '%s' "${direct}" | grep -c .)"
+  if [[ "${count}" == "1" ]]; then
+    printf '%s' "${direct}" | grep .
+  fi
+}
+
+# Print "<cert>|<key>" for the certificate a directory unambiguously names.
+# Conventional names win over scanning, because an ACME export directory such as
+# /etc/vps-factory/certs/<domain>/ also holds chain.pem, which is an intermediate
+# certificate and never the pair to hand to a kernel.
+discover_conventional_pair() {
+  local dir="$1"
+  local cert key
+  for cert in "${dir}/fullchain.pem" "${dir}/cert.pem" "${dir}/server.crt" "${dir}/server.pem"; do
+    if [[ -f "${cert}" ]]; then
+      key="$(key_for_cert "${cert}")"
+      if [[ -n "${key}" ]]; then
+        printf '%s|%s\n' "${cert}" "${key}"
+        return
+      fi
+    fi
+  done
+}
+
+# Discover the external TLS certificate and key pair. Prints "<cert>|<key>".
+# An explicit tls_cert_file/tls_key_file always wins; after that the directory is
+# scanned and every candidate pair is reported, with more than one pair refused.
+# Discovery only pairs file names; require_external_cert validates the selected
+# X.509 material before validate or install reports success.
+discover_external_cert() {
+  local dir="${TLS_CERT_DIR}"
+  if [[ -z "${dir}" ]]; then
+    echo_content red "tls_cert_dir is required when tls_mode is external"
+    exit 1
+  fi
+  if [[ ! -d "${dir}" ]]; then
+    echo_content red "tls_cert_dir not found: ${dir}"
+    exit 1
+  fi
+
+  if [[ -z "${TLS_CERT_FILE}" && -z "${TLS_KEY_FILE}" ]]; then
+    local conventional
+    conventional="$(discover_conventional_pair "${dir}")"
+    if [[ -n "${conventional}" ]]; then
+      printf '%s\n' "${conventional}"
+      return
+    fi
+  fi
+
+  local cert key hits=""
+  local -a certificates=()
+  while IFS= read -r cert; do
+    [[ -n "${cert}" ]] && certificates+=("${cert}")
+  done < <(cert_files_for "${dir}" "${TLS_CERT_FILE}")
+  if [[ "${#certificates[@]}" -eq 0 ]]; then
+    echo_content red "No certificate found in ${dir} (tls_cert_file may name a file that does not exist)"
+    exit 1
+  fi
+
+  local certificate
+  for certificate in "${certificates[@]}"; do
+    if [[ -n "${TLS_KEY_FILE}" ]]; then
+      if [[ "${TLS_KEY_FILE}" == /* ]]; then
+        key="${TLS_KEY_FILE}"
+      else
+        key="$(dirname "${certificate}")/${TLS_KEY_FILE}"
+        [[ -f "${key}" ]] || key="${dir}/${TLS_KEY_FILE}"
+      fi
+    else
+      key="$(key_for_cert "${certificate}")"
+    fi
+    if [[ -n "${key}" && -f "${key}" ]]; then
+      hits+="${certificate}|${key}"$'\n'
+    fi
+  done
+
+  if [[ -z "${hits}" ]]; then
+    echo_content red "No certificate/key pair found in ${dir}"
+    echo_content yellow "Candidates considered: ${certificates[*]}"
+    exit 1
+  fi
+  if [[ "$(printf '%s' "${hits}" | grep -c .)" -gt 1 ]]; then
+    echo_content red "More than one certificate/key pair found in ${dir}"
+    printf '%s' "${hits}" | while IFS= read -r line; do
+      [[ -n "${line}" ]] && echo_content yellow "  ${line}"
+    done
+    echo_content yellow "Set tls_cert_file and tls_key_file to select one pair"
+    exit 1
+  fi
+  printf '%s' "${hits}" | grep .
+}
+
+# Copy the external certificate into MANAGED_CERT_DIR, which is the only TLS
+# material the core container mounts. Each file is prepared under a temporary
+# name and renamed into place so readers never observe a partially written PEM.
+install_external_cert() {
+  local pair="$1"
+  local cert="${pair%%|*}"
+  local key="${pair##*|}"
+  validate_external_cert_pair "${pair}" "${TP_NODE_DOMAIN:-}"
+
+  mkdir -p "${MANAGED_CERT_DIR}"
+  chmod 700 "${MANAGED_CERT_DIR}"
+
+  local target_cert="${MANAGED_CERT_DIR}/fullchain.pem"
+  local target_key="${MANAGED_CERT_DIR}/privkey.pem"
+  local current_cert current_key want_cert want_key
+  current_cert="$(realpath -m "${cert}")"
+  current_key="$(realpath -m "${key}")"
+  want_cert="$(realpath -m "${target_cert}")"
+  want_key="$(realpath -m "${target_key}")"
+  if [[ "${current_cert}" == "${want_cert}" && "${current_key}" == "${want_key}" ]]; then
+    echo_content skyBlue "---> TLS material already managed: ${MANAGED_CERT_DIR}"
+    chmod 0600 "${target_key}"
+    chmod 0644 "${target_cert}"
+    CERT_REFRESH_RESULT=unchanged
+    return
+  fi
+  if [[ -f "${target_cert}" && -f "${target_key}" ]] &&
+    cmp -s "${cert}" "${target_cert}" && cmp -s "${key}" "${target_key}"; then
+    echo_content skyBlue "---> TLS material unchanged: ${MANAGED_CERT_DIR}"
+    chmod 0600 "${target_key}"
+    chmod 0644 "${target_cert}"
+    CERT_REFRESH_RESULT=unchanged
+    return
+  fi
+
+  echo_content green "---> Install external TLS material: ${cert} -> ${target_cert}"
+  local temporary_cert temporary_key
+  temporary_cert="$(mktemp "${MANAGED_CERT_DIR}/.fullchain.pem.XXXXXX")"
+  temporary_key="$(mktemp "${MANAGED_CERT_DIR}/.privkey.pem.XXXXXX")"
+  if ! install -m 0644 "${cert}" "${temporary_cert}" ||
+    ! install -m 0600 "${key}" "${temporary_key}"; then
+    rm -f "${temporary_cert}" "${temporary_key}"
+    echo_content red "Failed to prepare managed TLS material"
+    exit 1
+  fi
+  mv -f "${temporary_cert}" "${target_cert}"
+  mv -f "${temporary_key}" "${target_key}"
+  sync -f "${target_cert}" 2>/dev/null || sync 2>/dev/null || true
+  sync -f "${target_key}" 2>/dev/null || sync 2>/dev/null || true
+  CERT_REFRESH_RESULT=changed
+  echo_content skyBlue "---> Kernels read TLS from ${MANAGED_CERT_DIR} (certificate ${target_cert}, key ${target_key})"
+}
+
+refresh_node_certificate() {
+  if [[ "${TLS_MODE}" != "external" ]]; then
+    echo_content red "refresh-cert is only valid for tls_mode: external"
+    return 1
+  fi
+  command -v flock >/dev/null 2>&1 || {
+    echo_content red "flock is required for certificate refresh"
+    return 1
+  }
+  mkdir -p "${EXTERNAL_MANAGED_DIR}"
+  chmod 0700 "${EXTERNAL_MANAGED_DIR}"
+  local lock_file="${EXTERNAL_MANAGED_DIR}/refresh-cert.lock"
+  exec 9>"${lock_file}"
+  chmod 0600 "${lock_file}"
+  if ! flock -n 9; then
+    echo_content red "Another certificate refresh is already running"
+    return 1
+  fi
+
+  local pair
+  pair="$(discover_external_cert)"
+  install_external_cert "${pair}"
+  if [[ "${CERT_REFRESH_RESULT:-unchanged}" == "changed" ]]; then
+    if ! container_exists "${CORE_CONTAINER}"; then
+      echo_content red "Certificate changed but ${CORE_CONTAINER} does not exist"
+      return 1
+    fi
+    docker restart "${CORE_CONTAINER}" >/dev/null
+    wait_for_container "${CORE_CONTAINER}"
+    echo_content green "---> Certificate refreshed and ${CORE_CONTAINER} restarted"
+  fi
+  printf '%s\n' "${CERT_REFRESH_RESULT:-unchanged}"
+}
+
+# Certificates written by the Caddy container, used by the default acme mode.
+caddy_cert_files() {
+  local domain="$1"
+  local data_dir="$2"
+  local root="${data_dir}/caddy/certificates"
+  local certificate key
+  for certificate in "${root}"/*/"${domain}"/"${domain}".crt; do
+    if [[ -f "${certificate}" ]]; then
+      key="${certificate%.crt}.key"
+      if [[ -f "${key}" ]]; then
+        printf '%s|%s\n' "${certificate}" "${key}"
+      fi
+    fi
+  done
+}
+
+remove_caddy_container() {
+  local name="$1"
+  if ! container_exists "${name}"; then
+    return
+  fi
+  echo_content yellow "---> tls_mode is external: remove the installer-managed reverse proxy container ${name}"
+  if ! docker rm -f "${name}" >/dev/null 2>&1; then
+    echo_content red "Failed to remove ${name}; external mode cannot continue while the old entry point may still own public ports"
+    exit 1
+  fi
+}
+
+validate_external_cert_pair() {
+  local pair="$1"
+  local domain="${2:-}"
+  local cert="${pair%%|*}"
+  local key="${pair##*|}"
+  local candidate
+  for candidate in "${cert}" "${key}"; do
+    if [[ -z "${candidate}" || ! -r "${candidate}" || ! -s "${candidate}" ]]; then
+      echo_content red "TLS file is not readable or is empty: ${candidate:-<empty>}"
+      exit 1
+    fi
+  done
+  if ! command -v openssl >/dev/null 2>&1; then
+    echo_content red "openssl is required to validate external TLS material"
+    exit 1
+  fi
+  if ! openssl x509 -in "${cert}" -noout -checkend 0 >/dev/null 2>&1; then
+    echo_content red "TLS certificate is invalid or expired: ${cert}"
+    exit 1
+  fi
+  if ! openssl pkey -in "${key}" -passin pass: -noout </dev/null >/dev/null 2>&1; then
+    echo_content red "TLS private key is invalid or encrypted: ${key}"
+    exit 1
+  fi
+
+  local cert_public key_public
+  cert_public="$(openssl x509 -in "${cert}" -pubkey -noout 2>/dev/null |
+    openssl pkey -pubin -outform DER 2>/dev/null |
+    openssl dgst -sha256 2>/dev/null)"
+  key_public="$(openssl pkey -in "${key}" -passin pass: -pubout -outform DER </dev/null 2>/dev/null |
+    openssl dgst -sha256 2>/dev/null)"
+  if [[ -z "${cert_public}" || "${cert_public}" != "${key_public}" ]]; then
+    echo_content red "TLS certificate and private key do not match"
+    exit 1
+  fi
+  if [[ -n "${domain}" ]] && ! openssl x509 -in "${cert}" -noout -checkhost "${domain}" >/dev/null 2>&1; then
+    echo_content red "TLS certificate does not cover node hostname: ${domain}"
+    exit 1
+  fi
+}
+
+require_external_cert() {
+  validate_external_cert_pair "${TLS_CERT_PAIR}" "${TP_NODE_DOMAIN:-${TP_WEB_DOMAIN:-}}"
+  echo_content skyBlue "---> External TLS material: ${TLS_CERT_PAIR%%|*} + ${TLS_CERT_PAIR##*|}"
+}
+
+warn_if_port_exposed() {
+  local label="$1"
+  local port="$2"
+  command -v ss >/dev/null 2>&1 || return 0
+  local exposed
+  exposed="$(ss -H -ltn 2>/dev/null | awk -v port=":${port}" '
+    $4 ~ port "$" && $4 !~ /^(127\.|\[::1\]:)/ { found = 1 }
+    END { print found + 0 }
+  ')"
+  if [[ "${exposed}" == "1" ]]; then
+    echo_content yellow "---> Note: ${label} port ${port} listens on every interface (the application"
+    echo_content yellow "    does not support a bind address), so the firewall must keep it closed"
+    echo_content yellow "    except to explicitly authorised internal callers"
+  fi
+}
+
+# The panel and core internal services bind all interfaces in the current
+# release, so the machine owner must restrict them at the firewall. Kernel
+# protocol listeners are intentionally direct and follow the node configuration.
+warn_external_ports() {
+  local mode="$1"
+  case "${mode}" in
+  web)
+    warn_if_port_exposed "panel API" "${PANEL_PORT}"
+    ;;
+  node)
+    warn_if_port_exposed "core API" "${CORE_PORT}"
+    warn_if_port_exposed "core gRPC" "${GRPC_PORT}"
+    ;;
+  esac
+  if [[ "${BIND_ADDRESS}" == "0.0.0.0" ]]; then
+    echo_content yellow "---> Warning: bind_address is 0.0.0.0; set bind_address: 127.0.0.1"
+    echo_content yellow "    for a Web deployment unless its ingress runs on another host"
+  fi
 }
 
 generate_web_client_pki() {
@@ -595,6 +1093,9 @@ max_active=4
 wait=true
 [server]
 port=${PANEL_PORT}
+# host is reserved: the control plane binds every interface even when this key
+# is present, so external mode relies on an explicit firewall policy.
+host=${BIND_ADDRESS}
 [grpc]
 client_cert_path=${GRPC_CLIENT_CERT_PATH}
 client_key_path=${GRPC_CLIENT_KEY_PATH}
@@ -638,8 +1139,12 @@ tls_mode=${GRPC_TLS_MODE}
 client_ca_path=${GRPC_CLIENT_CA_PATH}
 [server]
 port=${CORE_PORT}
+# host is reserved: the core binds every interface even when this key is
+# present, so external mode relies on an explicit firewall policy.
+host=${BIND_ADDRESS}
 [node]
 server_id=${NODE_SERVER_ID}
+domain=${TP_NODE_DOMAIN}
 EOF
   chmod 600 "${TP_DATA}/trojan-panel-core/config/config.ini"
 }
@@ -750,21 +1255,30 @@ start_caddy() {
 wait_for_cert() {
   local domain="$1"
   local data_dir="$2"
+  local pair
   local cert_file
   local key_file
 
   echo_content green "---> Wait for certificate: ${domain}"
   for _ in $(seq 1 60); do
-    cert_file="$(find "${data_dir}/caddy/certificates" -path "*/${domain}/${domain}.crt" -type f -size +0c 2>/dev/null | head -n 1 || true)"
-    key_file="$(find "${data_dir}/caddy/certificates" -path "*/${domain}/${domain}.key" -type f -size +0c 2>/dev/null | head -n 1 || true)"
-    if [[ -n "${cert_file}" && -n "${key_file}" ]]; then
-      echo_content skyBlue "---> Certificate ready: ${cert_file}"
-      return
+    pair="$(caddy_cert_files "${domain}" "${data_dir}" | head -n 1)"
+    if [[ -n "${pair}" ]]; then
+      cert_file="${pair%%|*}"
+      key_file="${pair##*|}"
+      if [[ -s "${cert_file}" && -s "${key_file}" ]]; then
+        if openssl x509 -in "${cert_file}" -noout -checkend 0 >/dev/null 2>&1; then
+          echo_content skyBlue "---> Certificate ready: ${cert_file}"
+          return
+        fi
+        echo_content yellow "---> Certificate for ${domain} is already expired, waiting for renewal"
+      fi
     fi
     sleep 3
   done
 
-  echo_content red "---> Certificate is not ready. Check DNS, firewall, and Caddy logs."
+  echo_content red "---> Certificate for ${domain} is not ready."
+  echo_content red "    Check DNS, firewall, and Caddy logs. If another process owns port 80,"
+  echo_content red "    switch the configuration to tls_mode: external instead."
   exit 1
 }
 
@@ -798,9 +1312,10 @@ create_database() {
 }
 
 write_ui_nginx_config() {
+  local listen="${UI_LISTEN:-${BIND_ADDRESS}:${UI_PORT}}"
   cat >"${TP_DATA}/trojan-panel-ui/nginx/default.conf" <<EOF
 server {
-    listen       ${UI_PORT};
+    listen       ${listen};
     server_name  localhost;
 
     location / {
@@ -899,6 +1414,7 @@ deploy_panel_backend() {
 deploy_panel_ui() {
   remove_container_if_force "${UI_CONTAINER}"
   write_ui_nginx_config
+  recreate_container_if_env_changed "${UI_CONTAINER}" TP_BIND_ADDRESS "${BIND_ADDRESS}" 0.0.0.0
   if container_running "${UI_CONTAINER}"; then
     echo_content skyBlue "---> Trojan Panel UI already running"
     return
@@ -911,6 +1427,7 @@ deploy_panel_ui() {
   ensure_image "${UI_IMAGE}"
   docker run -d --name "${UI_CONTAINER}" --restart always \
     --network=host \
+    -e "TP_BIND_ADDRESS=${BIND_ADDRESS}" \
     -v "${TP_DATA}/trojan-panel-ui/nginx/default.conf:/etc/nginx/conf.d/default.conf" \
     "${UI_IMAGE}"
   wait_for_container "${UI_CONTAINER}"
@@ -921,15 +1438,26 @@ deploy_core() {
   local cert_data="${TP_DATA}/custom/node-caddy/data"
   local crt_path="${cert_data}/caddy/certificates/acme-v02.api.letsencrypt.org-directory/${domain}/${domain}.crt"
   local key_path="${cert_data}/caddy/certificates/acme-v02.api.letsencrypt.org-directory/${domain}/${domain}.key"
+  if [[ "${TLS_MODE}" == "external" ]]; then
+    crt_path="${MANAGED_CERT_DIR}/fullchain.pem"
+    key_path="${MANAGED_CERT_DIR}/privkey.pem"
+  fi
 
   write_core_runtime_config "${crt_path}" "${key_path}"
   remove_container_if_force "${CORE_CONTAINER}"
+  recreate_container_if_env_changed "${CORE_CONTAINER}" TP_TLS_MODE "${TLS_MODE}" acme
   if container_running "${CORE_CONTAINER}"; then
     echo_content skyBlue "---> Trojan Panel Core already running"
+    if [[ "${TLS_MODE}" == "external" ]]; then
+      echo_content yellow "---> Note: re-run with --force when switching tls_mode so the managed certificate mount is applied"
+    fi
     return
   fi
   if container_exists "${CORE_CONTAINER}"; then
     docker start "${CORE_CONTAINER}" >/dev/null
+    if [[ "${TLS_MODE}" == "external" ]]; then
+      echo_content yellow "---> Note: re-run with --force when switching tls_mode so the managed certificate mount is applied"
+    fi
     return
   fi
 
@@ -944,6 +1472,9 @@ deploy_core() {
     -v "${TP_DATA}/trojan-panel-core/pki/:${TP_DATA}/trojan-panel-core/pki/:ro" \
     -v "${KERNEL_RUNTIME_PATH}:${TP_DATA}/trojan-panel-core/runtime/" \
     -v "${cert_data}:${cert_data}" \
+    -v "${MANAGED_CERT_DIR}:${MANAGED_CERT_DIR}:ro" \
+    -v "${EXTERNAL_MANAGED_DIR}:${EXTERNAL_MANAGED_DIR}" \
+    -v "${EXTERNAL_ROUTES_DIR}:${EXTERNAL_ROUTES_DIR}" \
     -v "${WEB_PATH}:${WEB_PATH}" \
     -v /etc/localtime:/etc/localtime \
     -e GIN_MODE=release \
@@ -959,13 +1490,85 @@ deploy_core() {
     -e "crt_path=${crt_path}" \
     -e "key_path=${key_path}" \
     -e "grpc_port=${GRPC_PORT}" \
-	-e "NODE_SERVER_ID=${NODE_SERVER_ID}" \
+    -e "NODE_SERVER_ID=${NODE_SERVER_ID}" \
     -e "grpc_tls_mode=${GRPC_TLS_MODE}" \
     -e "grpc_client_ca_path=${GRPC_CLIENT_CA_PATH}" \
     -e "TP_KERNEL_RUNTIME=${TP_DATA}/trojan-panel-core/runtime" \
+    -e "TP_EXTERNAL_DIR=${EXTERNAL_ROUTES_DIR}" \
+    -e "TP_TLS_MODE=${TLS_MODE}" \
     -e "server_port=${CORE_PORT}" \
+    -e "TP_NODE_DOMAIN=${domain}" \
     "${CORE_IMAGE}"
   wait_for_container "${CORE_CONTAINER}"
+}
+
+write_external_entry_contract() {
+  local mode="$1"
+  local file="${EXTERNAL_MANAGED_DIR}/README.md"
+  local routes="${EXTERNAL_ROUTES_DIR}/routes.json"
+  mkdir -p "${EXTERNAL_MANAGED_DIR}"
+
+  local domain="${TP_WEB_DOMAIN:-}"
+  local managed_domain="${TP_NODE_DOMAIN:-}"
+  local kernel_note service_rows
+  if [[ "${mode}" == "node" ]]; then
+    kernel_note="- Kernels read TLS from \`${MANAGED_CERT_DIR}\` (read-only mount). After renewal the certificate owner must run \`install.sh refresh-cert --mode node --config <file>\`; it atomically refreshes this copy and restarts Core only when the pair changed."
+    service_rows="| Core API | ${CORE_PORT} | Hysteria2 authentication callback; restrict with the firewall |
+| Core gRPC | ${GRPC_PORT} | Control plane to node agent; restrict to the Web host |
+| Camouflage site | - | Static files in \`${WEB_PATH}\`; serve plain HTTP only for routes that require fallback |"
+  else
+    kernel_note="- The control plane terminates no TLS traffic itself; the external entry terminates TLS and proxies to the panel UI."
+    service_rows="| Panel UI | ${UI_LISTEN} | Serves the panel and proxies \`/api\` to the panel API |
+| Panel API | 127.0.0.1:${PANEL_PORT} | Internal only; subscriptions are under \`/api/auth/subscribe/:token\` |"
+  fi
+
+  cat >"${file}" <<EOF
+# External entry point contract (generated by install.sh)
+
+Generated for \`${mode}\` with \`tls_mode: ${TLS_MODE}\`. The installer does not
+create or manage any reverse proxy container in this mode. See
+\`deploy/installer/EXTERNAL.md\` and \`docs/外部入口实现契约.md\` in the repository.
+
+## Host services and listeners
+
+| Service | Address | Notes |
+| --- | --- | --- |
+${service_rows}
+
+The camouflage site must be served as **plain HTTP**: an Xray fallback relays the stream it
+already decrypted, so an HTTPS listener on that port answers "400 plain HTTP request was sent to
+HTTPS port". Port ${NODE_CADDY_HTTP_PORT} is only the panel's default fallback value; if the
+external entry already uses that port for ACME challenges, create the node with a different
+fallback destination (for example 8443) and serve the same directory there.
+
+Mode: \`${mode}\`, panel/node domain: \`${domain:-${managed_domain:-<unset>}}\`
+
+## TLS material
+
+${kernel_note}
+
+${EXTERNAL_ROUTES_NOTE}
+
+## Machine readable routing list
+
+${routes}
+
+The node agent regenerates this observed-state file whenever a node is added or
+removed. Kernels remain the direct public listeners and terminate their own TLS;
+do not generate nginx stream forwarding from this file by default. Use it to
+audit firewall exposure, detect 443 conflicts and provision only explicitly
+required plain-HTTP fallback listeners. Current file:
+
+    cat ${routes}
+
+## Checklist
+
+- Kernel protocol ports are direct public TCP/UDP listeners and terminate their own TLS.
+- Keep Core API, Core gRPC and Hysteria2 traffic-stats ports closed except to their authorised callers.
+- Serve the camouflage site over plain HTTP only when a route sets \`external_fallback_listener_required: true\`.
+- A certificate renewal must atomically refresh the managed copy and restart its kernel consumers.
+EOF
+  echo_content green "---> External entry point contract: ${file}"
 }
 
 deploy_web() {
@@ -982,6 +1585,23 @@ deploy_web() {
   write_panel_runtime_config
   deploy_panel_backend
   deploy_panel_ui
+
+  if [[ "${TLS_MODE}" == "external" ]]; then
+    remove_caddy_container "${WEB_CADDY_CONTAINER}"
+    EXTERNAL_ROUTES_NOTE="- The web side has no kernel routes; \`routes.json\` exists on node agents only."
+    write_external_entry_contract web
+    warn_external_ports web
+    echo_content red "\n=============================================================="
+    echo_content skyBlue "Trojan Panel web side deployed with external TLS"
+    echo_content yellow "Panel entry (external): https://${TP_WEB_DOMAIN}"
+    echo_content yellow "Local panel UI: http://${UI_LISTEN:-${BIND_ADDRESS}:${UI_PORT}}"
+    echo_content yellow "The external entry must terminate TLS and proxy to the panel UI."
+    echo_content yellow "Default username: sysadmin"
+    echo_content yellow "Credentials are stored in the restricted deployment configuration and are not printed."
+    echo_content red "==============================================================\n"
+    return
+  fi
+
   write_web_caddyfile "${TP_WEB_DOMAIN}"
   start_caddy "${WEB_CADDY_CONTAINER}" "${TP_DATA}/custom/web-caddy" "${TP_DATA}/custom/web-caddy/data" "${WEB_PATH}"
 
@@ -1006,6 +1626,27 @@ deploy_node() {
   prepare_dirs
   install_pki_material node
   prepare_static_web
+
+  if [[ "${TLS_MODE}" == "external" ]]; then
+    TLS_CERT_PAIR="$(discover_external_cert)"
+    install_external_cert "${TLS_CERT_PAIR}"
+    remove_caddy_container "${NODE_CADDY_CONTAINER}"
+    deploy_core "${TP_NODE_DOMAIN}"
+    EXTERNAL_ROUTES_NOTE="- Node kernels are direct listeners. The external entry only serves \`${WEB_PATH}\` on fallback ports explicitly marked as required in \`routes.json\`."
+    write_external_entry_contract node
+    warn_external_ports node
+
+    echo_content red "\n=============================================================="
+    echo_content skyBlue "Trojan Panel node side deployed with external TLS"
+    echo_content yellow "Node domain: ${TP_NODE_DOMAIN}"
+    echo_content yellow "Core gRPC port: ${GRPC_PORT}"
+    echo_content yellow "Core API port: ${CORE_PORT}"
+    echo_content yellow "Kernel TLS material: ${MANAGED_CERT_DIR}"
+    echo_content yellow "Routing list: ${EXTERNAL_ROUTES_DIR}/routes.json"
+    echo_content red "==============================================================\n"
+    return
+  fi
+
   write_node_caddyfile "${TP_NODE_DOMAIN}"
   start_caddy "${NODE_CADDY_CONTAINER}" "${TP_DATA}/custom/node-caddy" "${TP_DATA}/custom/node-caddy/data" "${WEB_PATH}"
   wait_for_cert "${TP_NODE_DOMAIN}" "${TP_DATA}/custom/node-caddy/data"
@@ -1022,7 +1663,7 @@ deploy_node() {
 remove_web() {
   docker rm -f "${WEB_CADDY_CONTAINER}" "${UI_CONTAINER}" "${PANEL_CONTAINER}" "${REDIS_CONTAINER}" "${MARIADB_CONTAINER}" >/dev/null 2>&1 || true
   if [[ "${TP_PURGE_DATA}" == "1" ]]; then
-    rm -rf "${TP_DATA}/custom/web-caddy" "${TP_DATA}/trojan-panel" "${TP_DATA}/trojan-panel-ui" "${TP_DATA}/mariadb" "${TP_DATA}/redis"
+    rm -rf "${TP_DATA}/custom/web-caddy" "${TP_DATA}/trojan-panel" "${TP_DATA}/trojan-panel-ui" "${TP_DATA}/mariadb" "${TP_DATA}/redis" "${EXTERNAL_MANAGED_DIR}"
   fi
   echo_content skyBlue "---> Trojan Panel web side removed"
 }
@@ -1030,7 +1671,7 @@ remove_web() {
 remove_node() {
   docker rm -f "${CORE_CONTAINER}" "${NODE_CADDY_CONTAINER}" >/dev/null 2>&1 || true
   if [[ "${TP_PURGE_DATA}" == "1" ]]; then
-    rm -rf "${TP_DATA}/custom/node-caddy" "${TP_DATA}/trojan-panel-core"
+    rm -rf "${TP_DATA}/custom/node-caddy" "${TP_DATA}/trojan-panel-core" "${EXTERNAL_MANAGED_DIR}"
   fi
   echo_content skyBlue "---> Trojan Panel node side removed"
 }
@@ -1047,7 +1688,7 @@ main() {
     usage
     return
     ;;
-  install | remove | validate)
+  install | remove | validate | refresh-cert)
     shift
     ;;
   *)
@@ -1113,6 +1754,21 @@ main() {
   [[ -n "${purge_override}" ]] && TP_PURGE_DATA="${purge_override}"
   validate_config "${mode}"
 
+  if [[ "${command}" == refresh-cert && "${mode}" != node ]]; then
+    echo_content red "refresh-cert is only valid with --mode node"
+    exit 1
+  fi
+
+  if [[ "${command}" != "remove" && "${TLS_MODE}" == "external" ]]; then
+    if [[ "${mode}" == "node" ]]; then
+      TLS_CERT_PAIR="$(discover_external_cert)"
+      require_external_cert
+    elif [[ -n "${TLS_CERT_DIR}" ]]; then
+      TLS_CERT_PAIR="$(discover_external_cert)"
+      require_external_cert
+    fi
+  fi
+
   case "${command}:${mode}" in
   validate:web | validate:node)
     echo_content green "Configuration is valid for ${mode} purpose: ${config_file}"
@@ -1128,6 +1784,9 @@ main() {
     ;;
   remove:node)
     remove_node
+    ;;
+  refresh-cert:node)
+    refresh_node_certificate
     ;;
   esac
 }
