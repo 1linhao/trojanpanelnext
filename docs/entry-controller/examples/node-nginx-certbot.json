@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "revision": 1,
+  "deployment_id": "trojanpanelnext-node",
+  "provider": "nginx-certbot",
+  "purpose": "node",
+  "domain": "node.example.com",
+  "certificate": {
+    "managed_dir": "/tpdata/trojan-panel-core/cert",
+    "email": "admin@example.com"
+  },
+  "ingress": {
+    "node_exposure": "direct",
+    "route_manifest": "/tpdata/trojan-panel-core/external/routes.json",
+    "fallbacks": [
+      {
+        "listen": "127.0.0.1:8443",
+        "root": "/tpdata/web"
+      }
+    ]
+  }
+}

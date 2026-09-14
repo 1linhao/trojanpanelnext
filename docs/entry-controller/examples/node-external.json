@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "revision": 1,
+  "deployment_id": "trojanpanelnext-node",
+  "provider": "external",
+  "purpose": "node",
+  "domain": "node.example.com",
+  "certificate": {
+    "managed_dir": "/tpdata/trojan-panel-core/cert",
+    "source_dir": "/etc/vps-factory/certs/node.example.com"
+  },
+  "ingress": {
+    "node_exposure": "direct",
+    "route_manifest": "/tpdata/trojan-panel-core/external/routes.json"
+  },
+  "external_driver": {
+    "protocol_version": 1,
+    "path": "/usr/local/libexec/trojanpanelnext-entry-provider"
+  }
+}

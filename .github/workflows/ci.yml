@@ -113,7 +113,9 @@ jobs:
           test "$count" -gt 0
           printf 'validated %d shell scripts\n' "$count"
       - name: Test installer CLI contract
-        run: bash deploy/installer/tests/installer_cli_test.sh
+        run: |
+          bash deploy/installer/tests/installer_cli_test.sh
+          bash deploy/installer/tests/entry_controller_test.sh
 
   docs:
     name: documentation site

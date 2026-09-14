@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trojanpanelnext.example/schema/observed-state-v1.json",
+  "title": "TrojanPanel Next EntryController ObservedState",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "deployment_id", "desired_revision", "observed_revision", "generation", "active_provider", "phase", "health", "capabilities", "resources", "listeners"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "deployment_id": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,62}$"},
+    "desired_revision": {"type": "integer", "minimum": 1},
+    "observed_revision": {"type": "integer", "minimum": 0},
+    "generation": {"type": "integer", "minimum": 0},
+    "active_provider": {"enum": ["caddy-legacy", "nginx-certbot", "external"]},
+    "driver": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"type": "string", "pattern": "^/"},
+        "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+      }
+    },
+    "previous_provider": {"enum": ["caddy-legacy", "nginx-certbot", "external"]},
+    "phase": {"enum": ["stable", "preparing", "prepared", "deactivating", "activating", "verifying", "rolling_back", "failed"]},
+    "health": {"enum": ["healthy", "degraded", "unhealthy", "unknown"]},
+    "capabilities": {"type": "array", "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z][a-z0-9_.-]+$"}},
+    "resources": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/resource"}
+    },
+    "certificate": {"$ref": "#/$defs/certificate"},
+    "listeners": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/listener"}
+    },
+    "last_error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "phase", "retryable", "message"],
+      "properties": {
+        "code": {"type": "string"},
+        "phase": {"type": "string"},
+        "resource": {"type": "string"},
+        "retryable": {"type": "boolean"},
+        "rollback_status": {"enum": ["not-needed", "pending", "succeeded", "failed"]},
+        "message": {"type": "string"}
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"active_provider": {"const": "external"}}, "required": ["active_provider"]},
+      "then": {"required": ["driver"]}
+    }
+  ],
+  "$defs": {
+    "resource": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "id", "owner", "retention"],
+        "properties": {
+          "kind": {"enum": ["file", "directory", "container", "process", "listener", "timer", "certificate", "driver-resource"]},
+          "id": {"type": "string", "minLength": 1},
+          "owner": {"enum": ["controller", "provider", "external"]},
+          "retention": {"enum": ["managed", "preserve"]},
+          "digest": {"type": "string"}
+        }
+      },
+    "certificate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["domain", "cert_path", "key_path", "fingerprint", "generation", "renewal_owner"],
+      "properties": {
+        "domain": {"type": "string"},
+        "cert_path": {"type": "string", "pattern": "^/"},
+        "key_path": {"type": "string", "pattern": "^/"},
+        "fingerprint": {"type": "string", "minLength": 1},
+        "not_after": {"type": "string", "format": "date-time"},
+        "generation": {"type": "integer", "minimum": 0},
+        "renewal_owner": {"enum": ["caddy-legacy", "nginx-certbot", "external"]},
+        "last_hook_status": {"enum": ["unchanged", "ok", "failed", "unknown"]}
+      }
+    },
+    "listener": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["transport", "address", "port", "purpose", "owner"],
+        "properties": {
+          "transport": {"enum": ["tcp", "udp"]},
+          "address": {"type": "string"},
+          "port": {"type": "integer", "minimum": 1, "maximum": 65535},
+          "purpose": {"type": "string", "minLength": 1},
+          "owner": {"enum": ["controller", "provider", "external", "kernel"]}
+        }
+      }
+  }
+}

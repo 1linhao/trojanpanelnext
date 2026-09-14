@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "deployment_id": "trojanpanelnext-node",
+  "desired_revision": 1,
+  "observed_revision": 1,
+  "generation": 1,
+  "active_provider": "nginx-certbot",
+  "phase": "stable",
+  "health": "healthy",
+  "capabilities": [
+    "certificate.material",
+    "ingress.acme_http01",
+    "ingress.plain_fallback"
+  ],
+  "resources": [],
+  "listeners": [
+    {
+      "transport": "tcp",
+      "address": "127.0.0.1",
+      "port": 8443,
+      "purpose": "plain-fallback",
+      "owner": "provider"
+    }
+  ]
+}

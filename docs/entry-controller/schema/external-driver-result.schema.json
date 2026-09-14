@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trojanpanelnext.example/schema/external-driver-result-v1.json",
+  "title": "TrojanPanel Next external driver result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "driver_protocol_version",
+    "provider",
+    "action",
+    "deployment_id",
+    "status",
+    "capabilities",
+    "resources",
+    "listeners"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "driver_protocol_version": {"const": 1},
+    "provider": {"const": "external"},
+    "action": {"enum": ["probe", "prepare", "activate", "verify", "rollback", "remove"]},
+    "deployment_id": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,62}$"},
+    "status": {"enum": ["ok", "unchanged", "prepared", "active", "healthy", "rolled_back", "removed"]},
+    "capabilities": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"type": "string", "pattern": "^[a-z][a-z0-9_.-]+$"}
+    },
+    "resources": {
+      "type": "array",
+      "items": {"$ref": "observed-state.schema.json#/$defs/resource"}
+    },
+    "listeners": {
+      "type": "array",
+      "items": {"$ref": "observed-state.schema.json#/$defs/listener"}
+    },
+    "certificate": {
+      "$ref": "observed-state.schema.json#/$defs/certificate",
+      "properties": {"renewal_owner": {"const": "external"}}
+    },
+    "message": {"type": "string"}
+  },
+  "allOf": [
+    {"if": {"properties": {"action": {"const": "probe"}}}, "then": {"properties": {"status": {"enum": ["ok", "unchanged"]}}}},
+    {"if": {"properties": {"action": {"const": "prepare"}}}, "then": {"properties": {"status": {"enum": ["prepared", "unchanged"]}}}},
+    {"if": {"properties": {"action": {"const": "activate"}}}, "then": {"properties": {"status": {"enum": ["active", "unchanged"]}}}},
+    {"if": {"properties": {"action": {"const": "verify"}}}, "then": {"properties": {"status": {"const": "healthy"}}}},
+    {"if": {"properties": {"action": {"const": "rollback"}}}, "then": {"properties": {"status": {"enum": ["rolled_back", "unchanged"]}}}},
+    {"if": {"properties": {"action": {"const": "remove"}}}, "then": {"properties": {"status": {"enum": ["removed", "unchanged"]}}}}
+  ]
+}

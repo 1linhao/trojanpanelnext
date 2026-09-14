@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "revision": 1,
+  "deployment_id": "trojanpanelnext-web",
+  "provider": "caddy-legacy",
+  "purpose": "web",
+  "domain": "panel.example.com",
+  "certificate": {
+    "managed_dir": "/tpdata/custom/web-caddy/data"
+  },
+  "ingress": {
+    "web_upstream": "127.0.0.1:8888"
+  }
+}

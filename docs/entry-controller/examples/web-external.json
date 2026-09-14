@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "revision": 1,
+  "deployment_id": "trojanpanelnext-web",
+  "provider": "external",
+  "purpose": "web",
+  "domain": "panel.example.com",
+  "certificate": {
+    "managed_dir": "/tpdata/trojan-panel-ui/cert",
+    "source_dir": "/etc/vps-factory/certs/panel.example.com"
+  },
+  "ingress": {
+    "web_upstream": "127.0.0.1:8888"
+  },
+  "external_driver": {
+    "protocol_version": 1,
+    "path": "/usr/local/libexec/trojanpanelnext-entry-provider"
+  }
+}
