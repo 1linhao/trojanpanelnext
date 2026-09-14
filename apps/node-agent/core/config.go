@@ -34,6 +34,7 @@ var (
 	grpcClientCA   string
 	serverPort     string
 	nodeServerID   string
+	nodeDomain     string
 	version        bool
 )
 
@@ -58,6 +59,7 @@ func init() {
 	flag.StringVar(&grpcClientCA, "grpcClientCA", envOr("GRPC_CLIENT_CA_PATH", "grpc_client_ca_path", ""), "gRPC client CA certificate")
 	flag.StringVar(&serverPort, "serverPort", envOr("SERVER_PORT", "server_port", "8082"), "service port")
 	flag.StringVar(&nodeServerID, "nodeServerId", envOr("NODE_SERVER_ID", "node_server_id", "0"), "panel node_server id")
+	flag.StringVar(&nodeDomain, "nodeDomain", envOr("TP_NODE_DOMAIN", "node_domain", ""), "node domain used for TLS SNI")
 	flag.BoolVar(&version, "version", false, "print version info")
 	flag.Usage = usage
 	isTest := strings.HasSuffix(os.Args[0], ".test")
@@ -132,8 +134,9 @@ client_ca_path=%s
 port=%s
 [node]
 server_id=%s
+domain=%s
 `, host, user, password, port, database, accountTable, redisHost, redisPort, redisPassword, redisDb,
-			redisMaxIdle, redisMaxActive, redisWait, crtPath, keyPath, grpcPort, grpcTLSMode, grpcClientCA, serverPort, nodeServerID))
+			redisMaxIdle, redisMaxActive, redisWait, crtPath, keyPath, grpcPort, grpcTLSMode, grpcClientCA, serverPort, nodeServerID, nodeDomain))
 		if err != nil {
 			logrus.Errorf("config.ini file write err: %v", err)
 			panic(err)
@@ -210,7 +213,8 @@ type CertConfig struct {
 }
 
 type NodeConfig struct {
-	ServerID uint `ini:"server_id"`
+	ServerID uint   `ini:"server_id"`
+	Domain   string `ini:"domain"`
 }
 
 // LogConfig log

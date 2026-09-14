@@ -8,9 +8,12 @@ import (
 	"trojan-panel-core/app/hysteria2"
 	"trojan-panel-core/app/naiveproxy"
 	"trojan-panel-core/app/xray"
+	"trojan-panel-core/core"
 	"trojan-panel-core/core/process"
 	"trojan-panel-core/dao"
 	"trojan-panel-core/dao/redis"
+	"trojan-panel-core/external"
+	"trojan-panel-core/kernelconfig"
 	"trojan-panel-core/model"
 	"trojan-panel-core/model/bo"
 	"trojan-panel-core/model/constant"
@@ -23,6 +26,17 @@ import (
 var userLinkRegex = regexp.MustCompile("user>>>([^>]+)>>>traffic>>>(downlink|uplink)")
 
 func InitApp() {
+	// Existing kernel configurations embed certificate paths. Keep them aligned
+	// with config.ini before restoring processes so acme/external migrations do
+	// not leave a kernel reading the previous mode's certificate directory.
+	certConfig := core.Config.CertConfig
+	if err := kernelconfig.SyncKernelCertificates(certConfig.CrtPath, certConfig.KeyPath); err != nil {
+		logrus.Errorf("kernel certificate sync err: %v", err)
+	}
+	// The kernel-listener observation contract is published before anything that can
+	// panic: InitBinFile aborts the process when a proxy kernel binary is missing,
+	// and the contract must exist for the operator even on such a node.
+	writeExternalRoutes()
 	InitBinFile()
 	if initializeTrafficQuota() {
 		return
@@ -35,6 +49,19 @@ func InitApp() {
 	}
 	if err := hysteria2.InitHysteria2App(); err != nil {
 		logrus.Errorf("hysteria2 app init err: %s", err.Error())
+	}
+	// Refresh again: the per inbounds the kernels restored above are part of the
+	// contract, and their configuration files may have changed since boot.
+	writeExternalRoutes()
+}
+
+// writeExternalRoutes refreshes the listener manifest EntryController reads.
+// It never fails a node operation: a stale manifest is recoverable, a
+// failed proxy start is not.
+func writeExternalRoutes() {
+	certConfig := core.Config.CertConfig
+	if err := external.WriteRoutes(core.Config.NodeConfig.Domain, certConfig.CrtPath, certConfig.KeyPath); err != nil {
+		logrus.Errorf("external routes write err: %v", err)
 	}
 }
 
@@ -114,6 +141,7 @@ func StartApp(nodeAddDto dto.NodeAddDto) error {
 		if err := service.InsertNodeConfig(nodeConfig); err != nil {
 			return err
 		}
+		writeExternalRoutes()
 	}
 	return nil
 }
@@ -142,6 +170,7 @@ func StopApp(apiPort uint, nodeTypeId uint) error {
 		if err := service.DeleteNodeConfigByNodeTypeIdAndApiPort(apiPort, nodeTypeId); err != nil {
 			return err
 		}
+		writeExternalRoutes()
 	}
 	return nil
 }
