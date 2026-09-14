@@ -82,6 +82,18 @@ sudo ./install.sh install --mode node --config ./node-agent.yaml
 sudo ./install.sh refresh-cert --mode node --config ./node-agent.yaml
 ```
 
+When a host manager has generated a Protocol v1 EntrySpec, pass it explicitly:
+
+```bash
+sudo ./install.sh install --mode node --config ./node-agent.yaml \
+  --entry-spec /var/lib/vps-factory/service-specs/trojanpanelnext-node.json
+```
+
+After the application install succeeds, the installer calls the adjacent
+`entry/entryctl.sh reconcile`. Removal calls `remove` before deleting application
+containers. The EntrySpec purpose and domain must match the installer config;
+mutating actions require a root-owned regular file with mode 0600.
+
 `--mode` must match `trojanpanelnext.purpose`; the installer exits immediately when they differ.
 
 ## Recreate or remove

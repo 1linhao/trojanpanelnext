@@ -88,6 +88,17 @@ sudo ./install.sh install --mode node --config ./node-agent.yaml
 sudo ./install.sh refresh-cert --mode node --config ./node-agent.yaml
 ```
 
+当宿主管理系统已经生成 Protocol v1 EntrySpec 时，通过 `--entry-spec` 把它交给安装器：
+
+```bash
+sudo ./install.sh install --mode node --config ./node-agent.yaml \
+  --entry-spec /var/lib/vps-factory/service-specs/trojanpanelnext-node.json
+```
+
+安装成功后 installer 调用相邻的 `entry/entryctl.sh reconcile`；移除时先调用 `remove`，入口回收
+成功后才删除应用容器。EntrySpec 必须与配置的 purpose、domain 一致，且变更动作要求 root 所有的
+0600 普通文件。
+
 `--mode` 必须和配置中的 `trojanpanelnext.purpose` 一致，模式不匹配时安装器会立即退出。
 
 ## 重建与卸载

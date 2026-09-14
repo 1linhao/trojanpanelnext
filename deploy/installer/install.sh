@@ -9,6 +9,9 @@ YQ_VERSION="v4.53.6"
 TP_DATA="${TP_DATA:-/tpdata}"
 WEB_PATH="${WEB_PATH:-${TP_DATA}/web}"
 TP_PKI_BUNDLE_DIR="${TP_PKI_BUNDLE_DIR:-${TP_DATA}/trojanpanelnext-pki}"
+INSTALLER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ENTRYCTL_PATH="${ENTRYCTL_PATH:-${INSTALLER_DIR}/entry/entryctl.sh}"
+ENTRY_SPEC_FILE="${ENTRY_SPEC_FILE:-}"
 EXTERNAL_MANAGED_DIR="${EXTERNAL_MANAGED_DIR:-${TP_DATA}/trojanpanelnext-external}"
 EXTERNAL_ROUTES_DIR="${EXTERNAL_ROUTES_DIR:-${TP_DATA}/trojan-panel-core/external}"
 MANAGED_CERT_DIR="${MANAGED_CERT_DIR:-${TP_DATA}/trojan-panel-core/cert}"
@@ -85,13 +88,14 @@ usage() {
   local mode="${1:-web|node}"
   cat <<EOF
 Usage:
-  $0 install  --mode $mode --config <file>
-  $0 remove   --mode $mode --config <file> [--purge-data]
-  $0 validate --mode $mode --config <file>
+  $0 install  --mode $mode --config <file> [--entry-spec <0600-file>]
+  $0 remove   --mode $mode --config <file> [--entry-spec <0600-file>] [--purge-data]
+  $0 validate --mode $mode --config <file> [--entry-spec <file>]
   $0 refresh-cert --mode node --config <file>
 
 Options:
   --mode <mode>      Server purpose: web control plane or node agent
+  --entry-spec <file>  Versioned EntrySpec consumed by EntryController
   --config <file>    YAML configuration file
   --force            Recreate existing containers during installation
   --purge-data       Delete generated data during removal
@@ -181,6 +185,65 @@ install_base_tools() {
   command -v od >/dev/null 2>&1 || install_packages coreutils
   command -v sha256sum >/dev/null 2>&1 || install_packages coreutils
   command -v openssl >/dev/null 2>&1 || install_packages openssl
+  [[ -z "${ENTRY_SPEC_FILE:-}" ]] || command -v jq >/dev/null 2>&1 || install_packages jq
+}
+
+validate_entry_spec_binding() {
+  local mode="$1"
+  local spec="${ENTRY_SPEC_FILE:-}"
+  [[ -n "${spec}" ]] || return 0
+  [[ "${TLS_MODE}" == external ]] || {
+    echo_content red "--entry-spec is only valid with tls_mode: external"
+    return 1
+  }
+  [[ "${spec}" == /* && -f "${spec}" && ! -L "${spec}" ]] || {
+    echo_content red "--entry-spec must be an absolute regular non-symlink file"
+    return 1
+  }
+  command -v jq >/dev/null 2>&1 || {
+    echo_content red "jq is required to validate --entry-spec"
+    return 1
+  }
+  local domain
+  domain="${TP_WEB_DOMAIN:-}"
+  [[ "${mode}" == node ]] && domain="${TP_NODE_DOMAIN:-}"
+  jq -e --arg mode "${mode}" --arg domain "${domain}" '
+    .schema_version == 1 and
+    .provider == "external" and
+    .purpose == $mode and
+    .domain == $domain and
+    (.deployment_id | type == "string" and test("^[a-z][a-z0-9-]{0,62}$")) and
+    .external_driver.protocol_version == 1 and
+    (.external_driver.path | type == "string" and startswith("/"))
+  ' "${spec}" >/dev/null || {
+    echo_content red "EntrySpec does not match installer purpose/domain or protocol v1"
+    return 1
+  }
+}
+
+entry_controller() {
+  local action="$1"
+  [[ -n "${ENTRY_SPEC_FILE:-}" ]] || return 0
+  [[ -x "${ENTRYCTL_PATH}" && ! -L "${ENTRYCTL_PATH}" ]] || {
+    echo_content red "EntryController is unavailable or unsafe: ${ENTRYCTL_PATH}"
+    return 1
+  }
+  case "${action}" in
+  reconcile)
+    "${ENTRYCTL_PATH}" reconcile --spec "${ENTRY_SPEC_FILE}"
+    ;;
+  remove)
+    if [[ "${TP_PURGE_DATA}" == 1 ]]; then
+      "${ENTRYCTL_PATH}" remove --spec "${ENTRY_SPEC_FILE}" --purge
+    else
+      "${ENTRYCTL_PATH}" remove --spec "${ENTRY_SPEC_FILE}"
+    fi
+    ;;
+  *)
+    echo_content red "Unsupported EntryController action: ${action}"
+    return 1
+    ;;
+  esac
 }
 
 install_yq() {
@@ -1682,6 +1745,7 @@ main() {
   local config_file=""
   local force_override=""
   local purge_override=""
+  local entry_spec_override=""
 
   case "${command}" in
   -h | --help | help | "")
@@ -1708,6 +1772,11 @@ main() {
     --config)
       [[ $# -ge 2 ]] || { echo_content red "--config requires a value"; exit 1; }
       config_file="$2"
+      shift 2
+      ;;
+    --entry-spec)
+      [[ $# -ge 2 ]] || { echo_content red "--entry-spec requires a value"; exit 1; }
+      entry_spec_override="$2"
       shift 2
       ;;
     --force)
@@ -1744,6 +1813,11 @@ main() {
     echo_content red "--purge-data is only valid with remove"
     exit 1
   fi
+  [[ -n "${entry_spec_override}" ]] && ENTRY_SPEC_FILE="${entry_spec_override}"
+  if [[ -n "${ENTRY_SPEC_FILE}" && "${command}" == refresh-cert ]]; then
+    echo_content red "--entry-spec is not valid with refresh-cert"
+    exit 1
+  fi
   if [[ "${command}" == validate ]]; then
     load_config "${mode}" "${config_file}" 0
   else
@@ -1753,6 +1827,7 @@ main() {
   [[ -n "${force_override}" ]] && TP_FORCE="${force_override}"
   [[ -n "${purge_override}" ]] && TP_PURGE_DATA="${purge_override}"
   validate_config "${mode}"
+  validate_entry_spec_binding "${mode}"
 
   if [[ "${command}" == refresh-cert && "${mode}" != node ]]; then
     echo_content red "refresh-cert is only valid with --mode node"
@@ -1767,6 +1842,10 @@ main() {
       TLS_CERT_PAIR="$(discover_external_cert)"
       require_external_cert
     fi
+  fi
+
+  if [[ "${command}" == remove && -n "${ENTRY_SPEC_FILE}" ]]; then
+    entry_controller remove
   fi
 
   case "${command}:${mode}" in
@@ -1789,6 +1868,10 @@ main() {
     refresh_node_certificate
     ;;
   esac
+
+  if [[ "${command}" == install && -n "${ENTRY_SPEC_FILE}" ]]; then
+    entry_controller reconcile
+  fi
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

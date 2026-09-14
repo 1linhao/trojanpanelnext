@@ -93,7 +93,10 @@ external_data_dir="$(mktemp -d)"
 external_mismatch_dir="$(mktemp -d)"
 external_wrong_domain_dir="$(mktemp -d)"
 external_refresh_dir="$(mktemp -d)"
-trap 'rm -f "${legacy_config}" "${missing_purpose_config}"; rm -rf -- "${pki_dir}" "${node_pki_dir}" "${node_runtime_dir}" "${external_cases_dir}" "${external_tls_dir}" "${external_pairs_dir}" "${external_data_dir}" "${external_mismatch_dir}" "${external_wrong_domain_dir}" "${external_refresh_dir}"' EXIT
+entry_spec="$(mktemp)"
+entry_trace="$(mktemp)"
+fake_entryctl="$(mktemp)"
+trap 'rm -f "${legacy_config}" "${missing_purpose_config}" "${entry_spec}" "${entry_trace}" "${fake_entryctl}"; rm -rf -- "${pki_dir}" "${node_pki_dir}" "${node_runtime_dir}" "${external_cases_dir}" "${external_tls_dir}" "${external_pairs_dir}" "${external_data_dir}" "${external_mismatch_dir}" "${external_wrong_domain_dir}" "${external_refresh_dir}"' EXIT
 
 # The shipped template points at a real external certificate directory, which
 # cannot exist on a test host. Validate the template against a local pair.
@@ -103,10 +106,49 @@ openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
 sed "s#tls_cert_dir: /etc/vps-factory/certs/node.example.com#tls_cert_dir: ${external_tls_dir}#" \
   "${EXAMPLES}/external-node.yaml" >"${external_cases_dir}/ready.yaml"
 
+jq -n '{
+  schema_version: 1, revision: 1, deployment_id: "trojanpanelnext-node",
+  provider: "external", purpose: "node", domain: "node.example.com",
+  certificate: {
+    managed_dir: "/tpdata/trojan-panel-core/cert",
+    source_dir: "/etc/vps-factory/certs/node.example.com"
+  },
+  ingress: {
+    node_exposure: "direct",
+    route_manifest: "/tpdata/trojan-panel-core/external/routes.json",
+    fallbacks: []
+  },
+  external_driver: {
+    protocol_version: 1,
+    path: "/usr/local/libexec/trojanpanelnext-entry-provider"
+  }
+}' >"${entry_spec}"
+chmod 0600 "${entry_spec}"
+
 "${INSTALLER}" validate --mode node --config "${external_cases_dir}/ready.yaml" | grep -q 'valid for node purpose'
+"${INSTALLER}" validate --mode node --config "${external_cases_dir}/ready.yaml" \
+  --entry-spec "${entry_spec}" | grep -q 'valid for node purpose'
+assert_fails "${INSTALLER}" validate --mode web --config "${EXAMPLES}/external-web.yaml" \
+  --entry-spec "${entry_spec}"
+assert_fails "${INSTALLER}" validate --mode node --config "${EXAMPLES}/node-agent.yaml" \
+  --entry-spec "${entry_spec}"
+assert_fails "${INSTALLER}" refresh-cert --mode node --config "${external_cases_dir}/ready.yaml" \
+  --entry-spec "${entry_spec}"
 "${INSTALLER}" validate --mode node --config "${external_cases_dir}/ready.yaml" | grep -q 'External TLS material'
 "${INSTALLER}" validate --mode web --config "${EXAMPLES}/external-web.yaml" | grep -q 'valid for web purpose'
 assert_fails "${INSTALLER}" validate --mode web --config "${external_cases_dir}/ready.yaml"
+
+cat >"${fake_entryctl}" <<'EOF'
+#!/bin/sh
+printf '%s\n' "$*" >>"${ENTRY_TEST_TRACE}"
+EOF
+chmod 0700 "${fake_entryctl}"
+ENTRY_TEST_TRACE="${entry_trace}" ENTRYCTL_PATH="${fake_entryctl}" ENTRY_SPEC_FILE="${entry_spec}" \
+  bash -c 'set -Eeuo pipefail; source "$1"; TP_PURGE_DATA=0; entry_controller reconcile; entry_controller remove; TP_PURGE_DATA=1; entry_controller remove' \
+  installer-test "${INSTALLER}"
+grep -Fxq "reconcile --spec ${entry_spec}" "${entry_trace}"
+test "$(grep -Fxc "remove --spec ${entry_spec}" "${entry_trace}")" = 1
+grep -Fxq "remove --spec ${entry_spec} --purge" "${entry_trace}"
 
 # Defaults stay acme, so the pre-existing templates must keep validating.
 "${INSTALLER}" validate --mode web --config "${EXAMPLES}/web.yaml" | grep -q 'valid for web purpose'
