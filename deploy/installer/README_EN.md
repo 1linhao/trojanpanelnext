@@ -101,11 +101,12 @@ mutating actions require a root-owned regular file with mode 0600.
 
 ```bash
 sudo ./install.sh install --mode web --config ./web.yaml --force
-sudo ./install.sh remove --mode web --config ./web.yaml
+sudo ./install.sh remove --mode web --config ./web.yaml --keep-data
 sudo ./install.sh remove --mode node --config ./node-agent.yaml --purge-data
 ```
 
-The first remove command keeps generated data. `--purge-data` deletes it.
+`--keep-data` overrides `purge_data` in the config for a recoverable removal;
+`--purge-data` explicitly deletes generated data.
 
 ## Configuration files
 

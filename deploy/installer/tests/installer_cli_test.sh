@@ -51,6 +51,8 @@ assert_fails "${INSTALLER}" validate --mode invalid --config /dev/null
 assert_fails "${INSTALLER}" validate --mode web
 assert_fails "${INSTALLER}" validate --mode web --config /dev/null --force
 assert_fails "${INSTALLER}" install --mode web --config /dev/null --purge-data
+assert_fails "${INSTALLER}" install --mode web --config /dev/null --keep-data
+assert_fails "${INSTALLER}" remove --mode web --config /dev/null --purge-data --keep-data
 
 "${INSTALLER}" validate --mode web \
   --config "$(dirname "${INSTALLER}")/examples/web.yaml" | grep -q 'valid for web purpose'
@@ -307,6 +309,18 @@ bash -c '
   main remove --mode node --config /does/not-need-to-exist
 ' installer-test "${INSTALLER}" | grep -q '^REMOVED$'
 
+# Automation can force a non-destructive removal even when an existing config
+# opted into purge_data.
+bash -c '
+  set -Eeuo pipefail
+  source "$1"
+  require_root() { :; }
+  load_config() { TLS_MODE=external; TP_PURGE_DATA=1; }
+  validate_config() { :; }
+  remove_node() { test "${TP_PURGE_DATA}" = 0; printf "KEPT\n"; }
+  main remove --mode node --config /contains-purge-data --keep-data
+' installer-test "${INSTALLER}" | grep -q '^KEPT$'
+
 # Mode/bind migrations recreate only affected containers. An old container
 # without the marker is the legacy default (acme / 0.0.0.0).
 bash -c '
@@ -345,6 +359,42 @@ assert_fails bash -c '
   docker() { return 42; }
   remove_caddy_container stale-caddy
 ' installer-test "${INSTALLER}"
+
+# External removal must never target the legacy Caddy names. The caller may
+# verify ownership of the workload containers, but cannot safely authorize a
+# later, unrelated container that races into a legacy Caddy name.
+remove_trace="${external_cases_dir}/remove-containers.trace"
+REMOVE_TRACE="${remove_trace}" bash -c '
+  set -Eeuo pipefail
+  source "$1"
+  docker() { printf "%s\n" "$*" >>"${REMOVE_TRACE}"; }
+  TP_PURGE_DATA=0
+  TLS_MODE=external
+  remove_web
+  remove_node
+' installer-test "${INSTALLER}"
+grep -Fq 'trojan-panel-ui' "${remove_trace}"
+grep -Fq 'trojan-panel' "${remove_trace}"
+grep -Fq 'trojan-panel-redis' "${remove_trace}"
+grep -Fq 'trojan-panel-mariadb' "${remove_trace}"
+grep -Fq 'trojan-panel-core' "${remove_trace}"
+if grep -Fq -- '-caddy' "${remove_trace}"; then
+  echo "external remove unexpectedly targeted a Caddy container" >&2
+  exit 1
+fi
+
+: >"${remove_trace}"
+REMOVE_TRACE="${remove_trace}" bash -c '
+  set -Eeuo pipefail
+  source "$1"
+  docker() { printf "%s\n" "$*" >>"${REMOVE_TRACE}"; }
+  TP_PURGE_DATA=0
+  TLS_MODE=acme
+  remove_web
+  remove_node
+' installer-test "${INSTALLER}"
+grep -Fq 'trojan-panel-web-caddy' "${remove_trace}"
+grep -Fq 'trojan-panel-node-caddy' "${remove_trace}"
 
 # The generated core config carries the node domain used as the routes.json SNI
 # fallback, including after migration from an older config.

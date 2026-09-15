@@ -114,8 +114,10 @@ sudo ./install.sh install --mode web --config ./web.yaml --force
 保留数据卸载服务：
 
 ```bash
-sudo ./install.sh remove --mode web --config ./web.yaml
+sudo ./install.sh remove --mode web --config ./web.yaml --keep-data
 ```
+
+`--keep-data` 会覆盖配置中的 `purge_data`，适合由外部管理系统执行可恢复卸载。
 
 删除服务及生成数据：
 

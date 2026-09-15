@@ -89,7 +89,7 @@ usage() {
   cat <<EOF
 Usage:
   $0 install  --mode $mode --config <file> [--entry-spec <0600-file>]
-  $0 remove   --mode $mode --config <file> [--entry-spec <0600-file>] [--purge-data]
+  $0 remove   --mode $mode --config <file> [--entry-spec <0600-file>] [--purge-data|--keep-data]
   $0 validate --mode $mode --config <file> [--entry-spec <file>]
   $0 refresh-cert --mode node --config <file>
 
@@ -99,6 +99,7 @@ Options:
   --config <file>    YAML configuration file
   --force            Recreate existing containers during installation
   --purge-data       Delete generated data during removal
+  --keep-data        Preserve generated data during removal, overriding the config
   -h, --help         Show this help
 
 Examples:
@@ -1728,7 +1729,11 @@ deploy_node() {
 }
 
 remove_web() {
-  docker rm -f "${WEB_CADDY_CONTAINER}" "${UI_CONTAINER}" "${PANEL_CONTAINER}" "${REDIS_CONTAINER}" "${MARIADB_CONTAINER}" >/dev/null 2>&1 || true
+  local containers=("${UI_CONTAINER}" "${PANEL_CONTAINER}" "${REDIS_CONTAINER}" "${MARIADB_CONTAINER}")
+  if [[ "${TLS_MODE}" != "external" ]]; then
+    containers=("${WEB_CADDY_CONTAINER}" "${containers[@]}")
+  fi
+  docker rm -f "${containers[@]}" >/dev/null 2>&1 || true
   if [[ "${TP_PURGE_DATA}" == "1" ]]; then
     rm -rf "${TP_DATA}/custom/web-caddy" "${TP_DATA}/trojan-panel" "${TP_DATA}/trojan-panel-ui" "${TP_DATA}/mariadb" "${TP_DATA}/redis" "${EXTERNAL_MANAGED_DIR}"
   fi
@@ -1736,7 +1741,11 @@ remove_web() {
 }
 
 remove_node() {
-  docker rm -f "${CORE_CONTAINER}" "${NODE_CADDY_CONTAINER}" >/dev/null 2>&1 || true
+  local containers=("${CORE_CONTAINER}")
+  if [[ "${TLS_MODE}" != "external" ]]; then
+    containers+=("${NODE_CADDY_CONTAINER}")
+  fi
+  docker rm -f "${containers[@]}" >/dev/null 2>&1 || true
   if [[ "${TP_PURGE_DATA}" == "1" ]]; then
     rm -rf "${TP_DATA}/custom/node-caddy" "${TP_DATA}/trojan-panel-core" "${EXTERNAL_MANAGED_DIR}"
   fi
@@ -1788,7 +1797,13 @@ main() {
       shift
       ;;
     --purge-data)
+      [[ -z "${purge_override}" ]] || { echo_content red "--purge-data and --keep-data are mutually exclusive"; exit 1; }
       purge_override=1
+      shift
+      ;;
+    --keep-data)
+      [[ -z "${purge_override}" ]] || { echo_content red "--purge-data and --keep-data are mutually exclusive"; exit 1; }
+      purge_override=0
       shift
       ;;
     -h | --help)
@@ -1814,7 +1829,7 @@ main() {
     exit 1
   fi
   if [[ -n "${purge_override}" && "${command}" != remove ]]; then
-    echo_content red "--purge-data is only valid with remove"
+    echo_content red "--purge-data/--keep-data are only valid with remove"
     exit 1
   fi
   [[ -n "${entry_spec_override}" ]] && ENTRY_SPEC_FILE="${entry_spec_override}"
