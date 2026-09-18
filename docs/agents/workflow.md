@@ -54,9 +54,10 @@ Flash 遇到 ADR 冲突、跨模块重构、安全选择、无法稳定复现的
 
 - 本功能的固定代码基线为 `50d039098efcc7a2feebee87248cad2ca2348f4e`，位于 `codex/entry-provider-nginx-certbot`。
 - 该提交相对 `origin/main` 领先 8 个入口、external TLS、EntrySpec、Node route manifest 和 mTLS 相关提交，是本规格依赖的现有能力。
-- 本轮 `AGENTS.md`、领域词汇、ADR、协作规则和规格将形成一个独立的协作基线提交。
-- 所有实现工单的 branch 与 worktree 必须从协作基线提交或已按依赖合并其 blocker 的最新 `main` 派生，禁止从脏工作区复制。
-- `/code-review` 的固定点使用该 PR 创建时所基于的最新已合并基线，并在审查前同步 blocker 的合并结果。
+- 本轮 `AGENTS.md`、领域词汇、ADR、协作规则和规格形成独立的协作基线提交；远端集成分支为 `codex/entry-provider-nginx-certbot`。
+- 本功能完成前，每张实现工单的 branch 与 worktree 必须从远端集成分支的最新已合并状态派生，PR 也以该集成分支为 base；禁止从脏工作区复制。
+- blocker PR 合并后，下游分支先同步集成分支并重跑测试。整组功能验收后，再由集成分支向 `main` 提交最终 PR。
+- `/code-review` 的固定点使用该 PR 创建时的集成分支 merge-base，并在审查前同步 blocker 的合并结果。
 
 ## 分支、审查与合并
 
