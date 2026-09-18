@@ -35,7 +35,7 @@ while (($#)); do
   esac
 done
 
-[[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]] || fail 'version must be an explicit semantic version'
+[[ "${version}" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]] || fail 'version must be an explicit semantic version'
 [[ "${source_commit}" =~ ^[0-9a-f]{40}$ ]] || fail 'source commit must be a 40-character lowercase SHA'
 [[ -n "${output}" ]] || fail 'output directory is required'
 [[ ! -L "${output}" ]] || fail 'output directory must not be a symlink'
@@ -51,10 +51,27 @@ for image in "${api_image}" "${web_image}" "${node_agent_image}" "${caddy_image}
   [[ "${image}" =~ ${image_pattern} ]] || fail "image must be pinned by digest: ${image:-<missing>}"
 done
 
-mkdir -p "${output}"
+ASSET_PATHS=(
+  bootstrap.sh
+  verify-assets.sh
+  install.sh
+  config-web.yaml
+  config-node.yaml
+  config-combined.yaml
+  entry/entryctl.sh
+  entry/controller.sh
+  entry/adapters/external.sh
+  entry/adapters/nginx_certbot.sh
+)
+mkdir -p "${output}/entry/adapters"
 install -m 0755 "${SCRIPT_DIR}/bootstrap.sh" "${output}/bootstrap.sh"
 install -m 0755 "${SCRIPT_DIR}/verify-assets.sh" "${output}/verify-assets.sh"
 install -m 0755 "${installer_source}" "${output}/install.sh"
+install -m 0755 "${INSTALLER_DIR}/entry/entryctl.sh" "${output}/entry/entryctl.sh"
+install -m 0644 "${INSTALLER_DIR}/entry/controller.sh" "${output}/entry/controller.sh"
+install -m 0644 "${INSTALLER_DIR}/entry/adapters/external.sh" "${output}/entry/adapters/external.sh"
+install -m 0755 "${INSTALLER_DIR}/entry/adapters/nginx_certbot.sh" "${output}/entry/adapters/nginx_certbot.sh"
+sed -i "s|TP_INSTALLER_ASSET_VERSION:-development|TP_INSTALLER_ASSET_VERSION:-${version}|" "${output}/install.sh"
 
 render_template() {
   local source="$1"
@@ -75,7 +92,7 @@ render_template "${SCRIPT_DIR}/templates/config-node.yaml" "${output}/config-nod
 render_template "${SCRIPT_DIR}/templates/config-combined.yaml" "${output}/config-combined.yaml"
 
 asset_json='[]'
-for path in bootstrap.sh verify-assets.sh install.sh config-web.yaml config-node.yaml config-combined.yaml; do
+for path in "${ASSET_PATHS[@]}"; do
   sha="$(sha256sum "${output}/${path}" | awk '{print $1}')"
   asset_json="$(jq -c --arg name "${path%.*}" --arg path "${path}" --arg sha "${sha}" '. + [{name:$name,path:$path,sha256:$sha}]' <<<"${asset_json}")"
 done
@@ -116,6 +133,6 @@ jq -n \
 
 (
   cd "${output}"
-  sha256sum bootstrap.sh config-combined.yaml config-node.yaml config-web.yaml install.sh release-manifest.json verify-assets.sh >SHA256SUMS
+  sha256sum "${ASSET_PATHS[@]}" release-manifest.json >SHA256SUMS
 )
 printf 'Generated release assets for %s in %s\n' "${version}" "${output}"

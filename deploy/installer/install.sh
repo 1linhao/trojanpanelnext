@@ -64,6 +64,8 @@ TP_FORCE="${TP_FORCE:-0}"
 TP_PURGE_DATA="${TP_PURGE_DATA:-0}"
 TP_PURPOSE=""
 TP_CONFIG_ROOT="${TP_CONFIG_ROOT:-}"
+INSTALLER_ASSET_VERSION="${TP_INSTALLER_ASSET_VERSION:-development}"
+TP_ASSET_VERSION=""
 TP_TEMP_TOOLS_DIR=""
 
 cleanup() {
@@ -333,6 +335,7 @@ load_config() {
   detect_config_root "${file}"
 
   cfg_apply "${file}" TP_PURPOSE purpose
+  cfg_apply "${file}" TP_ASSET_VERSION asset_version
 
   cfg_apply "${file}" CADDY_IMAGE caddy_image
   cfg_apply "${file}" MARIADB_IMAGE mariadb_image
@@ -478,6 +481,11 @@ validate_config() {
   schema_version="$(yaml_read_raw "${TP_CONFIG_FILE}" schema_version)"
   if [[ "${schema_version}" != "1" ]]; then
     echo_content red "trojanpanelnext.schema_version must be 1"
+    exit 1
+  fi
+
+  if [[ "${INSTALLER_ASSET_VERSION}" != "development" && "${TP_ASSET_VERSION}" != "${INSTALLER_ASSET_VERSION}" ]]; then
+    echo_content red "Configuration asset_version '${TP_ASSET_VERSION:-<missing>}' does not match installer assets '${INSTALLER_ASSET_VERSION}'"
     exit 1
   fi
 

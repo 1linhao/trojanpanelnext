@@ -4,6 +4,8 @@ set -Eeuo pipefail
 INSTALLER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 GENERATOR="${INSTALLER_DIR}/release/generate-assets.sh"
 VERIFY="${INSTALLER_DIR}/release/verify-assets.sh"
+PACKAGE="${INSTALLER_DIR}/release/package-assets.sh"
+REPO_ROOT="$(cd "${INSTALLER_DIR}/../.." && pwd)"
 
 fail() {
   printf 'FAIL: %s\n' "$1" >&2
@@ -44,13 +46,40 @@ generate "${bundle}"
 "${VERIFY}" --assets-dir "${bundle}" --config "${bundle}/config-web.yaml"
 test -x "${bundle}/bootstrap.sh"
 test -x "${bundle}/install.sh"
+test -x "${bundle}/entry/entryctl.sh"
+test -f "${bundle}/entry/controller.sh"
+test -f "${bundle}/entry/adapters/external.sh"
+test -x "${bundle}/entry/adapters/nginx_certbot.sh"
+"${bundle}/entry/entryctl.sh" --help | grep -q 'Usage:'
+archive="${work}/trojanpanelnext-installer-1.2.3.tar.gz"
+"${PACKAGE}" --assets-dir "${bundle}" --output "${archive}" >/dev/null
+mkdir "${work}/extracted"
+tar -C "${work}/extracted" -xzf "${archive}"
+test -x "${work}/extracted/bootstrap.sh"
+test -x "${work}/extracted/install.sh"
+test -x "${work}/extracted/verify-assets.sh"
+test -x "${work}/extracted/entry/entryctl.sh"
+"${work}/extracted/verify-assets.sh" --assets-dir "${work}/extracted" \
+  --config "${work}/extracted/config-web.yaml" >/dev/null
 test -f "${bundle}/config-web.yaml"
 test -f "${bundle}/config-node.yaml"
 test -f "${bundle}/config-combined.yaml"
 test -f "${bundle}/release-manifest.json"
 test -f "${bundle}/SHA256SUMS"
-jq -e '.release_version == "1.2.3" and (.assets | length == 6)' \
+jq -e '.release_version == "1.2.3" and (.assets | length == 10)' \
   "${bundle}/release-manifest.json" >/dev/null
+bash -c 'source "$1"; test "${INSTALLER_ASSET_VERSION}" = 1.2.3' \
+  release-version-test "${bundle}/install.sh"
+assert_fails bash -c '
+  set -Eeuo pipefail
+  source "$1"
+  yaml_read_raw() { printf "1\n"; }
+  TP_CONFIG_FILE=/no-read
+  TP_PURPOSE=web
+  TP_ASSET_VERSION=1.2.4
+  TP_WEB_DOMAIN=panel.example.com
+  validate_config web
+' release-version-test "${bundle}/install.sh"
 
 sentinel_installer="${work}/sentinel-installer.sh"
 sentinel_trace="${work}/installer-ran"
@@ -74,6 +103,11 @@ sed -i 's/panel.example.com/control.example.net/' "${deployment_config}"
 assert_fails generate "${work}/tag-only" \
   --api-image ghcr.io/1linhao/trojanpanelnext-api:1.2.3
 assert_fails generate "${work}/invalid-version" --version latest
+assert_fails generate "${work}/invalid-build-version" --version 1.2.3+a+b
+assert_fails generate "${work}/invalid-prerelease-version" --version 1.2.3-rc+meta+extra
+assert_fails generate "${work}/leading-zero-version" --version 01.2.3
+generate "${work}/prerelease" --version 1.2.3-rc.1+build.2 >/dev/null
+"${VERIFY}" --assets-dir "${work}/prerelease" --config "${work}/prerelease/config-web.yaml" >/dev/null
 mkdir "${work}/nonempty-output"
 printf stale >"${work}/nonempty-output/stale"
 assert_fails generate "${work}/nonempty-output"
@@ -97,7 +131,8 @@ resign_asset() {
   mv "${temporary}" "${target}/release-manifest.json"
   (
     cd "${target}"
-    sha256sum bootstrap.sh config-combined.yaml config-node.yaml config-web.yaml install.sh release-manifest.json verify-assets.sh >SHA256SUMS
+    mapfile -t paths < <(jq -r '.assets[].path' release-manifest.json)
+    sha256sum "${paths[@]}" release-manifest.json >SHA256SUMS
   )
 }
 
@@ -134,5 +169,14 @@ jq '(.attestations[0].digest) = "sha256:ffffffffffffffffffffffffffffffffffffffff
   "${case_dir}/release-manifest.json" >"${case_dir}/manifest.tmp"
 mv "${case_dir}/manifest.tmp" "${case_dir}/release-manifest.json"
 assert_fails "${VERIFY}" --assets-dir "${case_dir}" --config "${case_dir}/config-web.yaml"
+
+workflow="${REPO_ROOT}/.github/workflows/publish-images.yml"
+grep -Fq 'uses: actions/attest@' "${workflow}"
+for image_env in API_IMAGE WEB_IMAGE NODE_AGENT_IMAGE; do
+  grep -Fq 'subject-name: ${{ env.'"${image_env}"' }}' "${workflow}"
+done
+test "$(grep -Fxc '          subject-digest: ${{ steps.build.outputs.digest }}' "${workflow}")" = 3
+grep -Fq 'subject-path: release-upload/*' "${workflow}"
+test "$(grep -Fxc '          path: release-upload/*' "${workflow}")" = 1
 
 printf 'PASS release asset generation and verification contract\n'

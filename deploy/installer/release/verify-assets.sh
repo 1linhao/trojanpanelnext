@@ -22,20 +22,34 @@ command -v sha256sum >/dev/null 2>&1 || fail 'sha256sum is required'
 
 manifest="${assets_dir}/release-manifest.json"
 sums="${assets_dir}/SHA256SUMS"
+REQUIRED_ASSET_PATHS=(
+  bootstrap.sh
+  verify-assets.sh
+  install.sh
+  config-web.yaml
+  config-node.yaml
+  config-combined.yaml
+  entry/entryctl.sh
+  entry/controller.sh
+  entry/adapters/external.sh
+  entry/adapters/nginx_certbot.sh
+)
+required_assets="$(printf '%s\n' "${REQUIRED_ASSET_PATHS[@]}" | jq -R . | jq -s .)"
 [[ -f "${manifest}" && ! -L "${manifest}" ]] || fail 'release-manifest.json is missing or unsafe'
 [[ -f "${sums}" && ! -L "${sums}" ]] || fail 'SHA256SUMS is missing or unsafe'
 
-jq -e '
+jq -e --argjson required "${required_assets}" '
   .schema_version == 1 and
-  (.release_version | type == "string" and test("^[0-9]+\\.[0-9]+\\.[0-9]+([+-][0-9A-Za-z.-]+)?$")) and
+  (.release_version | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$")) and
   (.source_commit | type == "string" and test("^[0-9a-f]{40}$")) and
-  (.assets | type == "array" and length == 6) and
-  ([.assets[].name] | unique | length) == 6 and
-  ([.assets[].path] | unique | length) == 6 and
+  (.assets | type == "array" and length == ($required | length)) and
+  ([.assets[].name] | unique | length) == ($required | length) and
+  ([.assets[].path] | unique | length) == ($required | length) and
   (all(.assets[];
     (.name | type == "string" and length > 0) and
-    (.path | type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._-]*$")) and
+    (.path | type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._/-]*$") and (contains("..") | not)) and
     (.sha256 | type == "string" and test("^[0-9a-f]{64}$")))) and
+  ([.assets[].path] | sort) == ($required | sort) and
   (.images | keys | sort) == ["api", "caddy", "mariadb", "node_agent", "redis", "web"] and
   (all(.images[];
     (.kind == "product" or .kind == "runtime") and
@@ -48,10 +62,6 @@ jq -e '
   (. as $root | all(.images[] | select(.kind == "product"); . as $image | any($root.attestations[]; .subject == $image.name and .digest == $image.digest)))
 ' "${manifest}" >/dev/null || fail 'manifest structure is invalid'
 
-required='["bootstrap.sh","config-combined.yaml","config-node.yaml","config-web.yaml","install.sh","verify-assets.sh"]'
-jq -e --argjson required "${required}" '([.assets[].path] | sort) == $required' "${manifest}" >/dev/null ||
-  fail 'manifest asset set is incomplete'
-
 while IFS=$'\t' read -r path expected; do
   file="${assets_dir}/${path}"
   [[ -f "${file}" && ! -L "${file}" ]] || fail "asset is missing or unsafe: ${path}"
@@ -60,8 +70,9 @@ while IFS=$'\t' read -r path expected; do
 done < <(jq -r '.assets[] | [.path, .sha256] | @tsv' "${manifest}")
 
 mapfile -t sum_paths < <(awk '{print $2}' "${sums}" | sed 's/^\*\?//')
-[[ "${#sum_paths[@]}" -eq 7 ]] || fail 'SHA256SUMS has an unexpected asset set'
-printf '%s\n' "${sum_paths[@]}" | sort -u | cmp -s - <(printf '%s\n' bootstrap.sh config-combined.yaml config-node.yaml config-web.yaml install.sh release-manifest.json verify-assets.sh | sort) ||
+expected_sum_paths=("${REQUIRED_ASSET_PATHS[@]}" release-manifest.json)
+[[ "${#sum_paths[@]}" -eq "${#expected_sum_paths[@]}" ]] || fail 'SHA256SUMS has an unexpected asset set'
+printf '%s\n' "${sum_paths[@]}" | sort -u | cmp -s - <(printf '%s\n' "${expected_sum_paths[@]}" | sort) ||
   fail 'SHA256SUMS has an unexpected asset set'
 (
   cd "${assets_dir}"

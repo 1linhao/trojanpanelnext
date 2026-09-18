@@ -145,19 +145,24 @@ The release workflow uses `release/generate-assets.sh` to produce matching versi
 outside this ticket. Release validation accepts a combined configuration while the existing
 installer continues to execute only `web` and `node`. See
 [example-release-manifest.json](release/example-release-manifest.json) for a secret-free manifest
-example. Copy and edit a template instead of changing the digest-protected file in the release
-bundle, then validate the bundle against the deployment configuration:
+example. The Release tar.gz preserves executable modes and is accompanied by the manifest and
+SHA256SUMS. Verify its attestation before extracting and checking the bundled digests:
+
+```bash
+archive=trojanpanelnext-installer-<version>.tar.gz
+gh attestation verify "${archive}" --repo 1linhao/trojanpanelnext
+mkdir trojanpanelnext-installer
+tar -xzf "${archive}" -C trojanpanelnext-installer
+cd trojanpanelnext-installer
+sha256sum -c SHA256SUMS
+```
+
+Copy and edit a template instead of changing the digest-protected file in the release bundle,
+then validate the deployment configuration:
 
 ```bash
 cp ./config-web.yaml ./deployment.yaml
 ./verify-assets.sh --assets-dir . --config ./deployment.yaml
-```
-
-GitHub Release assets are protected by both SHA256 and GitHub artifact attestations:
-
-```bash
-gh attestation verify ./bootstrap.sh --repo 1linhao/trojanpanelnext
-sha256sum -c SHA256SUMS
 ```
 
 ## Support
