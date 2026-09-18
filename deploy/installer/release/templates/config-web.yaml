@@ -1,0 +1,24 @@
+trojanpanelnext:
+  schema_version: 1
+  asset_version: __ASSET_VERSION__
+  purpose: web
+  hostname: panel.example.com
+  email: admin@example.com
+  caddy_image: __CADDY_IMAGE__
+  mariadb_image: __MARIADB_IMAGE__
+  redis_image: __REDIS_IMAGE__
+  panel_image: __API_IMAGE__
+  ui_image: __WEB_IMAGE__
+  core_image: __NODE_AGENT_IMAGE__
+  mariadb_port: 9507
+  redis_port: 6378
+  panel_port: 8081
+  ui_port: 8888
+  mariadb_password: ""
+  redis_password: ""
+  grpc_client_cert_path: /tpdata/trojan-panel/pki/client.crt
+  grpc_client_key_path: /tpdata/trojan-panel/pki/client.key
+  grpc_server_ca_path: ""
+  pki_bundle_dir: /tpdata/trojanpanelnext-pki
+  force: 0
+  purge_data: 0

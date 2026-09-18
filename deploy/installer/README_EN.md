@@ -133,6 +133,33 @@ searched three levels deep. Several pairs without an explicit choice is an error
 
 Passwords are never printed. Treat populated configuration files as secrets and do not commit them to Git.
 
+## Versioned release assets
+
+The release workflow uses `release/generate-assets.sh` to produce matching versions of
+`bootstrap.sh`, `install.sh`, the `web|node|combined` configuration templates,
+`release-manifest.json`, and `SHA256SUMS`. Product and runtime images are pinned as
+`name@sha256:<digest>`. Before invoking the installer, `bootstrap.sh` runs the bundled
+`verify-assets.sh` to verify versions, asset digests, image references, and configuration.
+
+`combined` is valid in the unified configuration contract, but its container orchestration is
+outside this ticket. Release validation accepts a combined configuration while the existing
+installer continues to execute only `web` and `node`. See
+[example-release-manifest.json](release/example-release-manifest.json) for a secret-free manifest
+example. Copy and edit a template instead of changing the digest-protected file in the release
+bundle, then validate the bundle against the deployment configuration:
+
+```bash
+cp ./config-web.yaml ./deployment.yaml
+./verify-assets.sh --assets-dir . --config ./deployment.yaml
+```
+
+GitHub Release assets are protected by both SHA256 and GitHub artifact attestations:
+
+```bash
+gh attestation verify ./bootstrap.sh --repo 1linhao/trojanpanelnext
+sha256sum -c SHA256SUMS
+```
+
 ## Support
 
 Project origin: [the original TrojanPanel project](https://github.com/trojanpanel).

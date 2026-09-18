@@ -149,6 +149,31 @@ sudo ./install.sh remove --mode node --config ./node-agent.yaml --purge-data
 
 配置中的密码不会打印到终端。请将实际配置作为敏感文件保存，不要提交到 Git。
 
+## 版本化发布资产
+
+正式发布工作流使用 `release/generate-assets.sh` 生成同一版本的 `bootstrap.sh`、
+`install.sh`、`web|node|combined` 配置模板、`release-manifest.json` 和
+`SHA256SUMS`。产品镜像和运行时镜像都以 `name@sha256:<digest>` 固定；
+`bootstrap.sh` 会先调用同包内的 `verify-assets.sh` 校验版本、资产摘要、镜像引用和配置，
+全部通过后才执行安装器。
+
+`combined` 是统一配置契约中的有效用途，但本工单不提供其容器编排；发布资产校验可以验证
+combined 配置，现有安装器仍只执行 `web` 与 `node`。无秘密的 manifest 结构示例见
+[example-release-manifest.json](release/example-release-manifest.json)。先复制对应模板并编辑副本，
+不要修改发布包中受摘要保护的模板；然后验证发布包与实际配置：
+
+```bash
+cp ./config-web.yaml ./deployment.yaml
+./verify-assets.sh --assets-dir . --config ./deployment.yaml
+```
+
+GitHub Release 资产通过 SHA256 和 GitHub artifact attestation 双重验证。下载后可使用：
+
+```bash
+gh attestation verify ./bootstrap.sh --repo 1linhao/trojanpanelnext
+sha256sum -c SHA256SUMS
+```
+
 ## 支持
 
 本项目来源：[TrojanPanel 原项目](https://github.com/trojanpanel)。

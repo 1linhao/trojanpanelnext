@@ -334,14 +334,19 @@ jobs:
           push-to-registry: true
 
   manifest:
-    name: release manifest
+    name: release installation assets
     needs: [prepare, api-image, web-image, node-agent-image]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     steps:
-      - name: Write product release manifest
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Generate and verify versioned installation assets
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
-          PUBLISHED: ${{ needs.prepare.outputs.publish }}
           API_DIGEST: ${{ needs.api-image.outputs.digest }}
           WEB_DIGEST: ${{ needs.web-image.outputs.digest }}
           NODE_AGENT_DIGEST: ${{ needs.node-agent-image.outputs.digest }}
@@ -351,31 +356,49 @@ jobs:
           for digest in "$API_DIGEST" "$WEB_DIGEST" "$NODE_AGENT_DIGEST"; do
             [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
           done
-          jq -n \
-            --arg schemaVersion "1" \
-            --arg version "$VERSION" \
-            --arg sourceCommit "$GITHUB_SHA" \
-            --argjson published "$PUBLISHED" \
-            --arg apiImage "$API_IMAGE" \
-            --arg apiDigest "$API_DIGEST" \
-            --arg webImage "$WEB_IMAGE" \
-            --arg webDigest "$WEB_DIGEST" \
-            --arg nodeAgentImage "$NODE_AGENT_IMAGE" \
-            --arg nodeAgentDigest "$NODE_AGENT_DIGEST" \
-            '{
-              schemaVersion:($schemaVersion | tonumber),
-              version:$version,
-              sourceCommit:$sourceCommit,
-              published:$published,
-              images:{
-                api:{name:$apiImage,digest:$apiDigest},
-                web:{name:$webImage,digest:$webDigest},
-                nodeAgent:{name:$nodeAgentImage,digest:$nodeAgentDigest}
-              }
-            }' >release-manifest.json
+          caddy_digest="$(docker buildx imagetools inspect caddy:2.8.4 --format '{{.Manifest.Digest}}')"
+          mariadb_digest="$(docker buildx imagetools inspect mariadb:10.7.3 --format '{{.Manifest.Digest}}')"
+          redis_digest="$(docker buildx imagetools inspect redis:6.2.7 --format '{{.Manifest.Digest}}')"
+          deploy/installer/release/generate-assets.sh \
+            --version "$VERSION" \
+            --source-commit "$GITHUB_SHA" \
+            --output release-assets \
+            --api-image "$API_IMAGE@$API_DIGEST" \
+            --web-image "$WEB_IMAGE@$WEB_DIGEST" \
+            --node-agent-image "$NODE_AGENT_IMAGE@$NODE_AGENT_DIGEST" \
+            --caddy-image "caddy@$caddy_digest" \
+            --mariadb-image "mariadb@$mariadb_digest" \
+            --redis-image "redis@$redis_digest"
+          for config in release-assets/config-*.yaml; do
+            release-assets/verify-assets.sh --assets-dir release-assets --config "$config"
+          done
+      - name: Attest release installation assets
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: release-assets/*
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: release-manifest-${{ needs.prepare.outputs.version }}
-          path: release-manifest.json
+          name: release-assets-${{ needs.prepare.outputs.version }}
+          path: release-assets/*
           if-no-files-found: error
           retention-days: 30
+
+  release:
+    name: publish GitHub Release
+    if: github.event_name == 'push' && needs.prepare.outputs.publish == 'true'
+    needs: [prepare, manifest]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-assets-${{ needs.prepare.outputs.version }}
+          path: release-assets
+      - name: Publish immutable installation assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: >-
+          gh release create "v${VERSION}" release-assets/*
+          --verify-tag --generate-notes

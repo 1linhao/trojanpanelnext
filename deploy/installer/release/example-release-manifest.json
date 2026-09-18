@@ -1,0 +1,89 @@
+{
+  "schema_version": 1,
+  "release_version": "0.1.0",
+  "source_commit": "671f5db70816572eec99f7eeae277f97bc1fec1b",
+  "assets": [
+    {
+      "name": "bootstrap",
+      "path": "bootstrap.sh",
+      "sha256": "96dd463613d535022c604ab230df4ca9a76438d33106d7f9b1576917b133cbf0"
+    },
+    {
+      "name": "verify-assets",
+      "path": "verify-assets.sh",
+      "sha256": "12e989d155dea7a1cb16f2906b25b504978eb1b1366c9b3436ce74305d2ee8b4"
+    },
+    {
+      "name": "install",
+      "path": "install.sh",
+      "sha256": "5c13742e10df9c9c433d12ad7207125412061ca0ef9f2fc4fcc3580e475e248f"
+    },
+    {
+      "name": "config-web",
+      "path": "config-web.yaml",
+      "sha256": "cbbaa41ff35f03074487e448027ef6a3138cad755577eac5fb0a2fa770e5a4c3"
+    },
+    {
+      "name": "config-node",
+      "path": "config-node.yaml",
+      "sha256": "609ea76e17d178fa71c23f6293a92400af5120cd4a0a089b0018c742d357d771"
+    },
+    {
+      "name": "config-combined",
+      "path": "config-combined.yaml",
+      "sha256": "d97d1d2095472152088b23a130272ce0d06dfffebe21e2e3c7d6cc84f2a34afc"
+    }
+  ],
+  "images": {
+    "api": {
+      "kind": "product",
+      "name": "ghcr.io/1linhao/trojanpanelnext-api",
+      "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "reference": "ghcr.io/1linhao/trojanpanelnext-api@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    "web": {
+      "kind": "product",
+      "name": "ghcr.io/1linhao/trojanpanelnext-web",
+      "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "reference": "ghcr.io/1linhao/trojanpanelnext-web@sha256:2222222222222222222222222222222222222222222222222222222222222222"
+    },
+    "node_agent": {
+      "kind": "product",
+      "name": "ghcr.io/1linhao/trojanpanelnext-node-agent",
+      "digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "reference": "ghcr.io/1linhao/trojanpanelnext-node-agent@sha256:3333333333333333333333333333333333333333333333333333333333333333"
+    },
+    "caddy": {
+      "kind": "runtime",
+      "name": "caddy",
+      "digest": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+      "reference": "caddy@sha256:4444444444444444444444444444444444444444444444444444444444444444"
+    },
+    "mariadb": {
+      "kind": "runtime",
+      "name": "mariadb",
+      "digest": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+      "reference": "mariadb@sha256:5555555555555555555555555555555555555555555555555555555555555555"
+    },
+    "redis": {
+      "kind": "runtime",
+      "name": "redis",
+      "digest": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+      "reference": "redis@sha256:6666666666666666666666666666666666666666666666666666666666666666"
+    }
+  },
+  "attestations": [
+    {
+      "subject": "ghcr.io/1linhao/trojanpanelnext-api",
+      "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    {
+      "subject": "ghcr.io/1linhao/trojanpanelnext-web",
+      "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+    },
+    {
+      "subject": "ghcr.io/1linhao/trojanpanelnext-node-agent",
+      "digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+    }
+  ]
+}

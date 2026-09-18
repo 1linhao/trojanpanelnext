@@ -2,7 +2,7 @@ name: CI
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, codex/entry-provider-nginx-certbot]
   push:
     branches: [main]
   workflow_dispatch:
@@ -116,6 +116,7 @@ jobs:
         run: |
           bash deploy/installer/tests/installer_cli_test.sh
           bash deploy/installer/tests/entry_controller_test.sh
+          bash deploy/installer/tests/release_assets_test.sh
 
   docs:
     name: documentation site
