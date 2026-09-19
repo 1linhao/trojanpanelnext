@@ -38,6 +38,15 @@ func VerifySysadminCredentialRequested() bool {
 	return os.Getenv(verifySysadminCredentialEnv) == "1"
 }
 
+func NodeIdentityCommandRequested() bool {
+	for _, argument := range os.Args[1:] {
+		if argument == "node-identity" {
+			return true
+		}
+	}
+	return false
+}
+
 func init() {
 	flag.StringVar(&host, "host", "localhost", "database address")
 	flag.StringVar(&user, "user", "root", "database username")
@@ -67,7 +76,7 @@ func init() {
 	if isTest {
 		return
 	}
-	if VerifySysadminCredentialRequested() {
+	if VerifySysadminCredentialRequested() || NodeIdentityCommandRequested() {
 		return
 	}
 

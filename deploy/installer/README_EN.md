@@ -88,7 +88,10 @@ cp examples/node-agent.yaml ./node-agent.yaml
 chmod 600 ./node-agent.yaml
 ```
 
-Set the node hostname, Web control-plane address, and the database and Redis passwords from the Web configuration. Confirm that the public CA certificate is present in `pki_bundle_dir`:
+Set the Node hostname and Web control-plane address. Copy `mariadb.username`, `mariadb.password`,
+`redis.username`, `redis.password`, and `node_server_id` from the restricted credential file produced
+by `node-identity register|rotate`; never reuse the Web root/default-user passwords. Confirm that the
+public CA certificate is present in `pki_bundle_dir`:
 
 ```bash
 ./install.sh validate --mode node --config ./node-agent.yaml

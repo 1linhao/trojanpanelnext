@@ -39,6 +39,7 @@ MARIADB_USER="${MARIADB_USER:-root}"
 MARIADB_DATABASE="${MARIADB_DATABASE:-trojan_panel_db}"
 ACCOUNT_TABLE="${ACCOUNT_TABLE:-account}"
 REDIS_PORT="${REDIS_PORT:-6378}"
+REDIS_USERNAME="${REDIS_USERNAME:-}"
 PANEL_PORT="${PANEL_PORT:-8081}"
 UI_PORT="${UI_PORT:-8888}"
 CORE_PORT="${CORE_PORT:-8082}"
@@ -587,7 +588,6 @@ load_config() {
   cfg_apply "${file}" IMAGE_BUNDLE_DIR image_bundle_dir
 
   cfg_apply "${file}" MARIADB_PORT mariadb_port
-  cfg_apply "${file}" MARIADB_USER mariadb_user
   cfg_apply "${file}" MARIADB_DATABASE database
   cfg_apply "${file}" ACCOUNT_TABLE account_table
   cfg_apply "${file}" REDIS_PORT redis_port
@@ -623,6 +623,7 @@ load_config() {
     MARIADB_PASSWORD=""
     REDIS_PASSWORD=""
     SYSADMIN_PASSWORD=""
+    cfg_apply "${file}" MARIADB_USER mariadb_user
     cfg_apply "${file}" TP_WEB_DOMAIN hostname
     cfg_apply "${file}" TP_EMAIL email
     cfg_apply "${file}" MARIADB_PASSWORD mariadb_password
@@ -633,14 +634,18 @@ load_config() {
     TP_NODE_DOMAIN=""
     TP_EMAIL=""
     MARIADB_HOST=""
+    MARIADB_USER=""
     MARIADB_PASSWORD=""
     REDIS_HOST=""
+    REDIS_USERNAME=""
     REDIS_PASSWORD=""
     cfg_apply "${file}" TP_NODE_DOMAIN hostname
     cfg_apply "${file}" TP_EMAIL email
     cfg_apply "${file}" MARIADB_HOST mariadb_host
+    cfg_apply "${file}" MARIADB_USER mariadb_user
     cfg_apply "${file}" MARIADB_PASSWORD mariadb_password
     cfg_apply "${file}" REDIS_HOST redis_host
+    cfg_apply "${file}" REDIS_USERNAME redis_username
     cfg_apply "${file}" REDIS_PASSWORD redis_password
     ;;
   esac
@@ -768,8 +773,14 @@ validate_config() {
   node)
     require_value TP_NODE_DOMAIN
     require_value MARIADB_HOST
+    require_value MARIADB_USER
+    if [[ "${MARIADB_USER}" == "root" ]]; then
+      echo_content red "mariadb_user must be the dedicated user from the Node credential file"
+      exit 1
+    fi
     require_value MARIADB_PASSWORD
     require_value REDIS_HOST
+    require_value REDIS_USERNAME
     require_value REDIS_PASSWORD
     require_value CORE_IMAGE
     require_port CORE_PORT
@@ -1473,6 +1484,7 @@ account_table=${ACCOUNT_TABLE}
 [redis]
 host=${REDIS_HOST}
 port=${REDIS_PORT}
+username=${REDIS_USERNAME}
 password=${REDIS_PASSWORD}
 db=0
 max_idle=2
@@ -1934,6 +1946,7 @@ deploy_core() {
     -e "account_table=${ACCOUNT_TABLE}" \
     -e "redis_host=${REDIS_HOST}" \
     -e "redis_port=${REDIS_PORT}" \
+    -e "REDIS_USERNAME=${REDIS_USERNAME}" \
     -e "redis_pass=${REDIS_PASSWORD}" \
     -e "crt_path=${crt_path}" \
     -e "key_path=${key_path}" \

@@ -33,15 +33,16 @@ trojanpanelnext:
   # Connection to the Web control plane's MariaDB instance.
   mariadb_host: panel.example.com
   mariadb_port: 9507
-  mariadb_user: root
-  mariadb_password: replace-with-web-mariadb-password
+  mariadb_user: replace-from-node-credential-file
+  mariadb_password: replace-from-node-credential-file
   database: trojan_panel_db
   account_table: account
 
   # Connection to the Web control plane's Redis instance.
   redis_host: panel.example.com
   redis_port: 6378
-  redis_password: replace-with-web-redis-password
+  redis_username: replace-from-node-credential-file
+  redis_password: replace-from-node-credential-file
 
   grpc_port: 8100
   core_port: 8082

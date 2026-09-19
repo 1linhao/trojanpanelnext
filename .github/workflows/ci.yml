@@ -2,7 +2,7 @@ name: CI
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, codex/entry-provider-nginx-certbot]
   push:
     branches: [main]
   workflow_dispatch:
@@ -49,6 +49,8 @@ jobs:
           cache-dependency-path: apps/control-plane/api/go.sum
       - name: Test
         run: go test ./...
+      - name: Test Node identity lifecycle with MariaDB and Redis ACL
+        run: bash testing/node_identity_cli_test.sh
       - name: Build
         run: CGO_ENABLED=0 go build -trimpath -o /tmp/trojanpanelnext-api .
 

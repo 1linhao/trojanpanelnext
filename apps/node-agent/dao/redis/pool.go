@@ -24,10 +24,14 @@ func InitRedis() {
 		Wait:        redisConfig.Wait,
 		IdleTimeout: 30 * time.Second,
 		Dial: func() (redis.Conn, error) {
-			conn, err := redis.Dial("tcp", fmt.Sprintf("%s:%d", redisConfig.Host, redisConfig.Port),
+			options := []redis.DialOption{
 				redis.DialPassword(redisConfig.Password),
 				redis.DialDatabase(redisConfig.Db),
-			)
+			}
+			if redisConfig.Username != "" {
+				options = append([]redis.DialOption{redis.DialUsername(redisConfig.Username)}, options...)
+			}
+			conn, err := redis.Dial("tcp", fmt.Sprintf("%s:%d", redisConfig.Host, redisConfig.Port), options...)
 			if err != nil {
 				logrus.Errorf("Redis初始化失败 err: %v", err)
 				panic(err)

@@ -22,6 +22,7 @@ var (
 	accountTable   string
 	redisHost      string
 	redisPort      string
+	redisUsername  string
 	redisPassword  string
 	redisDb        string
 	redisMaxIdle   string
@@ -47,6 +48,7 @@ func init() {
 	flag.StringVar(&accountTable, "accountTable", envOr("ACCOUNT_TABLE", "account_table", "account"), "account table name")
 	flag.StringVar(&redisHost, "redisHost", envOr("REDIS_HOST", "redis_host", "127.0.0.1"), "redis address")
 	flag.StringVar(&redisPort, "redisPort", envOr("REDIS_PORT", "redis_port", "6379"), "redis port")
+	flag.StringVar(&redisUsername, "redisUsername", envOr("REDIS_USERNAME", "redis_username", ""), "Redis ACL username")
 	flag.StringVar(&redisPassword, "redisPassword", envOr("REDIS_PASSWORD", "redis_pass", ""), "deprecated: use REDIS_PASSWORD")
 	flag.StringVar(&redisDb, "redisDb", "0", "redis default database")
 	flag.StringVar(&redisMaxIdle, "redisMaxIdle", strconv.FormatInt(int64(runtime.NumCPU()*2), 10), "redis maximum number of idle connections")
@@ -112,6 +114,7 @@ account_table=%s
 [redis]
 host=%s
 port=%s
+username=%s
 password=%s
 db=%s
 max_idle=%s
@@ -135,7 +138,7 @@ port=%s
 [node]
 server_id=%s
 domain=%s
-`, host, user, password, port, database, accountTable, redisHost, redisPort, redisPassword, redisDb,
+`, host, user, password, port, database, accountTable, redisHost, redisPort, redisUsername, redisPassword, redisDb,
 			redisMaxIdle, redisMaxActive, redisWait, crtPath, keyPath, grpcPort, grpcTLSMode, grpcClientCA, serverPort, nodeServerID, nodeDomain))
 		if err != nil {
 			logrus.Errorf("config.ini file write err: %v", err)
@@ -163,7 +166,7 @@ domain=%s
 
 func usage() {
 	_, _ = fmt.Fprintln(os.Stdout, `trojan panel core manage help
-Usage: trojan-panel-core [-host] [-user] [-password] [-port] [-database] [-accountTable] [-redisHost] [-redisPort] [-redisPassword] [-redisDb] [-redisMaxIdle] [-redisMaxActive] [-redisWait] [-crtPath] [-keyPath] [-grpcPort] [-serverPort] [-h] [-version]`)
+Usage: trojan-panel-core [-host] [-user] [-password] [-port] [-database] [-accountTable] [-redisHost] [-redisPort] [-redisUsername] [-redisPassword] [-redisDb] [-redisMaxIdle] [-redisMaxActive] [-redisWait] [-crtPath] [-keyPath] [-grpcPort] [-serverPort] [-h] [-version]`)
 	flag.PrintDefaults()
 }
 
@@ -200,6 +203,7 @@ type MySQLConfig struct {
 type RedisConfig struct {
 	Host      string `ini:"host"`
 	Port      int    `ini:"port"`
+	Username  string `ini:"username"`
 	Password  string `ini:"password"`
 	Db        int    `ini:"db"`
 	MaxIdle   int    `ini:"max_idle"`

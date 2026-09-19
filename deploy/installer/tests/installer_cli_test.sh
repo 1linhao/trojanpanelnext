@@ -66,11 +66,14 @@ missing_mode_config="$(mktemp)"
 canonical_config="$(mktemp)"
 legacy_key_config="$(mktemp)"
 conflicting_mode_config="$(mktemp)"
+missing_mariadb_user_config="$(mktemp)"
+missing_redis_username_config="$(mktemp)"
+root_mariadb_user_config="$(mktemp)"
 pki_dir="$(mktemp -d)"
 node_pki_dir="$(mktemp -d)"
 node_runtime_dir="$(mktemp -d)"
 path_contract_dir="$(mktemp -d)"
-trap 'rm -f "${legacy_config}" "${missing_mode_config}" "${canonical_config}" "${legacy_key_config}" "${conflicting_mode_config}"; rm -rf -- "${pki_dir}" "${node_pki_dir}" "${node_runtime_dir}" "${path_contract_dir}"' EXIT
+trap 'rm -f "${legacy_config}" "${missing_mode_config}" "${canonical_config}" "${legacy_key_config}" "${conflicting_mode_config}" "${missing_mariadb_user_config}" "${missing_redis_username_config}" "${root_mariadb_user_config}"; rm -rf -- "${pki_dir}" "${node_pki_dir}" "${node_runtime_dir}" "${path_contract_dir}"' EXIT
 
 ln -s "$(command -v bash)" "${path_contract_dir}/bash"
 PATH="${path_contract_dir}" "${INSTALLER}" --help >/dev/null ||
@@ -106,6 +109,16 @@ sed \
 sed '/deployment_mode: web/a\  purpose: node' "${canonical_config}" >"${conflicting_mode_config}"
 assert_fails "${INSTALLER}" validate --mode web --config "${conflicting_mode_config}"
 
+sed '/^  mariadb_user:/d' "$(dirname "${INSTALLER}")/examples/node-agent.yaml" \
+  >"${missing_mariadb_user_config}"
+sed '/^  redis_username:/d' "$(dirname "${INSTALLER}")/examples/node-agent.yaml" \
+  >"${missing_redis_username_config}"
+sed 's/^  mariadb_user:.*/  mariadb_user: root/' \
+  "$(dirname "${INSTALLER}")/examples/node-agent.yaml" >"${root_mariadb_user_config}"
+assert_fails "${INSTALLER}" validate --mode node --config "${missing_mariadb_user_config}"
+assert_fails "${INSTALLER}" validate --mode node --config "${missing_redis_username_config}"
+assert_fails "${INSTALLER}" validate --mode node --config "${root_mariadb_user_config}"
+
 bash -c 'set -Eeuo pipefail; source "$1"; TP_PKI_BUNDLE_DIR="$2"; generate_web_client_pki' \
   installer-test "${INSTALLER}" "${pki_dir}"
 openssl verify -CAfile "${pki_dir}/client-ca.crt" "${pki_dir}/client.crt" >/dev/null
@@ -131,7 +144,7 @@ external_refresh_dir="$(mktemp -d)"
 entry_spec="$(mktemp)"
 entry_trace="$(mktemp)"
 fake_entryctl="$(mktemp)"
-trap 'rm -f "${legacy_config}" "${missing_mode_config}" "${canonical_config}" "${legacy_key_config}" "${conflicting_mode_config}" "${entry_spec}" "${entry_trace}" "${fake_entryctl}"; rm -rf -- "${pki_dir}" "${node_pki_dir}" "${node_runtime_dir}" "${path_contract_dir}" "${external_cases_dir}" "${external_tls_dir}" "${external_pairs_dir}" "${external_data_dir}" "${external_mismatch_dir}" "${external_wrong_domain_dir}" "${external_refresh_dir}"' EXIT
+trap 'rm -f "${legacy_config}" "${missing_mode_config}" "${canonical_config}" "${legacy_key_config}" "${conflicting_mode_config}" "${missing_mariadb_user_config}" "${missing_redis_username_config}" "${root_mariadb_user_config}" "${entry_spec}" "${entry_trace}" "${fake_entryctl}"; rm -rf -- "${pki_dir}" "${node_pki_dir}" "${node_runtime_dir}" "${path_contract_dir}" "${external_cases_dir}" "${external_tls_dir}" "${external_pairs_dir}" "${external_data_dir}" "${external_mismatch_dir}" "${external_wrong_domain_dir}" "${external_refresh_dir}"' EXIT
 
 # The shipped template points at a real external certificate directory, which
 # cannot exist on a test host. Validate the template against a local pair.

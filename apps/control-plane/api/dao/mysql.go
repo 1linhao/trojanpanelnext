@@ -69,6 +69,10 @@ func InitMySQL() {
 		logrus.Errorf("traffic accounting database migration err: %v", err)
 		panic(err)
 	}
+	if err = migrateNodeIdentitySchema(); err != nil {
+		logrus.Errorf("Node identity database migration err: %v", err)
+		panic(err)
+	}
 }
 
 func InitMySQLReadOnly() error {
