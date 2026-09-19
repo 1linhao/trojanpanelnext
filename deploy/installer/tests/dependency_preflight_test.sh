@@ -58,6 +58,13 @@ fake_command_is_missing() {
 command() {
   if [[ "${1:-}" == -v && $# -ge 2 ]]; then
     printf 'probe %s\n' "$2" >>"${TP_DEP_PROBE_TRACE}"
+    if [[ "$2" == "${TP_FAKE_DELAYED_MISSING_COMMAND:-}" ]]; then
+      printf 'probe\n' >>"${TP_FAKE_COMMAND_STATE}/delayed-missing-probes"
+      if [[ "$(wc -l <"${TP_FAKE_COMMAND_STATE}/delayed-missing-probes")" -le "${TP_FAKE_PRESENT_PROBES_BEFORE_MISSING:-0}" ]]; then
+        builtin command "$@"
+        return
+      fi
+    fi
     if [[ -e "${TP_FAKE_COMMAND_STATE}/$2" ]]; then
       printf '%s/%s\n' "${TP_FAKE_COMMAND_STATE}" "$2"
       return
@@ -169,6 +176,8 @@ run_install_cli() {
     TP_DEP_PROBE_TRACE="${probe_trace}" \
     TP_FAKE_ARCH="${architecture}" \
     TP_FAKE_COMMAND_STATE="${command_state}" \
+    TP_FAKE_DELAYED_MISSING_COMMAND="${TP_FAKE_DELAYED_MISSING_COMMAND:-}" \
+    TP_FAKE_PRESENT_PROBES_BEFORE_MISSING="${TP_FAKE_PRESENT_PROBES_BEFORE_MISSING:-0}" \
     TP_FAKE_INSTALLABLE_COMMANDS="${installable_commands}" \
     TP_FAKE_MISSING_COMMANDS="${missing_commands}" \
     TP_FAKE_YQ_READER="${FAKE_YQ_READER}" \
@@ -239,6 +248,50 @@ assert_successful_installer_without_command_is_blocked() {
   printf 'TRACE entrypoint=%s mode=post-install-missing dependency=age installer-exit=0 recheck=blocked config-loaded=0\n' "${label}"
 }
 
+assert_package_prerequisites_are_rechecked_before_special_installers() {
+  local entrypoint="$1"
+  local config="$2"
+  local label="$3"
+  local coreutils_command="$4"
+  local delayed_missing_command=""
+  local present_probes_before_missing=0
+  local output="${work}/${label}-${coreutils_command}-package-prerequisites-missing.out"
+
+  if [[ "${label}" != development && "${coreutils_command}" == sha256sum ]]; then
+    delayed_missing_command=sha256sum
+    present_probes_before_missing=1
+    [[ "${label}" == release-bootstrap ]] && present_probes_before_missing=2
+  fi
+  : >"${trace}"
+  if TP_FAKE_DELAYED_MISSING_COMMAND="${delayed_missing_command}" \
+    TP_FAKE_PRESENT_PROBES_BEFORE_MISSING="${present_probes_before_missing}" \
+    run_install_cli "${entrypoint}" "${config}" "${debian_release}" x86_64 1 \
+    "docker,curl,${coreutils_command},yq,jq" '' >"${output}" 2>&1; then
+    fail "${label} unexpectedly passed when apt-get left curl and ${coreutils_command} unavailable"
+  fi
+  grep -Fq 'Missing required Debian 12 dependencies:' "${output}" ||
+    fail "${label} did not aggregate package prerequisites still missing after apt-get"
+  grep -Fq -- '- curl: apt-get install -y curl' "${output}" ||
+    fail "${label} omitted curl after apt-get returned success"
+  test "$(grep -Fc -- '- coreutils: apt-get install -y coreutils' "${output}")" = 1 ||
+    fail "${label} omitted or duplicated coreutils after apt-get returned success"
+  grep -Eq '^apt-get install -y .*curl.*coreutils' "${trace}" ||
+    fail "${label} did not ask apt-get for curl and coreutils"
+  if grep -Fq 'curl -fsSL https://get.docker.com' "${trace}" ||
+    grep -Fq 'github.com/mikefarah/yq' "${trace}" ||
+    grep -Eq '^install -m 0755 .+ /usr/local/bin/yq$' "${trace}"; then
+    fail "${label} entered a Docker/yq installer before package prerequisites passed recheck"
+  fi
+  if grep -Fq 'TP_WEB_DOMAIN is required' "${output}"; then
+    fail "${label} entered config loading with package prerequisites unavailable"
+  fi
+  for dependency_command in curl "${coreutils_command}"; do
+    test "$(grep -Fc "probe ${dependency_command}" "${probe_trace}")" -ge 2 ||
+      fail "${label} did not recheck ${dependency_command} after apt-get returned success"
+  done
+  printf 'TRACE entrypoint=%s mode=package-prerequisites-missing dependencies=curl,%s apt-exit=0 aggregate=1 special-installers=0 config-loaded=0\n' "${label}" "${coreutils_command}"
+}
+
 assert_disabled_reports_all_without_installing() {
   local entrypoint="$1"
   local config="$2"
@@ -298,6 +351,12 @@ assert_default_installs_declared_dependencies "${bundle}/bootstrap.sh" "${releas
 assert_successful_installer_without_command_is_blocked "${INSTALLER}" "${development_config}" development
 assert_successful_installer_without_command_is_blocked "${bundle}/install.sh" "${release_config}" release-direct
 assert_successful_installer_without_command_is_blocked "${bundle}/bootstrap.sh" "${release_config}" release-bootstrap
+
+for coreutils_command in sha256sum install; do
+  assert_package_prerequisites_are_rechecked_before_special_installers "${INSTALLER}" "${development_config}" development "${coreutils_command}"
+  assert_package_prerequisites_are_rechecked_before_special_installers "${bundle}/install.sh" "${release_config}" release-direct "${coreutils_command}"
+  assert_package_prerequisites_are_rechecked_before_special_installers "${bundle}/bootstrap.sh" "${release_config}" release-bootstrap "${coreutils_command}"
+done
 
 assert_disabled_reports_all_without_installing "${INSTALLER}" "${development_config}" development
 assert_disabled_reports_all_without_installing "${bundle}/install.sh" "${release_config}" release-direct

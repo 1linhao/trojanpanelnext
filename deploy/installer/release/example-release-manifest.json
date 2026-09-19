@@ -21,7 +21,7 @@
     {
       "name": "install",
       "path": "install.sh",
-      "sha256": "84f7b42e9ee5a7a5f3427c9b2b70bbb70250fdc7bfe8f0a8431c6e7cbe6c214f"
+      "sha256": "29aeb43a79ffc2fc69fc847a401c86b6fb851ea760af1dd4498399d80a5ce4dc"
     },
     {
       "name": "config-web",

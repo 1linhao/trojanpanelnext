@@ -200,8 +200,13 @@ dependency_record_is_missing() {
 
 missing_install_dependencies() {
   TP_MISSING_DEPENDENCY_PLAN=()
-  local record
+  local method_filter="${1:-}"
+  local record name commands scope method target advice
   while IFS= read -r record; do
+    IFS='|' read -r name commands scope method target advice <<<"${record}"
+    if [[ -n "${method_filter}" && "${method}" != "${method_filter}" ]]; then
+      continue
+    fi
     if dependency_record_is_missing "${record}"; then
       TP_MISSING_DEPENDENCY_PLAN+=("${record}")
     fi
@@ -217,9 +222,20 @@ print_dependency_installation_advice() {
   done
 }
 
-install_missing_dependencies() {
+install_missing_package_dependencies() {
   local record name commands scope method target advice
   local -a packages=()
+
+  for record in "${TP_MISSING_DEPENDENCY_PLAN[@]}"; do
+    IFS='|' read -r name commands scope method target advice <<<"${record}"
+    [[ "${method}" == package ]] && append_unique_word packages "${target}"
+  done
+
+  install_packages "${packages[@]}"
+}
+
+install_missing_special_dependencies() {
+  local record name commands scope method target advice
   local docker_missing=0
   local yq_missing=0
 
@@ -228,11 +244,9 @@ install_missing_dependencies() {
     case "${method}" in
     docker) docker_missing=1 ;;
     yq) yq_missing=1 ;;
-    package) append_unique_word packages "${target}" ;;
     esac
   done
 
-  install_packages "${packages[@]}"
   if [[ "${docker_missing}" == 1 ]]; then
     install_docker
   fi
@@ -254,7 +268,17 @@ preflight_install_dependencies() {
     exit 1
   fi
 
-  install_missing_dependencies
+  missing_install_dependencies package
+  install_missing_package_dependencies
+  missing_install_dependencies package
+  if [[ ${#TP_MISSING_DEPENDENCY_PLAN[@]} -ne 0 ]]; then
+    print_dependency_installation_advice
+    echo_content yellow "Package installation completed, but the commands above are still unavailable"
+    exit 1
+  fi
+
+  missing_install_dependencies
+  install_missing_special_dependencies
   missing_install_dependencies
   if [[ ${#TP_MISSING_DEPENDENCY_PLAN[@]} -ne 0 ]]; then
     print_dependency_installation_advice
