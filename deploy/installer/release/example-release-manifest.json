@@ -21,12 +21,12 @@
     {
       "name": "install",
       "path": "install.sh",
-      "sha256": "29aeb43a79ffc2fc69fc847a401c86b6fb851ea760af1dd4498399d80a5ce4dc"
+      "sha256": "0b98866a222aa4ab224b146263d7819073fab60cad8d80d91ff9166731bbc401"
     },
     {
       "name": "config-web",
       "path": "config-web.yaml",
-      "sha256": "761d7070287ff877b275b24bf6ee250eeca2c40c06f891bf412c441748efa6b1"
+      "sha256": "be2dbb880f468e685da71d8c18f537eb950ec687d97e1f5c86208514613c9a22"
     },
     {
       "name": "config-node",

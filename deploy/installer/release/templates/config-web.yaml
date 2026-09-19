@@ -16,6 +16,7 @@ trojanpanelnext:
   ui_port: 8888
   mariadb_password: ""
   redis_password: ""
+  sysadmin_password: ""
   grpc_client_cert_path: /tpdata/trojan-panel/pki/client.crt
   grpc_client_key_path: /tpdata/trojan-panel/pki/client.key
   grpc_server_ca_path: ""

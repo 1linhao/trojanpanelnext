@@ -13,6 +13,12 @@ go build ./...
 
 Windows 构建辅助脚本：[compile.bat](compile.bat)
 
+## 首次管理员初始化
+
+全新数据库的 `sysadmin` 种子账号默认不可登录。正式安装器通过
+`TP_INITIAL_SYSADMIN_PASSWORD_FILE` 指向一个权限不宽于 `0600` 的普通文件；API 在开始监听前
+读取该文件并完成一次性密码初始化。已有非空管理员凭据不会在服务重启或安装器重跑时被覆盖。
+
 ## 支持
 
 - [TrojanPanel 原项目](https://github.com/trojanpanel)

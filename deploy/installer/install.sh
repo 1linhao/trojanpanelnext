@@ -8,6 +8,7 @@ YQ_VERSION="v4.53.6"
 
 TP_DATA="${TP_DATA:-/tpdata}"
 WEB_PATH="${WEB_PATH:-${TP_DATA}/web}"
+INITIAL_SYSADMIN_PASSWORD_FILE="${INITIAL_SYSADMIN_PASSWORD_FILE:-${TP_DATA}/trojan-panel/config/initial-admin-password}"
 TP_PKI_BUNDLE_DIR="${TP_PKI_BUNDLE_DIR:-${TP_DATA}/trojanpanelnext-pki}"
 INSTALLER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENTRYCTL_PATH="${ENTRYCTL_PATH:-${INSTALLER_DIR}/entry/entryctl.sh}"
@@ -63,6 +64,8 @@ EXTERNAL_ROUTES_NOTE=""
 TP_FORCE="${TP_FORCE:-0}"
 TP_PURGE_DATA="${TP_PURGE_DATA:-0}"
 TP_INSTALL_DEPS="${TP_INSTALL_DEPS:-1}"
+TP_HEALTH_ATTEMPTS="${TP_HEALTH_ATTEMPTS:-30}"
+TP_HEALTH_DELAY_SECONDS="${TP_HEALTH_DELAY_SECONDS:-2}"
 TP_OS_RELEASE_FILE="${TP_OS_RELEASE_FILE:-/etc/os-release}"
 TP_DEPLOYMENT_MODE=""
 TP_CONFIG_ROOT="${TP_CONFIG_ROOT:-}"
@@ -299,6 +302,14 @@ require_value() {
 
 random_password() {
   od -An -N24 -tx1 /dev/urandom | tr -d ' \n'
+}
+
+random_sysadmin_password() {
+  od -An -N20 -tu1 /dev/urandom | awk '
+    BEGIN { alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789" }
+    { for (i = 1; i <= NF; i++) printf "%s", substr(alphabet, ($i % 62) + 1, 1) }
+    END { print "" }
+  '
 }
 
 container_exists() {
@@ -571,10 +582,12 @@ load_config() {
     TP_EMAIL=""
     MARIADB_PASSWORD=""
     REDIS_PASSWORD=""
+    SYSADMIN_PASSWORD=""
     cfg_apply "${file}" TP_WEB_DOMAIN hostname
     cfg_apply "${file}" TP_EMAIL email
     cfg_apply "${file}" MARIADB_PASSWORD mariadb_password
     cfg_apply "${file}" REDIS_PASSWORD redis_password
+    cfg_apply "${file}" SYSADMIN_PASSWORD sysadmin_password
     ;;
   node)
     TP_NODE_DOMAIN=""
@@ -659,6 +672,15 @@ require_bind_address() {
   exit 1
 }
 
+require_sysadmin_password() {
+  local value="${SYSADMIN_PASSWORD:-}"
+  [[ -z "${value}" ]] && return
+  if [[ ! "${value}" =~ ^[A-Za-z0-9]{16,20}$ ]]; then
+    echo_content red "sysadmin_password must contain 16 to 20 ASCII letters or digits"
+    exit 1
+  fi
+}
+
 validate_config() {
   local mode="$1"
 
@@ -682,6 +704,14 @@ validate_config() {
   require_one_of force "${TP_FORCE}" 0 1
   require_one_of purge_data "${TP_PURGE_DATA}" 0 1
   require_one_of tls_mode "${TLS_MODE}" acme external
+  if [[ ! "${TP_HEALTH_ATTEMPTS}" =~ ^[1-9][0-9]*$ ]]; then
+    echo_content red "TP_HEALTH_ATTEMPTS must be a positive integer"
+    exit 1
+  fi
+  if [[ ! "${TP_HEALTH_DELAY_SECONDS}" =~ ^[0-9]+$ ]]; then
+    echo_content red "TP_HEALTH_DELAY_SECONDS must be a non-negative integer"
+    exit 1
+  fi
   require_port MARIADB_PORT
   require_port REDIS_PORT
   require_bind_address BIND_ADDRESS
@@ -689,6 +719,7 @@ validate_config() {
   case "${mode}" in
   web)
     require_value TP_WEB_DOMAIN
+    require_sysadmin_password
     require_port PANEL_PORT
     require_port UI_PORT
     require_value PANEL_IMAGE
@@ -784,8 +815,8 @@ write_web_generated_secrets() {
   if [[ -z "${file}" || ! -f "${file}" ]]; then
     return
   fi
-  MARIADB_PASSWORD="${MARIADB_PASSWORD}" REDIS_PASSWORD="${REDIS_PASSWORD}" \
-    yq -i '.trojanpanelnext.mariadb_password = strenv(MARIADB_PASSWORD) | .trojanpanelnext.redis_password = strenv(REDIS_PASSWORD)' "${file}"
+  MARIADB_PASSWORD="${MARIADB_PASSWORD}" REDIS_PASSWORD="${REDIS_PASSWORD}" SYSADMIN_PASSWORD="${SYSADMIN_PASSWORD}" \
+    yq -i '.trojanpanelnext.mariadb_password = strenv(MARIADB_PASSWORD) | .trojanpanelnext.redis_password = strenv(REDIS_PASSWORD) | .trojanpanelnext.sysadmin_password = strenv(SYSADMIN_PASSWORD)' "${file}"
   chmod 600 "${file}"
 }
 
@@ -798,7 +829,8 @@ init_web_secrets() {
   fi
   MARIADB_PASSWORD="${MARIADB_PASSWORD:-$(random_password)}"
   REDIS_PASSWORD="${REDIS_PASSWORD:-$(random_password)}"
-  export MARIADB_PASSWORD REDIS_PASSWORD
+  SYSADMIN_PASSWORD="${SYSADMIN_PASSWORD:-$(random_sysadmin_password)}"
+  export MARIADB_PASSWORD REDIS_PASSWORD SYSADMIN_PASSWORD
   write_web_generated_secrets
 }
 
@@ -1366,6 +1398,18 @@ EOF
   chmod 600 "${TP_DATA}/trojan-panel/config/config.ini"
 }
 
+write_initial_sysadmin_password_file() {
+  local directory
+  local temporary
+  directory="$(dirname "${INITIAL_SYSADMIN_PASSWORD_FILE}")"
+  mkdir -p "${directory}"
+  temporary="$(mktemp "${directory}/.initial-admin-password.XXXXXX")"
+  chmod 0600 "${temporary}"
+  printf '%s\n' "${SYSADMIN_PASSWORD}" >"${temporary}"
+  mv -f "${temporary}" "${INITIAL_SYSADMIN_PASSWORD_FILE}"
+  chmod 0600 "${INITIAL_SYSADMIN_PASSWORD_FILE}"
+}
+
 write_core_runtime_config() {
   local crt_path="$1"
   local key_path="$2"
@@ -1669,6 +1713,7 @@ deploy_panel_backend() {
     -e "GRPC_CLIENT_CERT_PATH=${GRPC_CLIENT_CERT_PATH}" \
     -e "GRPC_CLIENT_KEY_PATH=${GRPC_CLIENT_KEY_PATH}" \
     -e "GRPC_SERVER_CA_PATH=${GRPC_SERVER_CA_PATH}" \
+    -e "TP_INITIAL_SYSADMIN_PASSWORD_FILE=${INITIAL_SYSADMIN_PASSWORD_FILE}" \
     "${PANEL_IMAGE}"
   wait_for_container "${PANEL_CONTAINER}"
 }
@@ -1693,6 +1738,79 @@ deploy_panel_ui() {
     -v "${TP_DATA}/trojan-panel-ui/nginx/default.conf:/etc/nginx/conf.d/default.conf" \
     "${UI_IMAGE}"
   wait_for_container "${UI_CONTAINER}"
+}
+
+probe_mariadb_health() {
+  docker exec "${MARIADB_CONTAINER}" sh -c \
+    'mariadb -uroot -p"$MYSQL_ROOT_PASSWORD" -e "select 1" >/dev/null 2>&1 || mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -e "select 1" >/dev/null 2>&1'
+}
+
+probe_redis_health() {
+  local response
+  response="$(printf 'AUTH %s\r\nPING\r\n' "${REDIS_PASSWORD}" |
+    docker exec -i "${REDIS_CONTAINER}" redis-cli -p "${REDIS_PORT}" --no-auth-warning 2>/dev/null)" || return
+  grep -Fxq PONG <<<"${response}"
+}
+
+probe_web_https_health() {
+  curl --proto '=https' --tlsv1.2 --fail --silent --show-error \
+    --connect-timeout 5 --max-time 15 "https://${TP_WEB_DOMAIN}/" >/dev/null
+}
+
+probe_sysadmin_login_health() {
+  local response
+  response="$(printf '{"username":"sysadmin","pass":"%s"}' "${SYSADMIN_PASSWORD}" |
+    curl --proto '=https' --tlsv1.2 --fail --silent --show-error \
+      --connect-timeout 5 --max-time 15 \
+      -H 'Content-Type: application/json' --data-binary @- \
+      "https://${TP_WEB_DOMAIN}/api/auth/login")" || return
+  grep -Eq '"code"[[:space:]]*:[[:space:]]*20000' <<<"${response}" || return 2
+}
+
+wait_for_web_health_probe() {
+  local label="$1"
+  local probe="$2"
+  local attempt
+  for ((attempt = 1; attempt <= TP_HEALTH_ATTEMPTS; attempt++)); do
+    local probe_status=0
+    if "${probe}" >/dev/null 2>&1; then
+      echo_content skyBlue "---> Health check passed: ${label}"
+      return
+    else
+      probe_status=$?
+    fi
+    if [[ "${probe_status}" == 2 ]]; then
+      break
+    fi
+    if ((attempt < TP_HEALTH_ATTEMPTS)); then
+      sleep "${TP_HEALTH_DELAY_SECONDS}"
+    fi
+  done
+  echo_content red "---> Health check failed: ${label}"
+  case "${label}" in
+  MariaDB) echo_content yellow "    Check container ${MARIADB_CONTAINER} and its persisted data." ;;
+  Redis) echo_content yellow "    Check container ${REDIS_CONTAINER} and its authentication state." ;;
+  "Web HTTPS") echo_content yellow "    Check DNS, certificate issuance, ports 80/443, and the active entry provider for ${TP_WEB_DOMAIN}." ;;
+  "sysadmin API login") echo_content yellow "    Check containers ${PANEL_CONTAINER} and ${UI_CONTAINER}; the generated credential remains in the restricted configuration." ;;
+  esac
+  return 1
+}
+
+verify_web_health() {
+  echo_content green "---> Verify Web control plane health"
+  wait_for_web_health_probe MariaDB probe_mariadb_health
+  wait_for_web_health_probe Redis probe_redis_health
+  wait_for_web_health_probe "Web HTTPS" probe_web_https_health
+  wait_for_web_health_probe "sysadmin API login" probe_sysadmin_login_health
+}
+
+print_web_success() {
+  echo_content red "\n=============================================================="
+  echo_content skyBlue "Web control plane is healthy"
+  echo_content yellow "URL: https://${TP_WEB_DOMAIN}"
+  echo_content yellow "Username: sysadmin"
+  echo_content yellow "Credentials are stored in the restricted deployment configuration and are not printed."
+  echo_content red "==============================================================\n"
 }
 
 deploy_core() {
@@ -1849,6 +1967,7 @@ deploy_web() {
   deploy_mariadb
   deploy_redis
   write_panel_runtime_config
+  write_initial_sysadmin_password_file
   deploy_panel_backend
   deploy_panel_ui
 
@@ -1857,26 +1976,12 @@ deploy_web() {
     EXTERNAL_ROUTES_NOTE="- The web side has no kernel routes; \`routes.json\` exists on node agents only."
     write_external_entry_contract web
     warn_external_ports web
-    echo_content red "\n=============================================================="
-    echo_content skyBlue "Trojan Panel web side deployed with external TLS"
-    echo_content yellow "Panel entry (external): https://${TP_WEB_DOMAIN}"
-    echo_content yellow "Local panel UI: http://${UI_LISTEN:-${BIND_ADDRESS}:${UI_PORT}}"
-    echo_content yellow "The external entry must terminate TLS and proxy to the panel UI."
-    echo_content yellow "Default username: sysadmin"
-    echo_content yellow "Credentials are stored in the restricted deployment configuration and are not printed."
-    echo_content red "==============================================================\n"
     return
   fi
 
   write_web_caddyfile "${TP_WEB_DOMAIN}"
   start_caddy "${WEB_CADDY_CONTAINER}" "${TP_DATA}/custom/web-caddy" "${TP_DATA}/custom/web-caddy/data" "${WEB_PATH}"
-
-  echo_content red "\n=============================================================="
-  echo_content skyBlue "Trojan Panel web side deployed"
-  echo_content yellow "URL: https://${TP_WEB_DOMAIN}"
-  echo_content yellow "Default username: sysadmin"
-  echo_content yellow "Credentials are stored in the restricted deployment configuration and are not printed."
-  echo_content red "==============================================================\n"
+  wait_for_cert "${TP_WEB_DOMAIN}" "${TP_DATA}/custom/web-caddy/data"
 }
 
 deploy_node() {
@@ -2095,6 +2200,10 @@ main() {
 
   if [[ "${command}" == install && -n "${ENTRY_SPEC_FILE}" ]]; then
     entry_controller reconcile
+  fi
+  if [[ "${command}:${mode}" == install:web ]]; then
+    verify_web_health
+    print_web_success
   fi
 }
 

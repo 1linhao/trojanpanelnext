@@ -41,9 +41,9 @@ nginx `stream` 动态配置源。只有标记 `external_fallback_listener_requir
 
 | 项目 | 要求 |
 | --- | --- |
-| 操作系统 | Ubuntu 20.04+、Debian 11+ 或同类 systemd Linux |
+| 操作系统 | Debian 12 |
 | 权限 | 安装和卸载需要 `root` |
-| CPU | `linux/amd64` 或 `linux/arm64` |
+| CPU | `linux/amd64`（x86_64） |
 | 内存 | 至少 1 GiB |
 | 网络 | 域名已解析到目标服务器，防火墙放行所配置端口 |
 
@@ -63,8 +63,12 @@ chmod 600 ./web.yaml
 sudo ./install.sh install --mode web --config ./web.yaml
 ```
 
-首次安装会生成 MariaDB 与 Redis 密码，写回 `web.yaml` 并将文件权限设为 `600`。
+首次安装会生成 `sysadmin`、MariaDB 与 Redis 的随机密码，写回 `web.yaml`
+并将文件权限设为 `600`。终端只显示密码保存位置，不显示密码。
 安装器还会在 `pki_bundle_dir` 自动生成主控 mTLS 身份；CA 私钥只保留在 Web 主控。
+
+安装命令只有在 MariaDB、Redis、公网 HTTPS UI 和 `sysadmin` 登录 API 全部通过后才返回
+成功。任一探测失败都返回非零，并输出不含秘密的定位建议。使用同一配置重跑会复用已保存的三组凭据。
 
 Node Agent 安装前，通过可信的文件传输或密钥管理系统，将 Web 主控中的
 `/tpdata/trojanpanelnext-pki/client-ca.crt` 复制到 Node 的同一路径。只复制公开 CA

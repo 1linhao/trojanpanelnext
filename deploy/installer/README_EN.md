@@ -43,9 +43,9 @@ fallback rendering. It is not an nginx `stream` configuration source. Only route
 
 | Item | Requirement |
 | --- | --- |
-| OS | Ubuntu 20.04+, Debian 11+, or a comparable systemd Linux |
+| OS | Debian 12 |
 | Privileges | Installation and removal require `root` |
-| CPU | `linux/amd64` or `linux/arm64` |
+| CPU | `linux/amd64` (x86_64) |
 | Memory | At least 1 GiB |
 | Network | DNS points to the target host and configured ports are open |
 
@@ -63,7 +63,14 @@ Set `hostname` and `email`, then validate and install:
 sudo ./install.sh install --mode web --config ./web.yaml
 ```
 
-The first installation generates MariaDB and Redis passwords, writes them back to `web.yaml`, and changes its permissions to `600`. It also creates the control-plane mTLS identity in `pki_bundle_dir`; the CA private key stays on the Web control plane.
+The first installation generates random `sysadmin`, MariaDB, and Redis passwords, writes them back
+to `web.yaml`, and changes its permissions to `600`. The terminal reports only where the secrets
+were saved; it never prints them. The installer also creates the control-plane mTLS identity in
+`pki_bundle_dir`; the CA private key stays on the Web control plane.
+
+Installation returns success only after MariaDB, Redis, the public HTTPS UI, and a real
+`sysadmin` API login all pass. Any failed probe returns non-zero with a secret-free diagnostic.
+Replaying the same configuration reuses all three stored credentials.
 
 Before installing a Node Agent, transfer `/tpdata/trojanpanelnext-pki/client-ca.crt` from the Web control plane to the same path on the Node through a trusted file-transfer or secret-management channel. Copy only the public CA certificate; never copy `client-ca.key`, `client.key`, or `client.crt`.
 The installer records the CA digest in the Core container environment. It recreates Core when adopting a legacy unmarked container or when the CA changes, so the new trust root takes effect immediately; unchanged replays do not restart Core.
