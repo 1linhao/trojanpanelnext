@@ -1,13 +1,13 @@
 trojanpanelnext:
   schema_version: 1
-  purpose: node
+  deployment_mode: node
 
   # DNS A/AAAA records must point to this Node Agent server.
   hostname: node.example.com
   email: admin@example.com
 
   caddy_image: caddy:2.8.4
-  core_image: ghcr.io/1linhao/trojanpanelnext-node-agent:latest
+  node_agent_image: ghcr.io/1linhao/trojanpanelnext-node-agent:latest
   node_caddy_http_port: 80
   node_caddy_https_port: 8863
 

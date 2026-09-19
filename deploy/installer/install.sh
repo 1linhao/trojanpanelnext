@@ -62,7 +62,7 @@ EXTERNAL_ROUTES_NOTE=""
 
 TP_FORCE="${TP_FORCE:-0}"
 TP_PURGE_DATA="${TP_PURGE_DATA:-0}"
-TP_PURPOSE=""
+TP_DEPLOYMENT_MODE=""
 TP_CONFIG_ROOT="${TP_CONFIG_ROOT:-}"
 INSTALLER_ASSET_VERSION="development"
 TP_ASSET_VERSION=""
@@ -96,7 +96,7 @@ Usage:
   $0 refresh-cert --mode node --config <file>
 
 Options:
-  --mode <mode>      Server purpose: web control plane or node agent
+  --mode <mode>      Deployment mode: Web control plane or Node Agent
   --entry-spec <file>  Versioned EntrySpec consumed by EntryController
   --config <file>    YAML configuration file
   --force            Recreate existing containers during installation
@@ -111,7 +111,8 @@ Examples:
   $0 install --mode node --config ./examples/external-node.yaml
 
 The command is non-interactive. The value of --mode must match
-trojanpanelnext.purpose in the configuration file.
+trojanpanelnext.deployment_mode in the configuration file. Legacy
+trojanpanelnext.purpose remains accepted as compatibility input.
 
 TLS ownership:
   tls_mode: acme      (default) the installer runs a Caddy container that
@@ -308,6 +309,25 @@ cfg_apply() {
   fi
 }
 
+cfg_apply_compat() {
+  local file="$1"
+  local var_name="$2"
+  local canonical_key="$3"
+  local legacy_key="$4"
+  local canonical_value legacy_value
+  canonical_value="$(yaml_read_raw "${file}" "${canonical_key}")"
+  legacy_value="$(yaml_read_raw "${file}" "${legacy_key}")"
+  if [[ -n "${canonical_value}" && -n "${legacy_value}" && "${canonical_value}" != "${legacy_value}" ]]; then
+    echo_content red "Configuration keys '${canonical_key}' and legacy '${legacy_key}' disagree"
+    exit 1
+  fi
+  if [[ -n "${canonical_value}" ]]; then
+    printf -v "${var_name}" '%s' "${canonical_value}"
+  elif [[ -n "${legacy_value}" ]]; then
+    printf -v "${var_name}" '%s' "${legacy_value}"
+  fi
+}
+
 load_config() {
   local action="$1"
   local file="${2:-}"
@@ -334,15 +354,15 @@ load_config() {
   TP_CONFIG_FILE="${file}"
   detect_config_root "${file}"
 
-  cfg_apply "${file}" TP_PURPOSE purpose
+  cfg_apply_compat "${file}" TP_DEPLOYMENT_MODE deployment_mode purpose
   cfg_apply "${file}" TP_ASSET_VERSION asset_version
 
   cfg_apply "${file}" CADDY_IMAGE caddy_image
   cfg_apply "${file}" MARIADB_IMAGE mariadb_image
   cfg_apply "${file}" REDIS_IMAGE redis_image
-  cfg_apply "${file}" PANEL_IMAGE panel_image
-  cfg_apply "${file}" UI_IMAGE ui_image
-  cfg_apply "${file}" CORE_IMAGE core_image
+  cfg_apply_compat "${file}" PANEL_IMAGE api_image panel_image
+  cfg_apply_compat "${file}" UI_IMAGE web_image ui_image
+  cfg_apply_compat "${file}" CORE_IMAGE node_agent_image core_image
   cfg_apply "${file}" IMAGE_BUNDLE_DIR image_bundle_dir
 
   cfg_apply "${file}" MARIADB_PORT mariadb_port
@@ -472,11 +492,11 @@ require_bind_address() {
 validate_config() {
   local mode="$1"
 
-  if [[ -n "${TP_PURPOSE}" && "${TP_PURPOSE}" != "${mode}" ]]; then
-    echo_content red "Configuration purpose '${TP_PURPOSE}' does not match --mode '${mode}'"
+  if [[ -n "${TP_DEPLOYMENT_MODE}" && "${TP_DEPLOYMENT_MODE}" != "${mode}" ]]; then
+    echo_content red "Configuration deployment mode '${TP_DEPLOYMENT_MODE}' does not match --mode '${mode}'"
     exit 1
   fi
-  require_value TP_PURPOSE
+  require_value TP_DEPLOYMENT_MODE
   local schema_version
   schema_version="$(yaml_read_raw "${TP_CONFIG_FILE}" schema_version)"
   if [[ "${schema_version}" != "1" ]]; then
@@ -525,7 +545,7 @@ validate_config() {
     fi
     ;;
   *)
-    echo_content red "Unsupported purpose: ${mode}"
+    echo_content red "Unsupported deployment mode: ${mode}"
     exit 1
     ;;
   esac
@@ -1877,7 +1897,7 @@ main() {
 
   case "${command}:${mode}" in
   validate:web | validate:node)
-    echo_content green "Configuration is valid for ${mode} purpose: ${config_file}"
+    echo_content green "Configuration is valid for ${mode} deployment mode: ${config_file}"
     ;;
   install:web)
     deploy_web

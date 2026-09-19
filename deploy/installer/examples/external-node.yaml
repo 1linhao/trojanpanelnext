@@ -1,6 +1,6 @@
 trojanpanelnext:
   schema_version: 1
-  purpose: node
+  deployment_mode: node
 
   # DNS A/AAAA records must point to this Node Agent server.
   hostname: node.example.com
@@ -24,7 +24,7 @@ trojanpanelnext:
   # compatibility on Node. It does not bind Core, gRPC, or kernel listeners.
   bind_address: 127.0.0.1
 
-  core_image: ghcr.io/1linhao/trojanpanelnext-node-agent:latest
+  node_agent_image: ghcr.io/1linhao/trojanpanelnext-node-agent:latest
   # Ignored while tls_mode is external; kept for a later switch back to acme.
   caddy_image: caddy:2.8.4
   node_caddy_http_port: 80

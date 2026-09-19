@@ -5,6 +5,7 @@ INSTALLER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 GENERATOR="${INSTALLER_DIR}/release/generate-assets.sh"
 VERIFY="${INSTALLER_DIR}/release/verify-assets.sh"
 PACKAGE="${INSTALLER_DIR}/release/package-assets.sh"
+ATTESTATION_VERIFY="${INSTALLER_DIR}/release/verify-attestation-results.sh"
 REPO_ROOT="$(cd "${INSTALLER_DIR}/../.." && pwd)"
 
 fail() {
@@ -20,6 +21,15 @@ assert_fails() {
 
 digest() {
   printf 'sha256:%064d' "$1"
+}
+
+repeated_digest() {
+  local digit="$1"
+  local _
+  printf 'sha256:'
+  for _ in {1..64}; do
+    printf '%s' "${digit}"
+  done
 }
 
 generate() {
@@ -45,6 +55,7 @@ generate "${bundle}"
 
 "${VERIFY}" --assets-dir "${bundle}" --config "${bundle}/config-web.yaml"
 test -x "${bundle}/bootstrap.sh"
+test -f "${bundle}/release-contract.sh"
 test -x "${bundle}/install.sh"
 test -x "${bundle}/entry/entryctl.sh"
 test -f "${bundle}/entry/controller.sh"
@@ -58,6 +69,7 @@ tar -C "${work}/extracted" -xzf "${archive}"
 test -x "${work}/extracted/bootstrap.sh"
 test -x "${work}/extracted/install.sh"
 test -x "${work}/extracted/verify-assets.sh"
+test -f "${work}/extracted/release-contract.sh"
 test -x "${work}/extracted/entry/entryctl.sh"
 "${work}/extracted/verify-assets.sh" --assets-dir "${work}/extracted" \
   --config "${work}/extracted/config-web.yaml" >/dev/null
@@ -66,8 +78,47 @@ test -f "${bundle}/config-node.yaml"
 test -f "${bundle}/config-combined.yaml"
 test -f "${bundle}/release-manifest.json"
 test -f "${bundle}/SHA256SUMS"
-jq -e '.release_version == "1.2.3" and (.assets | length == 10)' \
+for config in "${bundle}"/config-*.yaml; do
+  grep -q '^  deployment_mode:' "${config}"
+  grep -q '^  api_image:' "${config}"
+  grep -q '^  web_image:' "${config}"
+  grep -q '^  node_agent_image:' "${config}"
+  ! grep -Eq '^  (purpose|panel_image|ui_image|core_image):' "${config}"
+done
+jq -e '.release_version == "1.2.3" and (.assets | length == 11)' \
   "${bundle}/release-manifest.json" >/dev/null
+EXPECTED_RELEASE_ASSET_PATHS=(
+  bootstrap.sh
+  release-contract.sh
+  verify-assets.sh
+  install.sh
+  config-web.yaml
+  config-node.yaml
+  config-combined.yaml
+  entry/entryctl.sh
+  entry/controller.sh
+  entry/adapters/external.sh
+  entry/adapters/nginx_certbot.sh
+)
+mapfile -t manifest_asset_paths < <(jq -r '.assets[].path' "${bundle}/release-manifest.json")
+cmp -s \
+  <(printf '%s\n' "${EXPECTED_RELEASE_ASSET_PATHS[@]}" | sort) \
+  <(printf '%s\n' "${manifest_asset_paths[@]}" | sort) ||
+  fail 'release manifest asset set differs from the independently expected contract'
+example_bundle="${work}/example-bundle"
+"${GENERATOR}" \
+  --version 0.1.0 \
+  --source-commit 671f5db70816572eec99f7eeae277f97bc1fec1b \
+  --output "${example_bundle}" \
+  --api-image "ghcr.io/1linhao/trojanpanelnext-api@$(repeated_digest 1)" \
+  --web-image "ghcr.io/1linhao/trojanpanelnext-web@$(repeated_digest 2)" \
+  --node-agent-image "ghcr.io/1linhao/trojanpanelnext-node-agent@$(repeated_digest 3)" \
+  --caddy-image "caddy@$(repeated_digest 4)" \
+  --mariadb-image "mariadb@$(repeated_digest 5)" \
+  --redis-image "redis@$(repeated_digest 6)" >/dev/null
+cmp -s "${example_bundle}/release-manifest.json" \
+  "${INSTALLER_DIR}/release/example-release-manifest.json" ||
+  fail 'example release manifest is stale'
 bash -c 'source "$1"; test "${INSTALLER_ASSET_VERSION}" = 1.2.3' \
   release-version-test "${bundle}/install.sh"
 assert_fails env TP_INSTALLER_ASSET_VERSION=development bash -c '
@@ -75,7 +126,7 @@ assert_fails env TP_INSTALLER_ASSET_VERSION=development bash -c '
   source "$1"
   yaml_read_raw() { printf "1\n"; }
   TP_CONFIG_FILE=/no-read
-  TP_PURPOSE=web
+  TP_DEPLOYMENT_MODE=web
   TP_ASSET_VERSION=1.2.4
   TP_WEB_DOMAIN=panel.example.com
   validate_config web
@@ -87,6 +138,15 @@ printf '#!/usr/bin/env bash\nprintf ran >"${TP_SENTINEL_TRACE}"\n' >"${sentinel_
 chmod 0755 "${sentinel_installer}"
 sentinel_bundle="${work}/sentinel-bundle"
 generate "${sentinel_bundle}" --installer-source "${sentinel_installer}"
+unverified_config="${work}/unverified-config.yaml"
+cp "${sentinel_bundle}/config-web.yaml" "${unverified_config}"
+sed -Ei 's#^  (panel_image|api_image):.*#  api_image: ghcr.io/1linhao/trojanpanelnext-api:latest#' \
+  "${unverified_config}"
+assert_fails env TP_SENTINEL_TRACE="${sentinel_trace}" \
+  "${sentinel_bundle}/bootstrap.sh" validate --mode web \
+  --config "${sentinel_bundle}/config-web.yaml" --config "${unverified_config}"
+test ! -e "${sentinel_trace}" || fail 'bootstrap invoked installer with a second unverified config'
+
 printf '\n# tampered\n' >>"${sentinel_bundle}/config-web.yaml"
 assert_fails env TP_SENTINEL_TRACE="${sentinel_trace}" \
   "${sentinel_bundle}/bootstrap.sh" validate --mode web --config "${sentinel_bundle}/config-web.yaml"
@@ -100,12 +160,59 @@ cp "${bundle}/config-web.yaml" "${deployment_config}"
 sed -i 's/panel.example.com/control.example.net/' "${deployment_config}"
 "${VERIFY}" --assets-dir "${bundle}" --config "${deployment_config}" >/dev/null
 
+attested_files="${work}/attested-files"
+mkdir "${attested_files}"
+cp "${archive}" "${bundle}/release-manifest.json" "${bundle}/SHA256SUMS" "${attested_files}/"
+image_results="${work}/image-verification-results.json"
+jq '[{
+  verificationResult: {
+    statement: {
+      subject: [.attestations[] | {
+        name: .subject,
+        digest: {sha256: (.digest | sub("^sha256:"; ""))}
+      }]
+    }
+  }
+}]' "${bundle}/release-manifest.json" >"${image_results}"
+file_subjects='[]'
+for file in "${attested_files}"/*; do
+  file_subjects="$(jq -c --arg name "${file##*/}" --arg digest "$(sha256sum "${file}" | awk '{print $1}')" \
+    '. + [{name: $name, digest: {sha256: $digest}}]' <<<"${file_subjects}")"
+done
+file_results="${work}/file-verification-results.json"
+jq -n --argjson subjects "${file_subjects}" \
+  '[{verificationResult: {statement: {subject: $subjects}}}]' >"${file_results}"
+"${ATTESTATION_VERIFY}" \
+  --manifest "${bundle}/release-manifest.json" \
+  --image-results "${image_results}" \
+  --files-dir "${attested_files}" \
+  --file-results "${file_results}" >/dev/null
+bad_image_results="${work}/bad-image-verification-results.json"
+jq '.[0].verificationResult.statement.subject[0].digest.sha256 =
+  "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"' \
+  "${image_results}" >"${bad_image_results}"
+assert_fails "${ATTESTATION_VERIFY}" \
+  --manifest "${bundle}/release-manifest.json" \
+  --image-results "${bad_image_results}" \
+  --files-dir "${attested_files}" \
+  --file-results "${file_results}"
+missing_file_results="${work}/missing-file-verification-results.json"
+jq '.[0].verificationResult.statement.subject |= .[1:]' \
+  "${file_results}" >"${missing_file_results}"
+assert_fails "${ATTESTATION_VERIFY}" \
+  --manifest "${bundle}/release-manifest.json" \
+  --image-results "${image_results}" \
+  --files-dir "${attested_files}" \
+  --file-results "${missing_file_results}"
+
 assert_fails generate "${work}/tag-only" \
   --api-image ghcr.io/1linhao/trojanpanelnext-api:1.2.3
 assert_fails generate "${work}/invalid-version" --version latest
 assert_fails generate "${work}/invalid-build-version" --version 1.2.3+a+b
 assert_fails generate "${work}/invalid-prerelease-version" --version 1.2.3-rc+meta+extra
 assert_fails generate "${work}/leading-zero-version" --version 01.2.3
+assert_fails generate "${work}/numeric-prerelease-leading-zero" --version 1.2.3-01
+assert_fails generate "${work}/numeric-prerelease-component-leading-zero" --version 1.2.3-rc.01
 generate "${work}/prerelease" --version 1.2.3-rc.1+build.2 >/dev/null
 "${VERIFY}" --assets-dir "${work}/prerelease" --config "${work}/prerelease/config-web.yaml" >/dev/null
 mkdir "${work}/nonempty-output"
@@ -149,8 +256,13 @@ sed -i 's/asset_version: 1.2.3/asset_version: 1.2.4/' "${case_dir}/config-web.ya
 resign_asset "${case_dir}" config-web.yaml
 assert_fails "${VERIFY}" --assets-dir "${case_dir}" --config "${case_dir}/config-web.yaml"
 
-case_dir="$(copy_case wrong-purpose)"
-sed -i 's/purpose: web/purpose: worker/' "${case_dir}/config-web.yaml"
+case_dir="$(copy_case invalid-manifest-semver)"
+jq '.release_version = "1.2.3-01"' "${case_dir}/release-manifest.json" >"${case_dir}/manifest.tmp"
+mv "${case_dir}/manifest.tmp" "${case_dir}/release-manifest.json"
+assert_fails "${VERIFY}" --assets-dir "${case_dir}" --config "${case_dir}/config-web.yaml"
+
+case_dir="$(copy_case wrong-deployment-mode)"
+sed -i 's/deployment_mode: web/deployment_mode: worker/' "${case_dir}/config-web.yaml"
 resign_asset "${case_dir}" config-web.yaml
 assert_fails "${VERIFY}" --assets-dir "${case_dir}" --config "${case_dir}/config-web.yaml"
 
@@ -172,11 +284,18 @@ assert_fails "${VERIFY}" --assets-dir "${case_dir}" --config "${case_dir}/config
 
 workflow="${REPO_ROOT}/.github/workflows/publish-images.yml"
 grep -Fq 'uses: actions/attest@' "${workflow}"
+grep -Fq 'source deploy/installer/release/release-contract.sh' "${workflow}"
+grep -Fq 'release_semver_is_valid "$version"' "${workflow}"
 for image_env in API_IMAGE WEB_IMAGE NODE_AGENT_IMAGE; do
   grep -Fq 'subject-name: ${{ env.'"${image_env}"' }}' "${workflow}"
 done
 test "$(grep -Fxc '          subject-digest: ${{ steps.build.outputs.digest }}' "${workflow}")" = 3
 grep -Fq 'subject-path: release-upload/*' "${workflow}"
+test "$(grep -Fc 'gh attestation verify' "${workflow}")" = 2
+grep -Fq 'deploy/installer/release/verify-attestation-results.sh "${verify_args[@]}"' "${workflow}"
+for bundle in api web node-agent; do
+  grep -Fq "name: image-attestation-${bundle}" "${workflow}"
+done
 test "$(grep -Fxc '          path: release-upload/*' "${workflow}")" = 1
 
 printf 'PASS release asset generation and verification contract\n'

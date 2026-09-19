@@ -1,6 +1,6 @@
 trojanpanelnext:
   schema_version: 1
-  purpose: web
+  deployment_mode: web
 
   # DNS A/AAAA records must point to this Web control-plane server.
   hostname: panel.example.com
@@ -18,8 +18,8 @@ trojanpanelnext:
 
   mariadb_image: mariadb:10.7.3
   redis_image: redis:6.2.7
-  panel_image: ghcr.io/1linhao/trojanpanelnext-api:latest
-  ui_image: ghcr.io/1linhao/trojanpanelnext-web:latest
+  api_image: ghcr.io/1linhao/trojanpanelnext-api:latest
+  web_image: ghcr.io/1linhao/trojanpanelnext-web:latest
 
   mariadb_port: 9507
   redis_port: 6378

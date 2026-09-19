@@ -6,6 +6,9 @@ fail() {
   exit 1
 }
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/release-contract.sh"
+
 assets_dir=""
 config=""
 while (($#)); do
@@ -22,25 +25,15 @@ command -v sha256sum >/dev/null 2>&1 || fail 'sha256sum is required'
 
 manifest="${assets_dir}/release-manifest.json"
 sums="${assets_dir}/SHA256SUMS"
-REQUIRED_ASSET_PATHS=(
-  bootstrap.sh
-  verify-assets.sh
-  install.sh
-  config-web.yaml
-  config-node.yaml
-  config-combined.yaml
-  entry/entryctl.sh
-  entry/controller.sh
-  entry/adapters/external.sh
-  entry/adapters/nginx_certbot.sh
-)
-required_assets="$(printf '%s\n' "${REQUIRED_ASSET_PATHS[@]}" | jq -R . | jq -s .)"
+required_assets="$(printf '%s\n' "${TP_RELEASE_ASSET_PATHS[@]}" | jq -R . | jq -s .)"
 [[ -f "${manifest}" && ! -L "${manifest}" ]] || fail 'release-manifest.json is missing or unsafe'
 [[ -f "${sums}" && ! -L "${sums}" ]] || fail 'SHA256SUMS is missing or unsafe'
+manifest_version="$(jq -er '.release_version | select(type == "string")' "${manifest}")" || fail 'manifest release version is invalid'
+release_semver_is_valid "${manifest_version}" || fail 'manifest release version is invalid'
 
 jq -e --argjson required "${required_assets}" '
   .schema_version == 1 and
-  (.release_version | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$")) and
+  (.release_version | type == "string") and
   (.source_commit | type == "string" and test("^[0-9a-f]{40}$")) and
   (.assets | type == "array" and length == ($required | length)) and
   ([.assets[].name] | unique | length) == ($required | length) and
@@ -70,7 +63,7 @@ while IFS=$'\t' read -r path expected; do
 done < <(jq -r '.assets[] | [.path, .sha256] | @tsv' "${manifest}")
 
 mapfile -t sum_paths < <(awk '{print $2}' "${sums}" | sed 's/^\*\?//')
-expected_sum_paths=("${REQUIRED_ASSET_PATHS[@]}" release-manifest.json)
+expected_sum_paths=("${TP_RELEASE_ASSET_PATHS[@]}" release-manifest.json)
 [[ "${#sum_paths[@]}" -eq "${#expected_sum_paths[@]}" ]] || fail 'SHA256SUMS has an unexpected asset set'
 printf '%s\n' "${sum_paths[@]}" | sort -u | cmp -s - <(printf '%s\n' "${expected_sum_paths[@]}" | sort) ||
   fail 'SHA256SUMS has an unexpected asset set'
@@ -88,28 +81,30 @@ config_value() {
   local key="$1"
   awk -F: -v key="${key}" '$1 == "  " key {sub(/^[^:]*:[[:space:]]*/, ""); gsub(/^"|"$/, ""); print; exit}' "${config}"
 }
-for key in schema_version asset_version purpose panel_image ui_image core_image caddy_image mariadb_image redis_image; do
+for key in schema_version asset_version deployment_mode api_image web_image node_agent_image caddy_image mariadb_image redis_image; do
   [[ "$(config_count "${key}")" == 1 ]] || fail "configuration key must appear exactly once: ${key}"
+done
+for legacy_key in purpose panel_image ui_image core_image; do
+  [[ "$(config_count "${legacy_key}")" == 0 ]] || fail "legacy configuration key is not allowed in the release contract: ${legacy_key}"
 done
 
 [[ "$(config_value schema_version)" == 1 ]] || fail 'configuration schema_version must be 1'
 version="$(config_value asset_version)"
-manifest_version="$(jq -r '.release_version' "${manifest}")"
 [[ -n "${version}" && "${version}" == "${manifest_version}" ]] || fail 'configuration asset_version does not match release'
-purpose="$(config_value purpose)"
-case "${purpose}" in web | node | combined) ;; *) fail "unsupported configuration purpose: ${purpose}" ;; esac
+deployment_mode="$(config_value deployment_mode)"
+case "${deployment_mode}" in web | node | combined) ;; *) fail "unsupported deployment mode: ${deployment_mode}" ;; esac
 
 while IFS=$'\t' read -r config_key manifest_key; do
   configured="$(config_value "${config_key}")"
   expected="$(jq -r --arg key "${manifest_key}" '.images[$key].reference' "${manifest}")"
   [[ "${configured}" == "${expected}" ]] || fail "configuration image does not match manifest: ${config_key}"
 done <<'IMAGE_KEYS'
-panel_image	api
-ui_image	web
-core_image	node_agent
+api_image	api
+web_image	web
+node_agent_image	node_agent
 caddy_image	caddy
 mariadb_image	mariadb
 redis_image	redis
 IMAGE_KEYS
 
-printf 'Release assets are valid for %s purpose (version %s)\n' "${purpose}" "${version}"
+printf 'Release assets are valid for %s deployment mode (version %s)\n' "${deployment_mode}" "${version}"

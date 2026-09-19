@@ -2,7 +2,7 @@
 
 [简体中文](README.md) | English
 
-The installer deploys a server non-interactively with one script, one YAML file, and one explicit server purpose.
+The installer deploys a server non-interactively with one script, one YAML file, and one explicit deployment mode.
 
 ## Purpose modes
 
@@ -95,7 +95,8 @@ After the application install succeeds, the installer calls the adjacent
 containers. The EntrySpec purpose and domain must match the installer config;
 mutating actions require a root-owned regular file with mode 0600.
 
-`--mode` must match `trojanpanelnext.purpose`; the installer exits immediately when they differ.
+`--mode` must match `trojanpanelnext.deployment_mode`; the installer exits immediately when they
+differ. Legacy `purpose` remains accepted only as compatibility input.
 
 ## Recreate or remove
 
@@ -140,6 +141,10 @@ The release workflow uses `release/generate-assets.sh` to produce matching versi
 `release-manifest.json`, and `SHA256SUMS`. Product and runtime images are pinned as
 `name@sha256:<digest>`. Before invoking the installer, `bootstrap.sh` runs the bundled
 `verify-assets.sh` to verify versions, asset digests, image references, and configuration.
+
+The release configuration contract uses `deployment_mode`, `api_image`, `web_image`, and
+`node_agent_image`. The legacy `purpose`, `panel_image`, `ui_image`, and `core_image` keys are
+accepted only when reading existing installer configurations and are not emitted in new templates.
 
 `combined` is valid in the unified configuration contract, but its container orchestration is
 outside this ticket. Release validation accepts a combined configuration while the existing

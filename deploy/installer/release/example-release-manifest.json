@@ -6,32 +6,37 @@
     {
       "name": "bootstrap",
       "path": "bootstrap.sh",
-      "sha256": "96dd463613d535022c604ab230df4ca9a76438d33106d7f9b1576917b133cbf0"
+      "sha256": "f8cb31ee3bf70d3d0bd97ee25ab26d4225b335e1002774ee1767e24111ffd3ae"
+    },
+    {
+      "name": "release-contract",
+      "path": "release-contract.sh",
+      "sha256": "41be29121c63b2228b518d072e71b3341c29785f1389177963e3521eeeb517e6"
     },
     {
       "name": "verify-assets",
       "path": "verify-assets.sh",
-      "sha256": "e147e165a762afe756e603bd508ec0a55a2fd49a382f2666e47295ff28e5b3d2"
+      "sha256": "fcbc2fadbf49dd8c64f04a8c9f588ab29bc2db09ba8f1ffe8bf8cd5cc4ec6ae9"
     },
     {
       "name": "install",
       "path": "install.sh",
-      "sha256": "5bd39570672a5b28e53b93300e4926924fbd86a6cbbb7ec20d91bf5fcc434373"
+      "sha256": "b541b43548a2283a67cde82f088ada4a88f37edd67c8c4324ed1d8614a1fa009"
     },
     {
       "name": "config-web",
       "path": "config-web.yaml",
-      "sha256": "cbbaa41ff35f03074487e448027ef6a3138cad755577eac5fb0a2fa770e5a4c3"
+      "sha256": "761d7070287ff877b275b24bf6ee250eeca2c40c06f891bf412c441748efa6b1"
     },
     {
       "name": "config-node",
       "path": "config-node.yaml",
-      "sha256": "609ea76e17d178fa71c23f6293a92400af5120cd4a0a089b0018c742d357d771"
+      "sha256": "c00f607b1425c343ff840aae19dfc6ef8d0e197d967c716b962c94dacb5a565d"
     },
     {
       "name": "config-combined",
       "path": "config-combined.yaml",
-      "sha256": "d97d1d2095472152088b23a130272ce0d06dfffebe21e2e3c7d6cc84f2a34afc"
+      "sha256": "23bf60d633044fedc0ee0e92cce03adbb695bf9c9a1f7f2ebf88f998b8eaaf80"
     },
     {
       "name": "entry/entryctl",
