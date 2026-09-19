@@ -126,6 +126,7 @@ done
 test -x "${bundle}/bootstrap.sh"
 test -f "${bundle}/release-contract.sh"
 test -x "${bundle}/install.sh"
+test -x "${bundle}/secure-file"
 test -x "${bundle}/entry/entryctl.sh"
 test -f "${bundle}/entry/controller.sh"
 test -f "${bundle}/entry/adapters/external.sh"
@@ -137,6 +138,7 @@ mkdir "${work}/extracted"
 tar -C "${work}/extracted" -xzf "${archive}"
 test -x "${work}/extracted/bootstrap.sh"
 test -x "${work}/extracted/install.sh"
+test -x "${work}/extracted/secure-file"
 test -x "${work}/extracted/verify-assets.sh"
 test -f "${work}/extracted/release-contract.sh"
 test -x "${work}/extracted/entry/entryctl.sh"
@@ -154,13 +156,14 @@ for config in "${bundle}"/config-*.yaml; do
   grep -q '^  node_agent_image:' "${config}"
   ! grep -Eq '^  (purpose|panel_image|ui_image|core_image):' "${config}"
 done
-jq -e '.release_version == "1.2.3" and (.assets | length == 11)' \
+jq -e '.release_version == "1.2.3" and (.assets | length == 12)' \
   "${bundle}/release-manifest.json" >/dev/null
 EXPECTED_RELEASE_ASSET_PATHS=(
   bootstrap.sh
   release-contract.sh
   verify-assets.sh
   install.sh
+  secure-file
   config-web.yaml
   config-node.yaml
   config-combined.yaml
@@ -185,7 +188,16 @@ example_bundle="${work}/example-bundle"
   --caddy-image "caddy@$(repeated_digest 4)" \
   --mariadb-image "mariadb@$(repeated_digest 5)" \
   --redis-image "redis@$(repeated_digest 6)" >/dev/null
-cmp -s "${example_bundle}/release-manifest.json" \
+normalized_example_manifest="${work}/normalized-example-release-manifest.json"
+awk '
+  /"name": "secure-file"/ { secure_file = 1 }
+  secure_file && /"sha256":/ {
+    sub(/"sha256": "[^"]+"/, "\"sha256\": \"0000000000000000000000000000000000000000000000000000000000000000\"")
+    secure_file = 0
+  }
+  { print }
+' "${example_bundle}/release-manifest.json" >"${normalized_example_manifest}"
+cmp -s "${normalized_example_manifest}" \
   "${INSTALLER_DIR}/release/example-release-manifest.json" ||
   fail 'example release manifest is stale'
 bash -c 'source "$1"; test "${INSTALLER_ASSET_VERSION}" = 1.2.3' \

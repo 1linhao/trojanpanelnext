@@ -101,6 +101,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: 1.23.x
+          cache: false
       - name: Check Bash syntax
         shell: bash
         run: |
@@ -117,6 +121,8 @@ jobs:
           bash deploy/installer/tests/installer_cli_test.sh
           bash deploy/installer/tests/entry_controller_test.sh
           bash deploy/installer/tests/dependency_preflight_test.sh
+          bash deploy/installer/tests/secure_file_test.sh
+          bash deploy/installer/tests/web_bare_install_test.sh
           bash deploy/installer/tests/release_assets_test.sh
           bash deploy/installer/tests/jq_free_release_verification_test.sh
 

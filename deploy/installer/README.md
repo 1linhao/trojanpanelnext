@@ -41,9 +41,9 @@ nginx `stream` 动态配置源。只有标记 `external_fallback_listener_requir
 
 | 项目 | 要求 |
 | --- | --- |
-| 操作系统 | Ubuntu 20.04+、Debian 11+ 或同类 systemd Linux |
+| 操作系统 | Debian 12 |
 | 权限 | 安装和卸载需要 `root` |
-| CPU | `linux/amd64` 或 `linux/arm64` |
+| CPU | `linux/amd64`（x86_64） |
 | 内存 | 至少 1 GiB |
 | 网络 | 域名已解析到目标服务器，防火墙放行所配置端口 |
 
@@ -63,8 +63,16 @@ chmod 600 ./web.yaml
 sudo ./install.sh install --mode web --config ./web.yaml
 ```
 
-首次安装会生成 MariaDB 与 Redis 密码，写回 `web.yaml` 并将文件权限设为 `600`。
+首次安装会生成 `sysadmin`、MariaDB 与 Redis 的随机密码，写回 `web.yaml`
+并将文件权限设为 `600`。终端只显示密码保存位置，不显示密码。
+敏感写入由 Linux amd64 `secure-file` helper 完成：父目录与原目标 fd 在提交期间保持打开；
+已有目标使用 `renameat2(RENAME_EXCHANGE)` 交换、核验并在竞态时回滚，新目标使用
+`RENAME_NOREPLACE`，因此最终文件或父目录在提交窗口被替换时安装会失败且不覆盖目标。
 安装器还会在 `pki_bundle_dir` 自动生成主控 mTLS 身份；CA 私钥只保留在 Web 主控。
+
+安装命令只有在当前配置身份访问 MariaDB、Redis、公网 HTTPS UI 和容器内只读 `sysadmin` 凭据验证全部通过后才返回
+成功。任一探测失败都返回非零，并输出不含秘密的定位建议。使用同一配置重跑会复用已保存的三组凭据。
+管理员凭据探测不暴露 HTTP 路径，也不会启动 Redis/限流、签发会话、更新登录时间或累计登录失败次数。
 
 Node Agent 安装前，通过可信的文件传输或密钥管理系统，将 Web 主控中的
 `/tpdata/trojanpanelnext-pki/client-ca.crt` 复制到 Node 的同一路径。只复制公开 CA
@@ -153,13 +161,14 @@ sudo ./install.sh remove --mode node --config ./node-agent.yaml --purge-data
 ## 版本化发布资产
 
 正式发布工作流使用 `release/generate-assets.sh` 生成同一版本的 `bootstrap.sh`、
-`install.sh`、`web|node|combined` 配置模板、`release-manifest.json` 和
+`install.sh`、用于安全打开/原子写入敏感配置的 `secure-file`、`web|node|combined` 配置模板、`release-manifest.json` 和
 `SHA256SUMS`。产品镜像和运行时镜像都以 `name@sha256:<digest>` 固定；
 `bootstrap.sh` 会先调用同包内的 `verify-assets.sh` 校验版本、资产摘要、镜像引用和配置；
 发布包内的 `install.sh` 在被直接调用时也会执行同一预检。验证器只依赖 Debian 12
 基础系统提供的 Bash、awk、grep 与 coreutils，不要求宿主预装 `jq`；它先依据固定资产集合校验
 `SHA256SUMS`，拒绝 bundle 路径中的符号链接，并只接受生成器输出的 printable ASCII + LF manifest；
-且不会在此之前 source 或执行其他随包程序。两条入口都只在全部通过后才越过宿主变更边界。
+且不会在此之前 source 或执行其他随包程序。两条入口只有在完整校验 12 个资产（包括
+`secure-file`）后才首次执行 helper，并在安全快照后再次验证配置契约；全部通过后才越过宿主变更边界。
 
 发布配置契约使用 `deployment_mode`、`api_image`、`web_image` 和 `node_agent_image`；旧的
 `purpose`、`panel_image`、`ui_image` 和 `core_image` 只供既有安装配置兼容读取，不会出现在新模板中。

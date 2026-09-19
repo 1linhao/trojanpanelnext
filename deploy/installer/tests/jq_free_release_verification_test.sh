@@ -38,6 +38,7 @@ done
 ln -s "${INSTALLER_DIR}/tests/fixtures/fake_yq_reader.sh" "${runtime_bin}/yq"
 
 host_trace="${work}/host-side-effects"
+helper_trace="${work}/secure-file-executed"
 cat >"${runtime_bin}/host-mutation-sentinel" <<'SENTINEL'
 #!/usr/bin/env bash
 printf '%s\n' "$0" >>"${TP_HOST_TRACE}"
@@ -78,7 +79,9 @@ release_contract_rejection_observed() {
 
   rejection_output=""
   rm -f "${host_trace}"
+  rm -f "${helper_trace}"
   if rejection_output="$(/usr/bin/env -i PATH="${runtime_bin}" TP_HOST_TRACE="${host_trace}" \
+    TP_HELPER_EXECUTED="${helper_trace}" \
     "${case_bundle}/${entrypoint}" install --mode web --config "${case_config}" 2>&1)"; then
     return 1
   fi
@@ -120,6 +123,17 @@ sed -i 's/"release_version": "1.2.3"/"release_version": "9.9.9"/' \
   "${case_bundle}/release-manifest.json"
 assert_rejected_before_host_change tampered-manifest "${case_bundle}" \
   "${case_bundle}/config-web.yaml" 'SHA256SUMS verification failed'
+
+case_bundle="$(copy_case tampered-secure-file)"
+cat >"${case_bundle}/secure-file" <<'TAMPERED_HELPER'
+#!/usr/bin/env bash
+: >"${TP_HELPER_EXECUTED}"
+exit 97
+TAMPERED_HELPER
+chmod 0755 "${case_bundle}/secure-file"
+assert_rejected_before_host_change tampered-secure-file "${case_bundle}" \
+  "${case_bundle}/config-web.yaml" 'SHA256SUMS verification failed'
+test ! -e "${helper_trace}" || fail 'tampered secure-file executed before release verification'
 
 wrong_version_config="${work}/wrong-version.yaml"
 cp "${bundle}/config-web.yaml" "${wrong_version_config}"

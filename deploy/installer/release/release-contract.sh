@@ -8,6 +8,7 @@ TP_RELEASE_ASSET_PATHS=(
   release-contract.sh
   verify-assets.sh
   install.sh
+  secure-file
   config-web.yaml
   config-node.yaml
   config-combined.yaml

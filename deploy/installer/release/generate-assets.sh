@@ -46,6 +46,7 @@ fi
 [[ -f "${installer_source}" && ! -L "${installer_source}" ]] || fail 'installer source must be a regular non-symlink file'
 command -v jq >/dev/null 2>&1 || fail 'jq is required'
 command -v sha256sum >/dev/null 2>&1 || fail 'sha256sum is required'
+command -v go >/dev/null 2>&1 || fail 'Go is required to build the secure-file helper'
 
 image_pattern='^[a-zA-Z0-9._/-]+@sha256:[0-9a-f]{64}$'
 for image in "${api_image}" "${web_image}" "${node_agent_image}" "${caddy_image}" "${mariadb_image}" "${redis_image}"; do
@@ -57,6 +58,9 @@ install -m 0755 "${SCRIPT_DIR}/bootstrap.sh" "${output}/bootstrap.sh"
 install -m 0644 "${SCRIPT_DIR}/release-contract.sh" "${output}/release-contract.sh"
 install -m 0755 "${SCRIPT_DIR}/verify-assets.sh" "${output}/verify-assets.sh"
 install -m 0755 "${installer_source}" "${output}/install.sh"
+(cd "${INSTALLER_DIR}/securefile" && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+  go build -trimpath -ldflags '-s -w -buildid=' -o "${output}/secure-file" .)
+chmod 0755 "${output}/secure-file"
 install -m 0755 "${INSTALLER_DIR}/entry/entryctl.sh" "${output}/entry/entryctl.sh"
 install -m 0644 "${INSTALLER_DIR}/entry/controller.sh" "${output}/entry/controller.sh"
 install -m 0644 "${INSTALLER_DIR}/entry/adapters/external.sh" "${output}/entry/adapters/external.sh"

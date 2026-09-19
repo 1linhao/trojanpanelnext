@@ -57,6 +57,7 @@ EXPECTED_RELEASE_ASSET_PATHS=(
   release-contract.sh
   verify-assets.sh
   install.sh
+  secure-file
   config-web.yaml
   config-node.yaml
   config-combined.yaml
@@ -236,7 +237,7 @@ normalized_manifest="$(awk -F '\t' '
     if (node_value["/release_version"] == "") reject()
     if (length(node_value["/source_commit"]) != 40 || node_value["/source_commit"] !~ /^[0-9a-f]+$/) reject()
 
-    for (i = 0; i < 11; i++) {
+    for (i = 0; i < 12; i++) {
       base = "/assets/" i
       expect(base, "O")
       expect(base "/name", "S")
@@ -299,7 +300,7 @@ normalized_manifest="$(awk -F '\t' '
     if (invalid) exit 2
 
     print "VERSION\t" node_value["/release_version"]
-    for (i = 0; i < 11; i++) print "ASSET\t" asset_path[i] "\t" asset_digest[i]
+    for (i = 0; i < 12; i++) print "ASSET\t" asset_path[i] "\t" asset_digest[i]
     for (i = 0; i < 6; i++) print "IMAGE\t" image_key[i] "\t" image_reference[image_key[i]]
   }
 ' <<<"${manifest_records}")" || fail 'manifest structure is invalid'

@@ -8,8 +8,10 @@ YQ_VERSION="v4.53.6"
 
 TP_DATA="${TP_DATA:-/tpdata}"
 WEB_PATH="${WEB_PATH:-${TP_DATA}/web}"
+INITIAL_SYSADMIN_PASSWORD_FILE="${INITIAL_SYSADMIN_PASSWORD_FILE:-${TP_DATA}/trojan-panel/config/initial-admin-password}"
 TP_PKI_BUNDLE_DIR="${TP_PKI_BUNDLE_DIR:-${TP_DATA}/trojanpanelnext-pki}"
 INSTALLER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SECURE_FILE_HELPER="${SECURE_FILE_HELPER:-${INSTALLER_DIR}/secure-file}"
 ENTRYCTL_PATH="${ENTRYCTL_PATH:-${INSTALLER_DIR}/entry/entryctl.sh}"
 ENTRY_SPEC_FILE="${ENTRY_SPEC_FILE:-}"
 EXTERNAL_MANAGED_DIR="${EXTERNAL_MANAGED_DIR:-${TP_DATA}/trojanpanelnext-external}"
@@ -63,18 +65,24 @@ EXTERNAL_ROUTES_NOTE=""
 TP_FORCE="${TP_FORCE:-0}"
 TP_PURGE_DATA="${TP_PURGE_DATA:-0}"
 TP_INSTALL_DEPS="${TP_INSTALL_DEPS:-1}"
+TP_HEALTH_ATTEMPTS="${TP_HEALTH_ATTEMPTS:-30}"
+TP_HEALTH_DELAY_SECONDS="${TP_HEALTH_DELAY_SECONDS:-2}"
 TP_OS_RELEASE_FILE="${TP_OS_RELEASE_FILE:-/etc/os-release}"
 TP_DEPLOYMENT_MODE=""
 TP_CONFIG_ROOT="${TP_CONFIG_ROOT:-}"
+TP_CONFIG_FILE=""
+TP_CONFIG_READ_FILE=""
+TP_CONFIG_IDENTITY=""
 INSTALLER_ASSET_VERSION="development"
 TP_ASSET_VERSION=""
 TP_TEMP_TOOLS_DIR=""
+TP_SECURE_CONFIG_DIR=""
 TP_DEPENDENCY_PLAN=(
   'docker|docker|install|docker|-|download and run the Docker installer from https://get.docker.com'
   'age|age|install|package|age|apt-get install -y age'
   'curl|curl|base|package|curl|apt-get install -y curl'
   'tar|tar|base|package|tar|apt-get install -y tar'
-  'coreutils|od sha256sum install|base|package|coreutils|apt-get install -y coreutils'
+  'coreutils|od sha256sum install realpath|base|package|coreutils|apt-get install -y coreutils'
   'openssl|openssl|base|package|openssl|apt-get install -y openssl'
   "yq|yq|install|yq|-|install the pinned ${YQ_VERSION} linux_amd64 binary from github.com/mikefarah/yq to /usr/local/bin/yq"
   'jq|jq|entry|package|jq|apt-get install -y jq'
@@ -83,6 +91,9 @@ TP_DEPENDENCY_PLAN=(
 cleanup() {
   if [[ -n "${TP_TEMP_TOOLS_DIR}" && -d "${TP_TEMP_TOOLS_DIR}" ]]; then
     rm -rf -- "${TP_TEMP_TOOLS_DIR}"
+  fi
+  if [[ -n "${TP_SECURE_CONFIG_DIR}" && -d "${TP_SECURE_CONFIG_DIR}" ]]; then
+    rm -rf -- "${TP_SECURE_CONFIG_DIR}"
   fi
 }
 
@@ -301,6 +312,14 @@ random_password() {
   od -An -N24 -tx1 /dev/urandom | tr -d ' \n'
 }
 
+random_sysadmin_password() {
+  od -An -N20 -tu1 /dev/urandom | awk '
+    BEGIN { alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789" }
+    { for (i = 1; i <= NF; i++) printf "%s", substr(alphabet, ($i % 62) + 1, 1) }
+    END { print "" }
+  '
+}
+
 container_exists() {
   docker ps -a -q -f "name=^$1$" | grep -q .
 }
@@ -498,6 +517,39 @@ verify_release_assets_before_host_change() {
   "${verifier}" --assets-dir "${INSTALLER_DIR}" --config "${config_file}"
 }
 
+ensure_secure_file_helper() {
+  if [[ -x "${SECURE_FILE_HELPER}" && ! -L "${SECURE_FILE_HELPER}" ]]; then
+    return
+  fi
+  if [[ "${INSTALLER_ASSET_VERSION}" == development ]] && command -v go >/dev/null 2>&1; then
+    [[ -n "${TP_SECURE_CONFIG_DIR}" ]] || {
+      TP_SECURE_CONFIG_DIR="$(mktemp -d /tmp/trojanpanelnext-secure.XXXXXX)"
+      chmod 0700 "${TP_SECURE_CONFIG_DIR}"
+    }
+    SECURE_FILE_HELPER="${TP_SECURE_CONFIG_DIR}/secure-file"
+    (cd "${INSTALLER_DIR}/securefile" && CGO_ENABLED=0 go build -trimpath -o "${SECURE_FILE_HELPER}" .)
+    chmod 0700 "${SECURE_FILE_HELPER}"
+    return
+  fi
+  echo_content red "Installer secure-file helper is missing or unsafe"
+  exit 1
+}
+
+prepare_secure_config() {
+  local path="$1"
+  ensure_secure_file_helper
+  [[ -n "${TP_SECURE_CONFIG_DIR}" ]] || {
+    TP_SECURE_CONFIG_DIR="$(mktemp -d /tmp/trojanpanelnext-secure.XXXXXX)"
+    chmod 0700 "${TP_SECURE_CONFIG_DIR}"
+  }
+  TP_CONFIG_FILE="${path}"
+  TP_CONFIG_READ_FILE="${TP_SECURE_CONFIG_DIR}/config.yaml"
+  if ! TP_CONFIG_IDENTITY="$("${SECURE_FILE_HELPER}" snapshot --path "${path}" --output "${TP_CONFIG_READ_FILE}")"; then
+    echo_content red "Sensitive configuration path must not contain symbolic links or .. components"
+    exit 1
+  fi
+}
+
 load_config() {
   local action="$1"
   local file="${2:-}"
@@ -521,7 +573,6 @@ load_config() {
       export PATH="${TP_TEMP_TOOLS_DIR}:${PATH}"
     fi
   fi
-  TP_CONFIG_FILE="${file}"
   detect_config_root "${file}"
 
   cfg_apply_compat "${file}" TP_DEPLOYMENT_MODE deployment_mode purpose
@@ -571,10 +622,12 @@ load_config() {
     TP_EMAIL=""
     MARIADB_PASSWORD=""
     REDIS_PASSWORD=""
+    SYSADMIN_PASSWORD=""
     cfg_apply "${file}" TP_WEB_DOMAIN hostname
     cfg_apply "${file}" TP_EMAIL email
     cfg_apply "${file}" MARIADB_PASSWORD mariadb_password
     cfg_apply "${file}" REDIS_PASSWORD redis_password
+    cfg_apply "${file}" SYSADMIN_PASSWORD sysadmin_password
     ;;
   node)
     TP_NODE_DOMAIN=""
@@ -659,6 +712,15 @@ require_bind_address() {
   exit 1
 }
 
+require_sysadmin_password() {
+  local value="${SYSADMIN_PASSWORD:-}"
+  [[ -z "${value}" ]] && return
+  if [[ ! "${value}" =~ ^[A-Za-z0-9]{16,20}$ ]]; then
+    echo_content red "sysadmin_password must contain 16 to 20 ASCII letters or digits"
+    exit 1
+  fi
+}
+
 validate_config() {
   local mode="$1"
 
@@ -668,7 +730,7 @@ validate_config() {
   fi
   require_value TP_DEPLOYMENT_MODE
   local schema_version
-  schema_version="$(yaml_read_raw "${TP_CONFIG_FILE}" schema_version)"
+  schema_version="$(yaml_read_raw "${TP_CONFIG_READ_FILE}" schema_version)"
   if [[ "${schema_version}" != "1" ]]; then
     echo_content red "trojanpanelnext.schema_version must be 1"
     exit 1
@@ -682,6 +744,14 @@ validate_config() {
   require_one_of force "${TP_FORCE}" 0 1
   require_one_of purge_data "${TP_PURGE_DATA}" 0 1
   require_one_of tls_mode "${TLS_MODE}" acme external
+  if [[ ! "${TP_HEALTH_ATTEMPTS}" =~ ^[1-9][0-9]*$ ]]; then
+    echo_content red "TP_HEALTH_ATTEMPTS must be a positive integer"
+    exit 1
+  fi
+  if [[ ! "${TP_HEALTH_DELAY_SECONDS}" =~ ^[0-9]+$ ]]; then
+    echo_content red "TP_HEALTH_DELAY_SECONDS must be a non-negative integer"
+    exit 1
+  fi
   require_port MARIADB_PORT
   require_port REDIS_PORT
   require_bind_address BIND_ADDRESS
@@ -689,6 +759,7 @@ validate_config() {
   case "${mode}" in
   web)
     require_value TP_WEB_DOMAIN
+    require_sysadmin_password
     require_port PANEL_PORT
     require_port UI_PORT
     require_value PANEL_IMAGE
@@ -781,12 +852,18 @@ recreate_container_if_env_changed() {
 
 write_web_generated_secrets() {
   local file="${TP_CONFIG_FILE:-}"
-  if [[ -z "${file}" || ! -f "${file}" ]]; then
+  if [[ -z "${file}" ]]; then
     return
   fi
-  MARIADB_PASSWORD="${MARIADB_PASSWORD}" REDIS_PASSWORD="${REDIS_PASSWORD}" \
-    yq -i '.trojanpanelnext.mariadb_password = strenv(MARIADB_PASSWORD) | .trojanpanelnext.redis_password = strenv(REDIS_PASSWORD)' "${file}"
-  chmod 600 "${file}"
+  local snapshot="${TP_SECURE_CONFIG_DIR}/config-write.yaml"
+  install -m 0600 "${TP_CONFIG_READ_FILE}" "${snapshot}"
+  MARIADB_PASSWORD="${MARIADB_PASSWORD}" REDIS_PASSWORD="${REDIS_PASSWORD}" SYSADMIN_PASSWORD="${SYSADMIN_PASSWORD}" \
+    yq -i '.trojanpanelnext.mariadb_password = strenv(MARIADB_PASSWORD) | .trojanpanelnext.redis_password = strenv(REDIS_PASSWORD) | .trojanpanelnext.sysadmin_password = strenv(SYSADMIN_PASSWORD)' "${snapshot}"
+  "${SECURE_FILE_HELPER}" atomic-write --path "${file}" --input "${snapshot}" \
+    --expected "${TP_CONFIG_IDENTITY}" --mode 0600 || {
+    echo_content red "Sensitive configuration changed during credential persistence"
+    exit 1
+  }
 }
 
 init_web_secrets() {
@@ -798,7 +875,8 @@ init_web_secrets() {
   fi
   MARIADB_PASSWORD="${MARIADB_PASSWORD:-$(random_password)}"
   REDIS_PASSWORD="${REDIS_PASSWORD:-$(random_password)}"
-  export MARIADB_PASSWORD REDIS_PASSWORD
+  SYSADMIN_PASSWORD="${SYSADMIN_PASSWORD:-$(random_sysadmin_password)}"
+  export MARIADB_PASSWORD REDIS_PASSWORD SYSADMIN_PASSWORD
   write_web_generated_secrets
 }
 
@@ -1333,7 +1411,8 @@ persist_container_path() {
 }
 
 write_panel_runtime_config() {
-  cat >"${TP_DATA}/trojan-panel/config/config.ini" <<EOF
+  local temporary="${TP_SECURE_CONFIG_DIR}/panel-config.ini"
+  cat >"${temporary}" <<EOF
 [mysql]
 host=127.0.0.1
 user=${MARIADB_USER}
@@ -1363,7 +1442,20 @@ client_cert_path=${GRPC_CLIENT_CERT_PATH}
 client_key_path=${GRPC_CLIENT_KEY_PATH}
 server_ca_path=${GRPC_SERVER_CA_PATH}
 EOF
-  chmod 600 "${TP_DATA}/trojan-panel/config/config.ini"
+  chmod 0600 "${temporary}"
+  "${SECURE_FILE_HELPER}" atomic-write \
+    --path "${TP_DATA}/trojan-panel/config/config.ini" --input "${temporary}" \
+    --mode 0600 --create-parents
+}
+
+write_initial_sysadmin_password_file() {
+  local temporary="${TP_SECURE_CONFIG_DIR}/initial-admin-password"
+  : >"${temporary}"
+  chmod 0600 "${temporary}"
+  printf '%s\n' "${SYSADMIN_PASSWORD}" >"${temporary}"
+  "${SECURE_FILE_HELPER}" atomic-write \
+    --path "${INITIAL_SYSADMIN_PASSWORD_FILE}" --input "${temporary}" \
+    --mode 0600 --create-parents
 }
 
 write_core_runtime_config() {
@@ -1559,7 +1651,7 @@ wait_for_container() {
 
 wait_for_mariadb() {
   for _ in $(seq 1 60); do
-    if docker exec "${MARIADB_CONTAINER}" sh -c "mariadb -uroot -p\"${MARIADB_PASSWORD}\" -e 'select 1' >/dev/null 2>&1 || mysql -uroot -p\"${MARIADB_PASSWORD}\" -e 'select 1' >/dev/null 2>&1"; then
+    if mariadb_query_with_configured_credential 'select 1'; then
       return
     fi
     sleep 2
@@ -1569,8 +1661,24 @@ wait_for_mariadb() {
   exit 1
 }
 
+mariadb_query_with_configured_credential() {
+  local query="$1"
+  printf '%s\n%s\n' "${MARIADB_PASSWORD}" "${query}" |
+    docker exec -i "${MARIADB_CONTAINER}" sh -c '
+      credential_file="$(mktemp)" || exit 1
+      trap '\''rm -f -- "$credential_file"'\'' EXIT
+      chmod 0600 "$credential_file" || exit 1
+      IFS= read -r password || exit 1
+      IFS= read -r query || exit 1
+      printf "[client]\npassword=%s\n" "$password" >"$credential_file" || exit 1
+      mariadb --defaults-extra-file="$credential_file" -uroot -e "$query" >/dev/null 2>&1 ||
+        mysql --defaults-extra-file="$credential_file" -uroot -e "$query" >/dev/null 2>&1
+    '
+}
+
 create_database() {
-  docker exec "${MARIADB_CONTAINER}" sh -c "mariadb -uroot -p\"${MARIADB_PASSWORD}\" -e 'create database if not exists ${MARIADB_DATABASE} default character set utf8mb4;' >/dev/null 2>&1 || mysql -uroot -p\"${MARIADB_PASSWORD}\" -e 'create database if not exists ${MARIADB_DATABASE} default character set utf8mb4;' >/dev/null 2>&1"
+  mariadb_query_with_configured_credential \
+    "create database if not exists ${MARIADB_DATABASE} default character set utf8mb4;"
 }
 
 write_ui_nginx_config() {
@@ -1588,6 +1696,7 @@ server {
     location /api {
         proxy_pass http://127.0.0.1:${PANEL_PORT};
     }
+
 }
 EOF
 }
@@ -1669,6 +1778,7 @@ deploy_panel_backend() {
     -e "GRPC_CLIENT_CERT_PATH=${GRPC_CLIENT_CERT_PATH}" \
     -e "GRPC_CLIENT_KEY_PATH=${GRPC_CLIENT_KEY_PATH}" \
     -e "GRPC_SERVER_CA_PATH=${GRPC_SERVER_CA_PATH}" \
+    -e "TP_INITIAL_SYSADMIN_PASSWORD_FILE=${INITIAL_SYSADMIN_PASSWORD_FILE}" \
     "${PANEL_IMAGE}"
   wait_for_container "${PANEL_CONTAINER}"
 }
@@ -1693,6 +1803,79 @@ deploy_panel_ui() {
     -v "${TP_DATA}/trojan-panel-ui/nginx/default.conf:/etc/nginx/conf.d/default.conf" \
     "${UI_IMAGE}"
   wait_for_container "${UI_CONTAINER}"
+}
+
+probe_mariadb_health() {
+  mariadb_query_with_configured_credential 'select 1'
+}
+
+probe_redis_health() {
+  local response
+  response="$(printf 'AUTH %s\r\nPING\r\n' "${REDIS_PASSWORD}" |
+    docker exec -i "${REDIS_CONTAINER}" redis-cli -p "${REDIS_PORT}" --no-auth-warning 2>/dev/null)" || return
+  grep -Fxq PONG <<<"${response}"
+}
+
+probe_web_https_health() {
+  curl --proto '=https' --tlsv1.2 --fail --silent --show-error \
+    --connect-timeout 5 --max-time 15 "https://${TP_WEB_DOMAIN}/" >/dev/null
+}
+
+probe_sysadmin_credential_health() {
+  local status
+  if docker exec -e TP_VERIFY_SYSADMIN_CREDENTIAL=1 "${PANEL_CONTAINER}" ./trojan-panel; then
+    return 0
+  else
+    status=$?
+  fi
+  [[ "${status}" == 2 ]] && return 2
+  return 1
+}
+
+wait_for_web_health_probe() {
+  local label="$1"
+  local probe="$2"
+  local attempt
+  for ((attempt = 1; attempt <= TP_HEALTH_ATTEMPTS; attempt++)); do
+    local probe_status=0
+    if "${probe}" >/dev/null 2>&1; then
+      echo_content skyBlue "---> Health check passed: ${label}"
+      return
+    else
+      probe_status=$?
+    fi
+    if [[ "${probe_status}" == 2 ]]; then
+      break
+    fi
+    if ((attempt < TP_HEALTH_ATTEMPTS)); then
+      sleep "${TP_HEALTH_DELAY_SECONDS}"
+    fi
+  done
+  echo_content red "---> Health check failed: ${label}"
+  case "${label}" in
+  MariaDB) echo_content yellow "    Check container ${MARIADB_CONTAINER} and its persisted data." ;;
+  Redis) echo_content yellow "    Check container ${REDIS_CONTAINER} and its authentication state." ;;
+  "Web HTTPS") echo_content yellow "    Check DNS, certificate issuance, ports 80/443, and the active entry provider for ${TP_WEB_DOMAIN}." ;;
+  "sysadmin container credential") echo_content yellow "    Check container ${PANEL_CONTAINER}; the generated credential remains in the restricted configuration." ;;
+  esac
+  return 1
+}
+
+verify_web_health() {
+  echo_content green "---> Verify Web control plane health"
+  wait_for_web_health_probe MariaDB probe_mariadb_health
+  wait_for_web_health_probe Redis probe_redis_health
+  wait_for_web_health_probe "Web HTTPS" probe_web_https_health
+  wait_for_web_health_probe "sysadmin container credential" probe_sysadmin_credential_health
+}
+
+print_web_success() {
+  echo_content red "\n=============================================================="
+  echo_content skyBlue "Web control plane is healthy"
+  echo_content yellow "URL: https://${TP_WEB_DOMAIN}"
+  echo_content yellow "Username: sysadmin"
+  echo_content yellow "Credentials are stored in the restricted deployment configuration and are not printed."
+  echo_content red "==============================================================\n"
 }
 
 deploy_core() {
@@ -1849,6 +2032,7 @@ deploy_web() {
   deploy_mariadb
   deploy_redis
   write_panel_runtime_config
+  write_initial_sysadmin_password_file
   deploy_panel_backend
   deploy_panel_ui
 
@@ -1857,26 +2041,12 @@ deploy_web() {
     EXTERNAL_ROUTES_NOTE="- The web side has no kernel routes; \`routes.json\` exists on node agents only."
     write_external_entry_contract web
     warn_external_ports web
-    echo_content red "\n=============================================================="
-    echo_content skyBlue "Trojan Panel web side deployed with external TLS"
-    echo_content yellow "Panel entry (external): https://${TP_WEB_DOMAIN}"
-    echo_content yellow "Local panel UI: http://${UI_LISTEN:-${BIND_ADDRESS}:${UI_PORT}}"
-    echo_content yellow "The external entry must terminate TLS and proxy to the panel UI."
-    echo_content yellow "Default username: sysadmin"
-    echo_content yellow "Credentials are stored in the restricted deployment configuration and are not printed."
-    echo_content red "==============================================================\n"
     return
   fi
 
   write_web_caddyfile "${TP_WEB_DOMAIN}"
   start_caddy "${WEB_CADDY_CONTAINER}" "${TP_DATA}/custom/web-caddy" "${TP_DATA}/custom/web-caddy/data" "${WEB_PATH}"
-
-  echo_content red "\n=============================================================="
-  echo_content skyBlue "Trojan Panel web side deployed"
-  echo_content yellow "URL: https://${TP_WEB_DOMAIN}"
-  echo_content yellow "Default username: sysadmin"
-  echo_content yellow "Credentials are stored in the restricted deployment configuration and are not printed."
-  echo_content red "==============================================================\n"
+  wait_for_cert "${TP_WEB_DOMAIN}" "${TP_DATA}/custom/web-caddy/data"
 }
 
 deploy_node() {
@@ -2036,8 +2206,10 @@ main() {
     exit 1
   fi
   verify_release_assets_before_host_change "${config_file}"
+  prepare_secure_config "${config_file}"
+  verify_release_assets_before_host_change "${TP_CONFIG_READ_FILE}"
   if [[ "${command}" == validate ]]; then
-    load_config "${mode}" "${config_file}" 0
+    load_config "${mode}" "${TP_CONFIG_READ_FILE}" 0
   else
     if [[ "${command}" == install ]]; then
       require_supported_install_platform
@@ -2046,7 +2218,7 @@ main() {
     if [[ "${command}" == install ]]; then
       preflight_install_dependencies
     fi
-    load_config "${mode}" "${config_file}" 1
+    load_config "${mode}" "${TP_CONFIG_READ_FILE}" 1
   fi
   [[ -n "${force_override}" ]] && TP_FORCE="${force_override}"
   [[ -n "${purge_override}" ]] && TP_PURGE_DATA="${purge_override}"
@@ -2095,6 +2267,10 @@ main() {
 
   if [[ "${command}" == install && -n "${ENTRY_SPEC_FILE}" ]]; then
     entry_controller reconcile
+  fi
+  if [[ "${command}:${mode}" == install:web ]]; then
+    verify_web_health
+    print_web_success
   fi
 }
 
