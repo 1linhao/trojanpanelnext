@@ -30,7 +30,7 @@ bundle="${work}/bundle"
 
 runtime_bin="${work}/runtime-bin"
 mkdir "${runtime_bin}"
-for command in awk bash cmp dirname grep od sed sha256sum sort; do
+for command in awk bash dirname grep od sed sha256sum sort; do
   command_path="$(command -v "${command}")"
   ln -s "${command_path}" "${runtime_bin}/${command}"
 done

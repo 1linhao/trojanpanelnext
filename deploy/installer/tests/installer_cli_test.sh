@@ -69,7 +69,24 @@ conflicting_mode_config="$(mktemp)"
 pki_dir="$(mktemp -d)"
 node_pki_dir="$(mktemp -d)"
 node_runtime_dir="$(mktemp -d)"
-trap 'rm -f "${legacy_config}" "${missing_mode_config}" "${canonical_config}" "${legacy_key_config}" "${conflicting_mode_config}"; rm -rf -- "${pki_dir}" "${node_pki_dir}" "${node_runtime_dir}"' EXIT
+path_contract_dir="$(mktemp -d)"
+trap 'rm -f "${legacy_config}" "${missing_mode_config}" "${canonical_config}" "${legacy_key_config}" "${conflicting_mode_config}"; rm -rf -- "${pki_dir}" "${node_pki_dir}" "${node_runtime_dir}" "${path_contract_dir}"' EXIT
+
+ln -s "$(command -v bash)" "${path_contract_dir}/bash"
+PATH="${path_contract_dir}" "${INSTALLER}" --help >/dev/null ||
+  fail 'development installer no longer expands a bash-only caller PATH with system directories'
+
+path_trace="${path_contract_dir}/caller-command.trace"
+cat >"${path_contract_dir}/dirname" <<'EOF'
+#!/usr/bin/env bash
+printf 'called\n' >"${PATH_CONTRACT_TRACE}"
+exit 91
+EOF
+chmod +x "${path_contract_dir}/dirname"
+PATH="${path_contract_dir}" PATH_CONTRACT_TRACE="${path_trace}" "${INSTALLER}" --help >/dev/null ||
+  fail 'development installer allowed a caller command to shadow the system dirname'
+test ! -e "${path_trace}" || fail 'caller dirname shadowed the system command'
+
 sed 's/grpc_tls_mode: mtls/grpc_tls_mode: legacy/' \
   "$(dirname "${INSTALLER}")/examples/node-agent.yaml" >"${legacy_config}"
 sed '/deployment_mode: web/d' "$(dirname "${INSTALLER}")/examples/web.yaml" >"${missing_mode_config}"
@@ -114,7 +131,7 @@ external_refresh_dir="$(mktemp -d)"
 entry_spec="$(mktemp)"
 entry_trace="$(mktemp)"
 fake_entryctl="$(mktemp)"
-trap 'rm -f "${legacy_config}" "${missing_mode_config}" "${canonical_config}" "${legacy_key_config}" "${conflicting_mode_config}" "${entry_spec}" "${entry_trace}" "${fake_entryctl}"; rm -rf -- "${pki_dir}" "${node_pki_dir}" "${node_runtime_dir}" "${external_cases_dir}" "${external_tls_dir}" "${external_pairs_dir}" "${external_data_dir}" "${external_mismatch_dir}" "${external_wrong_domain_dir}" "${external_refresh_dir}"' EXIT
+trap 'rm -f "${legacy_config}" "${missing_mode_config}" "${canonical_config}" "${legacy_key_config}" "${conflicting_mode_config}" "${entry_spec}" "${entry_trace}" "${fake_entryctl}"; rm -rf -- "${pki_dir}" "${node_pki_dir}" "${node_runtime_dir}" "${path_contract_dir}" "${external_cases_dir}" "${external_tls_dir}" "${external_pairs_dir}" "${external_data_dir}" "${external_mismatch_dir}" "${external_wrong_domain_dir}" "${external_refresh_dir}"' EXIT
 
 # The shipped template points at a real external certificate directory, which
 # cannot exist on a test host. Validate the template against a local pair.

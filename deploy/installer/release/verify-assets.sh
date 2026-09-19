@@ -82,8 +82,14 @@ while IFS= read -r sum_line || [[ -n "${sum_line}" ]]; do
 done <"${sums}"
 expected_sum_paths=("${EXPECTED_RELEASE_ASSET_PATHS[@]}" release-manifest.json)
 [[ "${#sum_paths[@]}" -eq "${#expected_sum_paths[@]}" ]] || fail 'SHA256SUMS has an unexpected asset set'
-printf '%s\n' "${sum_paths[@]}" | sort -u | cmp -s - <(printf '%s\n' "${expected_sum_paths[@]}" | sort) ||
+mapfile -t sorted_sum_paths < <(printf '%s\n' "${sum_paths[@]}" | sort -u)
+mapfile -t sorted_expected_sum_paths < <(printf '%s\n' "${expected_sum_paths[@]}" | sort)
+[[ "${#sorted_sum_paths[@]}" -eq "${#sorted_expected_sum_paths[@]}" ]] ||
   fail 'SHA256SUMS has an unexpected asset set'
+for ((index = 0; index < ${#sorted_sum_paths[@]}; index++)); do
+  [[ "${sorted_sum_paths[index]}" == "${sorted_expected_sum_paths[index]}" ]] ||
+    fail 'SHA256SUMS has an unexpected asset set'
+done
 for path in "${expected_sum_paths[@]}"; do
   [[ -f "${assets_dir}/${path}" ]] && ! path_has_symlink_component "${assets_dir}/${path}" ||
     fail "asset is missing or unsafe: ${path}"
@@ -318,10 +324,14 @@ release_semver_is_valid() {
 release_semver_is_valid "${manifest_version}" || fail 'manifest release version is invalid'
 
 mapfile -t manifest_asset_paths < <(awk -F '\t' '$1 == "ASSET" {print $2}' <<<"${normalized_manifest}")
-cmp -s \
-  <(printf '%s\n' "${manifest_asset_paths[@]}" | sort) \
-  <(printf '%s\n' "${EXPECTED_RELEASE_ASSET_PATHS[@]}" | sort) ||
+mapfile -t sorted_manifest_asset_paths < <(printf '%s\n' "${manifest_asset_paths[@]}" | sort)
+mapfile -t sorted_expected_asset_paths < <(printf '%s\n' "${EXPECTED_RELEASE_ASSET_PATHS[@]}" | sort)
+[[ "${#sorted_manifest_asset_paths[@]}" -eq "${#sorted_expected_asset_paths[@]}" ]] ||
   fail 'manifest structure is invalid'
+for ((index = 0; index < ${#sorted_manifest_asset_paths[@]}; index++)); do
+  [[ "${sorted_manifest_asset_paths[index]}" == "${sorted_expected_asset_paths[index]}" ]] ||
+    fail 'manifest structure is invalid'
+done
 while IFS=$'\t' read -r record path expected; do
   [[ "${record}" == ASSET ]] || continue
   actual="$(sha256sum "${assets_dir}/${path}" | awk '{print $1}')"
