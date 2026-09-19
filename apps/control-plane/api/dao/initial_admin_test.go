@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -189,21 +190,30 @@ func TestPendingSysadminPasswordIsInitializedOnce(t *testing.T) {
 
 func TestVerifySysadminPasswordIsReadOnlyAcrossRepeatedFailures(t *testing.T) {
 	const password = "A1B2C3D4E5F6G7H8I9J0"
+	dir := t.TempDir()
+	path := filepath.Join(dir, "initial-admin-password")
+	if err := os.WriteFile(path, []byte("Z9Y8X7W6V5U4T3S2R1Q0\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(initialSysadminPasswordFileEnv, path)
 	state := &initialAdminDBState{
 		passHash: util.Sha1String("sysadmin" + password),
 		roleID:   1,
 	}
 	useInitialAdminTestDB(t, state)
 
-	for attempt := 0; attempt < 4; attempt++ {
-		if err := VerifySysadminPassword("Z9Y8X7W6V5U4T3S2R1Q0"); err == nil {
-			t.Fatal("wrong sysadmin credential passed the health check")
+	for attempt := 0; attempt < 6; attempt++ {
+		if err := VerifyInitialSysadminCredential(); !errors.Is(err, ErrSysadminCredentialUnhealthy) {
+			t.Fatalf("wrong sysadmin credential error = %v, want ErrSysadminCredentialUnhealthy", err)
 		}
 	}
 	if state.updates != 0 {
 		t.Fatalf("read-only health check performed %d updates", state.updates)
 	}
-	if err := VerifySysadminPassword(password); err != nil {
+	if err := os.WriteFile(path, []byte(password+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyInitialSysadminCredential(); err != nil {
 		t.Fatalf("valid sysadmin credential failed after repeated mismatches: %v", err)
 	}
 }

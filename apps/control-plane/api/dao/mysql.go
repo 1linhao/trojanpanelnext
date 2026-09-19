@@ -15,26 +15,12 @@ var db *sql.DB
 
 // InitMySQL 初始化数据库
 func InitMySQL() {
-	mySQLConfig := core.Config.MySQLConfig
-	var err error
-
-	db, err = manager.
-		New("trojan_panel_db", mySQLConfig.User, mySQLConfig.Password, mySQLConfig.Host).
-		Set(
-			manager.SetCharset("utf8mb4"),
-			manager.SetParseTime(true),
-			manager.SetAllowCleartextPasswords(true),
-			manager.SetInterpolateParams(true),
-			manager.SetTimeout(1*time.Second),
-			manager.SetReadTimeout(1*time.Second),
-			manager.SetLoc(url.QueryEscape("Asia/Shanghai"))).
-		Port(mySQLConfig.Port).Open(true)
-
-	if err != nil {
+	if err := InitMySQLReadOnly(); err != nil {
 		logrus.Errorf("database connection err: %v", err)
 		panic(err)
 	}
 
+	var err error
 	var count int
 	if err = db.QueryRow("SELECT COUNT(1) FROM information_schema.TABLES WHERE table_schema = 'trojan_panel_db' GROUP BY table_schema;").
 		Scan(&count); err != nil && err != sql.ErrNoRows {
@@ -83,6 +69,23 @@ func InitMySQL() {
 		logrus.Errorf("traffic accounting database migration err: %v", err)
 		panic(err)
 	}
+}
+
+func InitMySQLReadOnly() error {
+	mySQLConfig := core.Config.MySQLConfig
+	var err error
+	db, err = manager.
+		New("trojan_panel_db", mySQLConfig.User, mySQLConfig.Password, mySQLConfig.Host).
+		Set(
+			manager.SetCharset("utf8mb4"),
+			manager.SetParseTime(true),
+			manager.SetAllowCleartextPasswords(true),
+			manager.SetInterpolateParams(true),
+			manager.SetTimeout(1*time.Second),
+			manager.SetReadTimeout(1*time.Second),
+			manager.SetLoc(url.QueryEscape("Asia/Shanghai"))).
+		Port(mySQLConfig.Port).Open(true)
+	return err
 }
 
 func migrateTrafficAccountingSchema() error {

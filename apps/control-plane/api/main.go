@@ -1,8 +1,10 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"github.com/gin-gonic/gin"
+	"os"
 	"trojan-panel/api"
 	"trojan-panel/core"
 	"trojan-panel/dao"
@@ -12,6 +14,19 @@ import (
 )
 
 func main() {
+	core.InitConfig()
+	if core.VerifySysadminCredentialRequested() {
+		verifySysadminCredential()
+		return
+	}
+
+	middleware.InitLog()
+	dao.InitMySQL()
+	redis.InitRedis()
+	middleware.InitCron()
+	middleware.InitRateLimiter()
+	api.InitValidator()
+
 	serverConfig := core.Config.ServerConfig
 	r := gin.Default()
 	router.Router(r)
@@ -19,14 +34,17 @@ func main() {
 	defer releaseResource()
 }
 
-func init() {
-	core.InitConfig()
-	middleware.InitLog()
-	dao.InitMySQL()
-	redis.InitRedis()
-	middleware.InitCron()
-	middleware.InitRateLimiter()
-	api.InitValidator()
+func verifySysadminCredential() {
+	if err := dao.InitMySQLReadOnly(); err != nil {
+		os.Exit(1)
+	}
+	defer dao.CloseDb()
+	if err := dao.VerifyInitialSysadminCredential(); err != nil {
+		if errors.Is(err, dao.ErrSysadminCredentialUnhealthy) {
+			os.Exit(2)
+		}
+		os.Exit(1)
+	}
 }
 
 func releaseResource() {

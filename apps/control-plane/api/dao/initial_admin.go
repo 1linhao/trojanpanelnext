@@ -14,22 +14,32 @@ const initialSysadminPasswordFileEnv = "TP_INITIAL_SYSADMIN_PASSWORD_FILE"
 
 var initialSysadminPasswordPattern = regexp.MustCompile(`^[A-Za-z0-9]{16,20}$`)
 
+var ErrSysadminCredentialUnhealthy = errors.New("sysadmin credential is not healthy")
+
 func initialSysadminCredentials(path string) (string, string, error) {
-	file, err := openInitialSysadminPasswordFile(path)
+	password, err := initialSysadminPassword(path)
 	if err != nil {
 		return "", "", err
+	}
+	passHash := util.Sha1String("sysadmin" + password)
+	return passHash, util.SHA224String(passHash), nil
+}
+
+func initialSysadminPassword(path string) (string, error) {
+	file, err := openInitialSysadminPasswordFile(path)
+	if err != nil {
+		return "", err
 	}
 	defer file.Close()
 	contents, err := io.ReadAll(file)
 	if err != nil {
-		return "", "", fmt.Errorf("read initial sysadmin password: %w", err)
+		return "", fmt.Errorf("read initial sysadmin password: %w", err)
 	}
 	password := strings.TrimSuffix(string(contents), "\n")
 	if !initialSysadminPasswordPattern.MatchString(password) {
-		return "", "", errors.New("initial sysadmin password must contain 16 to 20 ASCII letters or digits")
+		return "", errors.New("initial sysadmin password must contain 16 to 20 ASCII letters or digits")
 	}
-	passHash := util.Sha1String("sysadmin" + password)
-	return passHash, util.SHA224String(passHash), nil
+	return password, nil
 }
 
 func validateInitialSysadminPasswordFile() error {
@@ -90,7 +100,19 @@ func VerifySysadminPassword(password string) error {
 		return fmt.Errorf("read sysadmin health state: %w", err)
 	}
 	if roleID != 1 || deleted != 0 || !util.Sha1Match(passHash, "sysadmin"+password) {
-		return errors.New("sysadmin credential is not healthy")
+		return ErrSysadminCredentialUnhealthy
 	}
 	return nil
+}
+
+func VerifyInitialSysadminCredential() error {
+	path := os.Getenv(initialSysadminPasswordFileEnv)
+	if path == "" {
+		return fmt.Errorf("%s is required for credential verification", initialSysadminPasswordFileEnv)
+	}
+	password, err := initialSysadminPassword(path)
+	if err != nil {
+		return err
+	}
+	return VerifySysadminPassword(password)
 }

@@ -69,9 +69,9 @@ were saved; it never prints them. The installer also creates the control-plane m
 `pki_bundle_dir`; the CA private key stays on the Web control plane.
 
 Installation returns success only after the configured identity can access MariaDB, Redis, the public
-HTTPS UI responds, and a read-only loopback API verifies the real `sysadmin` credential. The credential
-probe does not issue a session, update login time, or increment login failures, and the public UI entry
-does not expose its path. Any failed probe returns non-zero with a secret-free diagnostic.
+HTTPS UI responds, and a read-only command inside the API container verifies the real `sysadmin`
+credential. The credential probe exposes no HTTP path, starts no Redis client or limiter, and does not
+issue a session, update login time, or increment login failures. Any failed probe returns non-zero with a secret-free diagnostic.
 Replaying the same configuration reuses all three stored credentials.
 
 Before installing a Node Agent, transfer `/tpdata/trojanpanelnext-pki/client-ca.crt` from the Web control plane to the same path on the Node through a trusted file-transfer or secret-management channel. Copy only the public CA certificate; never copy `client-ca.key`, `client.key`, or `client.crt`.
@@ -146,7 +146,7 @@ Passwords are never printed. Treat populated configuration files as secrets and 
 ## Versioned release assets
 
 The release workflow uses `release/generate-assets.sh` to produce matching versions of
-`bootstrap.sh`, `install.sh`, the `web|node|combined` configuration templates,
+`bootstrap.sh`, `install.sh`, the `secure-file` helper for descriptor-safe reads and atomic sensitive writes, the `web|node|combined` configuration templates,
 `release-manifest.json`, and `SHA256SUMS`. Product and runtime images are pinned as
 `name@sha256:<digest>`. Before invoking the installer, `bootstrap.sh` runs the bundled
 `verify-assets.sh` to verify versions, asset digests, image references, and configuration. The

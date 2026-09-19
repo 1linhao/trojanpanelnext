@@ -67,9 +67,9 @@ sudo ./install.sh install --mode web --config ./web.yaml
 并将文件权限设为 `600`。终端只显示密码保存位置，不显示密码。
 安装器还会在 `pki_bundle_dir` 自动生成主控 mTLS 身份；CA 私钥只保留在 Web 主控。
 
-安装命令只有在当前配置身份访问 MariaDB、Redis、公网 HTTPS UI 和本机只读 `sysadmin` API 凭据验证全部通过后才返回
+安装命令只有在当前配置身份访问 MariaDB、Redis、公网 HTTPS UI 和容器内只读 `sysadmin` 凭据验证全部通过后才返回
 成功。任一探测失败都返回非零，并输出不含秘密的定位建议。使用同一配置重跑会复用已保存的三组凭据。
-管理员凭据探测不会签发会话、更新登录时间或累计登录失败次数，公网 UI 入口也不会暴露该探测路径。
+管理员凭据探测不暴露 HTTP 路径，也不会启动 Redis/限流、签发会话、更新登录时间或累计登录失败次数。
 
 Node Agent 安装前，通过可信的文件传输或密钥管理系统，将 Web 主控中的
 `/tpdata/trojanpanelnext-pki/client-ca.crt` 复制到 Node 的同一路径。只复制公开 CA
@@ -158,7 +158,7 @@ sudo ./install.sh remove --mode node --config ./node-agent.yaml --purge-data
 ## 版本化发布资产
 
 正式发布工作流使用 `release/generate-assets.sh` 生成同一版本的 `bootstrap.sh`、
-`install.sh`、`web|node|combined` 配置模板、`release-manifest.json` 和
+`install.sh`、用于安全打开/原子写入敏感配置的 `secure-file`、`web|node|combined` 配置模板、`release-manifest.json` 和
 `SHA256SUMS`。产品镜像和运行时镜像都以 `name@sha256:<digest>` 固定；
 `bootstrap.sh` 会先调用同包内的 `verify-assets.sh` 校验版本、资产摘要、镜像引用和配置；
 发布包内的 `install.sh` 在被直接调用时也会执行同一预检。验证器只依赖 Debian 12

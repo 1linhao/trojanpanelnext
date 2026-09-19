@@ -32,6 +32,12 @@ var (
 	version        bool
 )
 
+const verifySysadminCredentialEnv = "TP_VERIFY_SYSADMIN_CREDENTIAL"
+
+func VerifySysadminCredentialRequested() bool {
+	return os.Getenv(verifySysadminCredentialEnv) == "1"
+}
+
 func init() {
 	flag.StringVar(&host, "host", "localhost", "database address")
 	flag.StringVar(&user, "user", "root", "database username")
@@ -59,6 +65,9 @@ func init() {
 		os.Exit(0)
 	}
 	if isTest {
+		return
+	}
+	if VerifySysadminCredentialRequested() {
 		return
 	}
 

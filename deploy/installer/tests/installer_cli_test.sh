@@ -334,6 +334,7 @@ test "$(stat -c '%a' "${external_data_dir}/certd/trojan-panel-core/cert/privkey.
 bash -c '
   set -Eeuo pipefail
   source "$1"
+  prepare_secure_config() { TP_CONFIG_READ_FILE="$1"; }
   require_root() { :; }
   load_config() { TLS_MODE=external; }
   validate_config() { :; }
@@ -347,6 +348,7 @@ bash -c '
 bash -c '
   set -Eeuo pipefail
   source "$1"
+  prepare_secure_config() { TP_CONFIG_READ_FILE="$1"; }
   require_root() { :; }
   load_config() { TLS_MODE=external; TP_PURGE_DATA=1; }
   validate_config() { :; }

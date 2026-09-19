@@ -11,6 +11,7 @@ WEB_PATH="${WEB_PATH:-${TP_DATA}/web}"
 INITIAL_SYSADMIN_PASSWORD_FILE="${INITIAL_SYSADMIN_PASSWORD_FILE:-${TP_DATA}/trojan-panel/config/initial-admin-password}"
 TP_PKI_BUNDLE_DIR="${TP_PKI_BUNDLE_DIR:-${TP_DATA}/trojanpanelnext-pki}"
 INSTALLER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SECURE_FILE_HELPER="${SECURE_FILE_HELPER:-${INSTALLER_DIR}/secure-file}"
 ENTRYCTL_PATH="${ENTRYCTL_PATH:-${INSTALLER_DIR}/entry/entryctl.sh}"
 ENTRY_SPEC_FILE="${ENTRY_SPEC_FILE:-}"
 EXTERNAL_MANAGED_DIR="${EXTERNAL_MANAGED_DIR:-${TP_DATA}/trojanpanelnext-external}"
@@ -69,9 +70,13 @@ TP_HEALTH_DELAY_SECONDS="${TP_HEALTH_DELAY_SECONDS:-2}"
 TP_OS_RELEASE_FILE="${TP_OS_RELEASE_FILE:-/etc/os-release}"
 TP_DEPLOYMENT_MODE=""
 TP_CONFIG_ROOT="${TP_CONFIG_ROOT:-}"
+TP_CONFIG_FILE=""
+TP_CONFIG_READ_FILE=""
+TP_CONFIG_IDENTITY=""
 INSTALLER_ASSET_VERSION="development"
 TP_ASSET_VERSION=""
 TP_TEMP_TOOLS_DIR=""
+TP_SECURE_CONFIG_DIR=""
 TP_DEPENDENCY_PLAN=(
   'docker|docker|install|docker|-|download and run the Docker installer from https://get.docker.com'
   'age|age|install|package|age|apt-get install -y age'
@@ -86,6 +91,9 @@ TP_DEPENDENCY_PLAN=(
 cleanup() {
   if [[ -n "${TP_TEMP_TOOLS_DIR}" && -d "${TP_TEMP_TOOLS_DIR}" ]]; then
     rm -rf -- "${TP_TEMP_TOOLS_DIR}"
+  fi
+  if [[ -n "${TP_SECURE_CONFIG_DIR}" && -d "${TP_SECURE_CONFIG_DIR}" ]]; then
+    rm -rf -- "${TP_SECURE_CONFIG_DIR}"
   fi
 }
 
@@ -509,20 +517,37 @@ verify_release_assets_before_host_change() {
   "${verifier}" --assets-dir "${INSTALLER_DIR}" --config "${config_file}"
 }
 
-require_path_without_symlinks() {
+ensure_secure_file_helper() {
+  if [[ -x "${SECURE_FILE_HELPER}" && ! -L "${SECURE_FILE_HELPER}" ]]; then
+    return
+  fi
+  if [[ "${INSTALLER_ASSET_VERSION}" == development ]] && command -v go >/dev/null 2>&1; then
+    [[ -n "${TP_SECURE_CONFIG_DIR}" ]] || {
+      TP_SECURE_CONFIG_DIR="$(mktemp -d /tmp/trojanpanelnext-secure.XXXXXX)"
+      chmod 0700 "${TP_SECURE_CONFIG_DIR}"
+    }
+    SECURE_FILE_HELPER="${TP_SECURE_CONFIG_DIR}/secure-file"
+    (cd "${INSTALLER_DIR}/securefile" && CGO_ENABLED=0 go build -trimpath -o "${SECURE_FILE_HELPER}" .)
+    chmod 0700 "${SECURE_FILE_HELPER}"
+    return
+  fi
+  echo_content red "Installer secure-file helper is missing or unsafe"
+  exit 1
+}
+
+prepare_secure_config() {
   local path="$1"
-  local absolute component current=""
-  local -a components=()
-  absolute="$(realpath -ms -- "${path}")"
-  IFS=/ read -r -a components <<<"${absolute#/}"
-  for component in "${components[@]}"; do
-    [[ -n "${component}" ]] || continue
-    current="${current}/${component}"
-    if [[ -L "${current}" ]]; then
-      echo_content red "Sensitive path must not contain symbolic links: ${path}"
-      exit 1
-    fi
-  done
+  ensure_secure_file_helper
+  [[ -n "${TP_SECURE_CONFIG_DIR}" ]] || {
+    TP_SECURE_CONFIG_DIR="$(mktemp -d /tmp/trojanpanelnext-secure.XXXXXX)"
+    chmod 0700 "${TP_SECURE_CONFIG_DIR}"
+  }
+  TP_CONFIG_FILE="${path}"
+  TP_CONFIG_READ_FILE="${TP_SECURE_CONFIG_DIR}/config.yaml"
+  if ! TP_CONFIG_IDENTITY="$("${SECURE_FILE_HELPER}" snapshot --path "${path}" --output "${TP_CONFIG_READ_FILE}")"; then
+    echo_content red "Sensitive configuration path must not contain symbolic links or .. components"
+    exit 1
+  fi
 }
 
 load_config() {
@@ -534,7 +559,6 @@ load_config() {
     usage
     exit 1
   fi
-  require_path_without_symlinks "${file}"
   if [[ ! -f "${file}" ]]; then
     echo_content red "Config file not found: ${file}"
     exit 1
@@ -549,7 +573,6 @@ load_config() {
       export PATH="${TP_TEMP_TOOLS_DIR}:${PATH}"
     fi
   fi
-  TP_CONFIG_FILE="${file}"
   detect_config_root "${file}"
 
   cfg_apply_compat "${file}" TP_DEPLOYMENT_MODE deployment_mode purpose
@@ -707,7 +730,7 @@ validate_config() {
   fi
   require_value TP_DEPLOYMENT_MODE
   local schema_version
-  schema_version="$(yaml_read_raw "${TP_CONFIG_FILE}" schema_version)"
+  schema_version="$(yaml_read_raw "${TP_CONFIG_READ_FILE}" schema_version)"
   if [[ "${schema_version}" != "1" ]]; then
     echo_content red "trojanpanelnext.schema_version must be 1"
     exit 1
@@ -829,13 +852,18 @@ recreate_container_if_env_changed() {
 
 write_web_generated_secrets() {
   local file="${TP_CONFIG_FILE:-}"
-  if [[ -z "${file}" || ! -f "${file}" ]]; then
+  if [[ -z "${file}" ]]; then
     return
   fi
-  require_path_without_symlinks "${file}"
+  local snapshot="${TP_SECURE_CONFIG_DIR}/config-write.yaml"
+  install -m 0600 "${TP_CONFIG_READ_FILE}" "${snapshot}"
   MARIADB_PASSWORD="${MARIADB_PASSWORD}" REDIS_PASSWORD="${REDIS_PASSWORD}" SYSADMIN_PASSWORD="${SYSADMIN_PASSWORD}" \
-    yq -i '.trojanpanelnext.mariadb_password = strenv(MARIADB_PASSWORD) | .trojanpanelnext.redis_password = strenv(REDIS_PASSWORD) | .trojanpanelnext.sysadmin_password = strenv(SYSADMIN_PASSWORD)' "${file}"
-  chmod 600 "${file}"
+    yq -i '.trojanpanelnext.mariadb_password = strenv(MARIADB_PASSWORD) | .trojanpanelnext.redis_password = strenv(REDIS_PASSWORD) | .trojanpanelnext.sysadmin_password = strenv(SYSADMIN_PASSWORD)' "${snapshot}"
+  "${SECURE_FILE_HELPER}" atomic-write --path "${file}" --input "${snapshot}" \
+    --expected "${TP_CONFIG_IDENTITY}" --mode 0600 || {
+    echo_content red "Sensitive configuration changed during credential persistence"
+    exit 1
+  }
 }
 
 init_web_secrets() {
@@ -1383,7 +1411,8 @@ persist_container_path() {
 }
 
 write_panel_runtime_config() {
-  cat >"${TP_DATA}/trojan-panel/config/config.ini" <<EOF
+  local temporary="${TP_SECURE_CONFIG_DIR}/panel-config.ini"
+  cat >"${temporary}" <<EOF
 [mysql]
 host=127.0.0.1
 user=${MARIADB_USER}
@@ -1413,21 +1442,20 @@ client_cert_path=${GRPC_CLIENT_CERT_PATH}
 client_key_path=${GRPC_CLIENT_KEY_PATH}
 server_ca_path=${GRPC_SERVER_CA_PATH}
 EOF
-  chmod 600 "${TP_DATA}/trojan-panel/config/config.ini"
+  chmod 0600 "${temporary}"
+  "${SECURE_FILE_HELPER}" atomic-write \
+    --path "${TP_DATA}/trojan-panel/config/config.ini" --input "${temporary}" \
+    --mode 0600 --create-parents
 }
 
 write_initial_sysadmin_password_file() {
-  local directory
-  local temporary
-  require_path_without_symlinks "${INITIAL_SYSADMIN_PASSWORD_FILE}"
-  directory="$(dirname "${INITIAL_SYSADMIN_PASSWORD_FILE}")"
-  mkdir -p "${directory}"
-  require_path_without_symlinks "${INITIAL_SYSADMIN_PASSWORD_FILE}"
-  temporary="$(mktemp "${directory}/.initial-admin-password.XXXXXX")"
+  local temporary="${TP_SECURE_CONFIG_DIR}/initial-admin-password"
+  : >"${temporary}"
   chmod 0600 "${temporary}"
   printf '%s\n' "${SYSADMIN_PASSWORD}" >"${temporary}"
-  mv -f "${temporary}" "${INITIAL_SYSADMIN_PASSWORD_FILE}"
-  chmod 0600 "${INITIAL_SYSADMIN_PASSWORD_FILE}"
+  "${SECURE_FILE_HELPER}" atomic-write \
+    --path "${INITIAL_SYSADMIN_PASSWORD_FILE}" --input "${temporary}" \
+    --mode 0600 --create-parents
 }
 
 write_core_runtime_config() {
@@ -1669,9 +1697,6 @@ server {
         proxy_pass http://127.0.0.1:${PANEL_PORT};
     }
 
-    location = /api/auth/installer-health {
-        return 404;
-    }
 }
 EOF
 }
@@ -1797,13 +1822,14 @@ probe_web_https_health() {
 }
 
 probe_sysadmin_credential_health() {
-  local response
-  response="$(printf '{"username":"sysadmin","pass":"%s"}' "${SYSADMIN_PASSWORD}" |
-    curl --fail --silent --show-error \
-      --connect-timeout 5 --max-time 15 \
-      -H 'Content-Type: application/json' --data-binary @- \
-      "http://127.0.0.1:${PANEL_PORT}/api/auth/installer-health")" || return
-  grep -Eq '"code"[[:space:]]*:[[:space:]]*20000' <<<"${response}" || return 2
+  local status
+  if docker exec -e TP_VERIFY_SYSADMIN_CREDENTIAL=1 "${PANEL_CONTAINER}" ./trojan-panel; then
+    return 0
+  else
+    status=$?
+  fi
+  [[ "${status}" == 2 ]] && return 2
+  return 1
 }
 
 wait_for_web_health_probe() {
@@ -2179,9 +2205,10 @@ main() {
     echo_content red "--entry-spec is not valid with refresh-cert"
     exit 1
   fi
-  verify_release_assets_before_host_change "${config_file}"
+  prepare_secure_config "${config_file}"
+  verify_release_assets_before_host_change "${TP_CONFIG_READ_FILE}"
   if [[ "${command}" == validate ]]; then
-    load_config "${mode}" "${config_file}" 0
+    load_config "${mode}" "${TP_CONFIG_READ_FILE}" 0
   else
     if [[ "${command}" == install ]]; then
       require_supported_install_platform
@@ -2190,7 +2217,7 @@ main() {
     if [[ "${command}" == install ]]; then
       preflight_install_dependencies
     fi
-    load_config "${mode}" "${config_file}" 1
+    load_config "${mode}" "${TP_CONFIG_READ_FILE}" 1
   fi
   [[ -n "${force_override}" ]] && TP_FORCE="${force_override}"
   [[ -n "${purge_override}" ]] && TP_PURGE_DATA="${purge_override}"

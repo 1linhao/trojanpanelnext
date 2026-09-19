@@ -11,17 +11,22 @@
     {
       "name": "release-contract",
       "path": "release-contract.sh",
-      "sha256": "41be29121c63b2228b518d072e71b3341c29785f1389177963e3521eeeb517e6"
+      "sha256": "94b4074f99a55d5d97c1a8c947a12d3fe7c8b22b7dfad1a498617ca6a1e805c8"
     },
     {
       "name": "verify-assets",
       "path": "verify-assets.sh",
-      "sha256": "74947c299e88902d7877458becb70efedfcf0176d462e3b6c520e0fc2ad479df"
+      "sha256": "3b608e17af94d1ad75e5e564319086cb805c78a580be786772b517be51211288"
     },
     {
       "name": "install",
       "path": "install.sh",
-      "sha256": "5b204bda5bfb585b204da87b3872608495b1016d5b630b1e79fa45cd099b2cb8"
+      "sha256": "85a2af237d8d42d943a0d5db501add6d9607e6b502401b41f91bf1ee3a7877b2"
+    },
+    {
+      "name": "secure-file",
+      "path": "secure-file",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
     },
     {
       "name": "config-web",

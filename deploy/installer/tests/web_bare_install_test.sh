@@ -133,7 +133,10 @@ docker() {
   exec)
     local stdin_payload
     stdin_payload="$(cat || true)"
-    if [[ " $* " == *' redis-cli '* ]]; then
+    if [[ "$*" == *TP_VERIFY_SYSADMIN_CREDENTIAL=1* ]]; then
+      [[ "${TP_TEST_FAIL_PROBE:-}" == sysadmin ]] && return 2
+      return 0
+    elif [[ " $* " == *' redis-cli '* ]]; then
       [[ "${TP_TEST_FAIL_PROBE:-}" == Redis ]] && return 1
       printf 'OK\nPONG\n'
     else
@@ -205,6 +208,17 @@ fi
 grep -Fq 'must not contain symbolic links' "${work}/parent-symlink.out" ||
   fail 'symlink parent rejection omitted its diagnostic'
 
+ambiguous_root="${work}/ambiguous"
+mkdir -p "${ambiguous_root}/target/child"
+cp "${config}" "${ambiguous_root}/target/web.yaml"
+ln -s "${ambiguous_root}/target/child" "${ambiguous_root}/linked"
+if "${INSTALLER}" validate --mode web \
+  --config "${ambiguous_root}/linked/../web.yaml" >"${work}/ambiguous.out" 2>&1; then
+  fail 'validation accepted a configuration path containing symlink/.. ambiguity'
+fi
+grep -Fq 'must not contain symbolic links or .. components' "${work}/ambiguous.out" ||
+  fail 'symlink/.. configuration rejection omitted its diagnostic'
+
 output="${work}/install.out"
 if ! TP_DATA="${data}" \
   TP_OS_RELEASE_FILE="${os_release}" \
@@ -223,8 +237,9 @@ test "$(stat -c '%a' "${config}")" = 600 ||
   fail 'generated deployment configuration is not mode 0600'
 test "$(stat -c '%a' "${data}/trojan-panel/config/initial-admin-password")" = 600 ||
   fail 'API initial sysadmin password file is not mode 0600'
-grep -Fq 'location = /api/auth/installer-health' "${data}/trojan-panel-ui/nginx/default.conf" ||
-  fail 'public UI proxy did not block the loopback-only installer health endpoint'
+if grep -Fq '/api/auth/installer-health' "${data}/trojan-panel-ui/nginx/default.conf"; then
+  fail 'public UI configuration still knows about an administrator credential oracle'
+fi
 
 for secret_key in mariadb_password redis_password sysadmin_password; do
   secret="$(awk -F'"' -v key="${secret_key}" '$1 == "  " key ": " {print $2}' "${config}")"
@@ -304,7 +319,7 @@ assert_health_failure() {
   local expected_label="$2"
   local failure_output="${work}/failure-${injected_failure}.out"
   local login_calls_before
-  login_calls_before="$(grep -Fc '/api/auth/installer-health' "${curl_trace}" 2>/dev/null || true)"
+  login_calls_before="$(grep -Fc 'TP_VERIFY_SYSADMIN_CREDENTIAL=1' "${trace}" 2>/dev/null || true)"
   if TP_TEST_FAIL_PROBE="${injected_failure}" \
     TP_DATA="${data}" \
     TP_OS_RELEASE_FILE="${os_release}" \
@@ -319,10 +334,12 @@ assert_health_failure() {
     fail "${expected_label} failure printed the success marker"
   fi
   if [[ "${injected_failure}" == sysadmin ]]; then
-    test "$(grep -Fc '/api/auth/installer-health' "${curl_trace}")" = "$((login_calls_before + 1))" ||
-      fail 'sysadmin credential health did not use the non-mutating installer endpoint exactly once'
+    test "$(grep -Fc 'TP_VERIFY_SYSADMIN_CREDENTIAL=1' "${trace}")" = "$((login_calls_before + 1))" ||
+      fail 'sysadmin credential health did not use the container-internal verifier exactly once'
     test "$(grep -Fc '/api/auth/login' "${curl_trace}" 2>/dev/null || true)" = 0 ||
       fail 'installer used the stateful login endpoint and may lock the account'
+    test "$(grep -Fc '/api/auth/installer-health' "${curl_trace}" 2>/dev/null || true)" = 0 ||
+      fail 'installer used the loopback HTTP credential oracle'
   fi
   local secret_key secret
   for secret_key in mariadb_password redis_password sysadmin_password; do

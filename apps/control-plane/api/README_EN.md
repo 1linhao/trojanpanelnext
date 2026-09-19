@@ -19,8 +19,9 @@ The `sysadmin` seed account in a fresh database cannot authenticate by default. 
 installer points `TP_INITIAL_SYSADMIN_PASSWORD_FILE` at a regular, symlink-free path whose file
 permissions are exactly `0600`; the API reads it and initializes the password before it starts listening.
 Restarts and installer replays never overwrite an existing non-empty administrator credential.
-The installer verifies that credential through a read-only loopback API that neither issues a session
-nor changes login-limit state; the public UI entry blocks this path.
+The installer verifies that credential through a read-only command executed inside the API container.
+The command starts no HTTP server, Redis client, limiter, or scheduled task and neither issues a session
+nor changes login state.
 
 ## Support
 
