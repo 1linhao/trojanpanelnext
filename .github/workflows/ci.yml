@@ -116,6 +116,7 @@ jobs:
         run: |
           bash deploy/installer/tests/installer_cli_test.sh
           bash deploy/installer/tests/entry_controller_test.sh
+          bash deploy/installer/tests/dependency_preflight_test.sh
           bash deploy/installer/tests/release_assets_test.sh
           bash deploy/installer/tests/jq_free_release_verification_test.sh
 
