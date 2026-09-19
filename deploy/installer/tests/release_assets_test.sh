@@ -320,8 +320,42 @@ resign_manifest() {
   )
 }
 
+inject_asset_name_bytes() {
+  local target="$1"
+  local hex_bytes="$2"
+  python3 - "${target}/release-manifest.json" "${hex_bytes}" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+payload = bytes.fromhex(sys.argv[2])
+content = path.read_bytes()
+needle = b'"name": "bootstrap"'
+replacement = b'"name": "bootstrap' + payload + b'"'
+if content.count(needle) != 1:
+    raise SystemExit("expected exactly one bootstrap asset name")
+path.write_bytes(content.replace(needle, replacement, 1))
+PY
+}
+
 case_dir="$(copy_case missing-asset)"
 rm "${case_dir}/install.sh"
+assert_fails "${VERIFY}" --assets-dir "${case_dir}" --config "${case_dir}/config-web.yaml"
+
+assets_dir_link="${work}/assets-dir-link"
+ln -s "${bundle}" "${assets_dir_link}"
+assert_fails "${VERIFY}" --assets-dir "${assets_dir_link}" --config "${bundle}/config-web.yaml"
+
+case_dir="$(copy_case symlinked-entry-directory)"
+external_entry="${work}/external-entry"
+mv "${case_dir}/entry" "${external_entry}"
+ln -s "${external_entry}" "${case_dir}/entry"
+assert_fails "${VERIFY}" --assets-dir "${case_dir}" --config "${case_dir}/config-web.yaml"
+
+case_dir="$(copy_case symlinked-adapters-directory)"
+external_adapters="${work}/external-adapters"
+mv "${case_dir}/entry/adapters" "${external_adapters}"
+ln -s "${external_adapters}" "${case_dir}/entry/adapters"
 assert_fails "${VERIFY}" --assets-dir "${case_dir}" --config "${case_dir}/config-web.yaml"
 
 case_dir="$(copy_case bad-sums)"
@@ -372,6 +406,20 @@ case_dir="$(copy_case unknown-manifest-field)"
 sed -i '/"schema_version":/a\  "unexpected": "field",' "${case_dir}/release-manifest.json"
 resign_manifest "${case_dir}"
 assert_fails "${VERIFY}" --assets-dir "${case_dir}" --config "${case_dir}/config-web.yaml"
+
+case_dir="$(copy_case raw-utf8-manifest)"
+inject_asset_name_bytes "${case_dir}" c3a9
+resign_manifest "${case_dir}"
+assert_fails "${VERIFY}" --assets-dir "${case_dir}" --config "${case_dir}/config-web.yaml"
+
+for byte_case in form-feed:0c nul:00 control-01:01; do
+  case_name="${byte_case%%:*}"
+  hex_bytes="${byte_case##*:}"
+  case_dir="$(copy_case "${case_name}-manifest")"
+  inject_asset_name_bytes "${case_dir}" "${hex_bytes}"
+  resign_manifest "${case_dir}"
+  assert_fails "${VERIFY}" --assets-dir "${case_dir}" --config "${case_dir}/config-web.yaml"
+done
 
 workflow="${REPO_ROOT}/.github/workflows/publish-images.yml"
 grep -Fq 'uses: actions/attest@' "${workflow}"

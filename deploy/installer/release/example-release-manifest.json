@@ -16,7 +16,7 @@
     {
       "name": "verify-assets",
       "path": "verify-assets.sh",
-      "sha256": "6791cc2f681e7f86e74e3f9ecf713217fd8293ec4c32aed76cc36a9268748303"
+      "sha256": "bfd6a54d85c281f53ec2ebdb0ca98ce1f5a2d1b949783214b616aff641d2493f"
     },
     {
       "name": "install",

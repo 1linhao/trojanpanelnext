@@ -30,35 +30,12 @@ bundle="${work}/bundle"
 
 runtime_bin="${work}/runtime-bin"
 mkdir "${runtime_bin}"
-for command in awk bash cmp dirname grep sed sha256sum sort; do
+for command in awk bash cmp dirname grep od sed sha256sum sort; do
   command_path="$(command -v "${command}")"
   ln -s "${command_path}" "${runtime_bin}/${command}"
 done
 
-cat >"${runtime_bin}/yq" <<'YQ'
-#!/usr/bin/env bash
-set -Eeuo pipefail
-operation="$1"
-expression="$2"
-file="$3"
-if [[ "${operation}" == -e ]]; then
-  grep -q '^trojanpanelnext:' "${file}"
-  exit
-fi
-[[ "${operation}" == -r ]] || exit 2
-key="${expression#.trojanpanelnext.}"
-key="${key%% *}"
-awk -F: -v key="${key}" '
-  $1 == "  " key {
-    sub(/^[^:]*:[[:space:]]*/, "")
-    sub(/[[:space:]]+#.*$/, "")
-    gsub(/^"|"$/, "")
-    print
-    exit
-  }
-' "${file}"
-YQ
-chmod +x "${runtime_bin}/yq"
+ln -s "${INSTALLER_DIR}/tests/fixtures/fake_yq_reader.sh" "${runtime_bin}/yq"
 
 host_trace="${work}/host-side-effects"
 cat >"${runtime_bin}/host-mutation-sentinel" <<'SENTINEL'
@@ -92,21 +69,35 @@ for entrypoint in bootstrap.sh install.sh; do
     "${entrypoint}"
 done
 
+rejection_output=""
+release_contract_rejection_observed() {
+  local case_bundle="$1"
+  local case_config="$2"
+  local entrypoint="$3"
+  local expected_error="$4"
+
+  rejection_output=""
+  rm -f "${host_trace}"
+  if rejection_output="$(/usr/bin/env -i PATH="${runtime_bin}" TP_HOST_TRACE="${host_trace}" \
+    "${case_bundle}/${entrypoint}" install --mode web --config "${case_config}" 2>&1)"; then
+    return 1
+  fi
+  grep -Fq "${expected_error}" <<<"${rejection_output}" || return 1
+  test ! -e "${host_trace}" || return 1
+}
+
 assert_rejected_before_host_change() {
   local case_name="$1"
   local case_bundle="$2"
   local case_config="$3"
-  local entrypoint output
+  local expected_error="$4"
+  local entrypoint
   for entrypoint in bootstrap.sh install.sh; do
-    rm -f "${host_trace}"
-    if output="$(/usr/bin/env -i PATH="${runtime_bin}" TP_HOST_TRACE="${host_trace}" \
-      "${case_bundle}/${entrypoint}" install --mode web --config "${case_config}" 2>&1)"; then
-      fail "${case_name} unexpectedly passed through ${entrypoint}"
+    if ! release_contract_rejection_observed \
+      "${case_bundle}" "${case_config}" "${entrypoint}" "${expected_error}"; then
+      printf '%s\n' "${rejection_output}" >&2
+      fail "${case_name} did not produce the expected release-contract rejection through ${entrypoint}: ${expected_error}"
     fi
-    grep -Fq 'jq is required' <<<"${output}" &&
-      fail "${case_name} was rejected because of jq instead of the release contract"
-    test ! -e "${host_trace}" ||
-      fail "${case_name} crossed the host mutation boundary through ${entrypoint}"
     printf 'TRACE attack=%s entrypoint=%s rejected=preflight host-changes=0\n' \
       "${case_name}" "${entrypoint}"
   done
@@ -121,28 +112,44 @@ copy_case() {
 
 case_bundle="$(copy_case tampered-asset)"
 printf '\n# tampered\n' >>"${case_bundle}/config-web.yaml"
-assert_rejected_before_host_change tampered-asset "${case_bundle}" "${case_bundle}/config-web.yaml"
+assert_rejected_before_host_change tampered-asset "${case_bundle}" \
+  "${case_bundle}/config-web.yaml" 'SHA256SUMS verification failed'
 
 case_bundle="$(copy_case tampered-manifest)"
 sed -i 's/"release_version": "1.2.3"/"release_version": "9.9.9"/' \
   "${case_bundle}/release-manifest.json"
-assert_rejected_before_host_change tampered-manifest "${case_bundle}" "${case_bundle}/config-web.yaml"
+assert_rejected_before_host_change tampered-manifest "${case_bundle}" \
+  "${case_bundle}/config-web.yaml" 'SHA256SUMS verification failed'
 
 wrong_version_config="${work}/wrong-version.yaml"
 cp "${bundle}/config-web.yaml" "${wrong_version_config}"
 sed -i 's/asset_version: 1.2.3/asset_version: 1.2.4/' "${wrong_version_config}"
-assert_rejected_before_host_change wrong-version "${bundle}" "${wrong_version_config}"
+assert_rejected_before_host_change wrong-version "${bundle}" "${wrong_version_config}" \
+  'configuration asset_version does not match release'
 
 tag_only_config="${work}/tag-only.yaml"
 cp "${bundle}/config-web.yaml" "${tag_only_config}"
 sed -i 's#^  api_image:.*#  api_image: ghcr.io/1linhao/trojanpanelnext-api:latest#' \
   "${tag_only_config}"
-assert_rejected_before_host_change tag-only-image "${bundle}" "${tag_only_config}"
+assert_rejected_before_host_change tag-only-image "${bundle}" "${tag_only_config}" \
+  'configuration image does not match manifest: api_image'
 
 replacement_digest_config="${work}/replacement-digest.yaml"
 cp "${bundle}/config-web.yaml" "${replacement_digest_config}"
 sed -i 's#^  api_image:.*#  api_image: ghcr.io/1linhao/trojanpanelnext-api@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff#' \
   "${replacement_digest_config}"
-assert_rejected_before_host_change replacement-digest "${bundle}" "${replacement_digest_config}"
+assert_rejected_before_host_change replacement-digest "${bundle}" "${replacement_digest_config}" \
+  'configuration image does not match manifest: api_image'
+
+noop_bundle="$(copy_case noop-verifier-negative-control)"
+printf '#!/usr/bin/env bash\nexit 0\n' >"${noop_bundle}/verify-assets.sh"
+chmod +x "${noop_bundle}/verify-assets.sh"
+for entrypoint in bootstrap.sh install.sh; do
+  if release_contract_rejection_observed "${noop_bundle}" "${wrong_version_config}" \
+    "${entrypoint}" 'configuration asset_version does not match release'; then
+    fail "no-op verifier was mistaken for a release-contract rejection through ${entrypoint}"
+  fi
+  printf 'TRACE negative-control entrypoint=%s verifier=noop preflight-proof=rejected\n' "${entrypoint}"
+done
 
 printf 'PASS jq-free release verification contract\n'

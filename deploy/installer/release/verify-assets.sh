@@ -15,9 +15,37 @@ while (($#)); do
   *) fail "unknown argument: $1" ;;
   esac
 done
+
+path_has_symlink_component() {
+  local path="$1"
+  local current="/"
+  local component
+  local -a components=()
+
+  [[ "${path}" == /* ]] || path="${PWD}/${path}"
+  IFS=/ read -r -a components <<<"${path}"
+  for component in "${components[@]}"; do
+    case "${component}" in
+    '' | .) continue ;;
+    ..)
+      current="${current%/*}"
+      [[ -n "${current}" ]] || current="/"
+      ;;
+    *)
+      current="${current%/}/${component}"
+      [[ ! -L "${current}" ]] || return 0
+      ;;
+    esac
+  done
+  return 1
+}
+
 [[ -n "${assets_dir}" && -d "${assets_dir}" ]] || fail 'asset directory not found'
+path_has_symlink_component "${assets_dir}" && fail 'asset directory contains a symlink component'
 [[ -n "${config}" && -f "${config}" ]] || fail 'configuration file not found'
 command -v awk >/dev/null 2>&1 || fail 'awk is required'
+command -v grep >/dev/null 2>&1 || fail 'grep is required'
+command -v od >/dev/null 2>&1 || fail 'od is required'
 command -v sha256sum >/dev/null 2>&1 || fail 'sha256sum is required'
 
 # This list is intentionally local to the verifier. It is the dependency-free
@@ -40,8 +68,8 @@ EXPECTED_RELEASE_ASSET_PATHS=(
 
 manifest="${assets_dir}/release-manifest.json"
 sums="${assets_dir}/SHA256SUMS"
-[[ -f "${manifest}" && ! -L "${manifest}" ]] || fail 'release-manifest.json is missing or unsafe'
-[[ -f "${sums}" && ! -L "${sums}" ]] || fail 'SHA256SUMS is missing or unsafe'
+[[ -f "${manifest}" ]] && ! path_has_symlink_component "${manifest}" || fail 'release-manifest.json is missing or unsafe'
+[[ -f "${sums}" ]] && ! path_has_symlink_component "${sums}" || fail 'SHA256SUMS is missing or unsafe'
 
 sum_paths=()
 while IFS= read -r sum_line || [[ -n "${sum_line}" ]]; do
@@ -57,12 +85,27 @@ expected_sum_paths=("${EXPECTED_RELEASE_ASSET_PATHS[@]}" release-manifest.json)
 printf '%s\n' "${sum_paths[@]}" | sort -u | cmp -s - <(printf '%s\n' "${expected_sum_paths[@]}" | sort) ||
   fail 'SHA256SUMS has an unexpected asset set'
 for path in "${expected_sum_paths[@]}"; do
-  [[ -f "${assets_dir}/${path}" && ! -L "${assets_dir}/${path}" ]] || fail "asset is missing or unsafe: ${path}"
+  [[ -f "${assets_dir}/${path}" ]] && ! path_has_symlink_component "${assets_dir}/${path}" ||
+    fail "asset is missing or unsafe: ${path}"
 done
 (
   cd "${assets_dir}"
   sha256sum -c SHA256SUMS >/dev/null
 ) || fail 'SHA256SUMS verification failed'
+
+# The generator emits printable ASCII plus LF only. Enforce that byte contract
+# under the C locale before command substitution or JSON parsing can normalize
+# NUL, UTF-8, or control bytes.
+if ! LC_ALL=C od -An -v -t u1 "${manifest}" | LC_ALL=C awk '
+  {
+    for (field = 1; field <= NF; field++) {
+      if ($field != 10 && ($field < 32 || $field > 126)) invalid = 1
+    }
+  }
+  END { exit invalid }
+'; then
+  fail 'manifest contains unsupported bytes'
+fi
 
 # Parse the generated JSON without jq or another downloadable runtime. The
 # release manifest intentionally uses a strict ASCII subset of JSON: escapes,
