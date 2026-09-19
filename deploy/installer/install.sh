@@ -255,6 +255,12 @@ preflight_install_dependencies() {
   fi
 
   install_missing_dependencies
+  missing_install_dependencies
+  if [[ ${#TP_MISSING_DEPENDENCY_PLAN[@]} -ne 0 ]]; then
+    print_dependency_installation_advice
+    echo_content yellow "Dependency installation completed, but the commands above are still unavailable"
+    exit 1
+  fi
 }
 
 require_value() {

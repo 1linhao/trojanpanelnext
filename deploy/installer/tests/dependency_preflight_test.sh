@@ -18,7 +18,9 @@ digest() {
 work="$(mktemp -d)"
 trap 'rm -rf -- "${work}"' EXIT
 trace="${work}/host.trace"
-yq_marker="${work}/yq-installed"
+probe_trace="${work}/probe.trace"
+command_state="${work}/command-state"
+mkdir -p "${command_state}"
 
 debian_release="${work}/debian-12"
 ubuntu_release="${work}/ubuntu-24.04"
@@ -44,7 +46,7 @@ release_config="${work}/release-invalid-after-preflight.yaml"
 sed 's/^  hostname:.*/  hostname: ""/' "${bundle}/config-web.yaml" >"${release_config}"
 
 fake_command_is_missing() {
-  if [[ "$1" == yq && -e "${TP_FAKE_YQ_MARKER}" ]]; then
+  if [[ -e "${TP_FAKE_COMMAND_STATE}/$1" ]]; then
     return 1
   fi
   case ",${TP_FAKE_MISSING_COMMANDS:-}," in
@@ -54,10 +56,24 @@ fake_command_is_missing() {
 }
 
 command() {
-  if [[ "${1:-}" == -v && $# -ge 2 ]] && fake_command_is_missing "$2"; then
-    return 1
+  if [[ "${1:-}" == -v && $# -ge 2 ]]; then
+    printf 'probe %s\n' "$2" >>"${TP_DEP_PROBE_TRACE}"
+    if [[ -e "${TP_FAKE_COMMAND_STATE}/$2" ]]; then
+      printf '%s/%s\n' "${TP_FAKE_COMMAND_STATE}" "$2"
+      return
+    fi
+    if fake_command_is_missing "$2"; then
+      return 1
+    fi
   fi
   builtin command "$@"
+}
+
+mark_fake_command_available() {
+  local command_name="$1"
+  case ",${TP_FAKE_INSTALLABLE_COMMANDS:-}," in
+  *",${command_name},"*) : >"${TP_FAKE_COMMAND_STATE}/${command_name}" ;;
+  esac
 }
 
 id() {
@@ -78,18 +94,33 @@ uname() {
 
 apt-get() {
   printf 'apt-get %s\n' "$*" >>"${TP_DEP_TRACE}"
+  if [[ "${1:-}" == install ]]; then
+    local argument
+    for argument in "$@"; do
+      case "${argument}" in
+      age | curl | tar | openssl | jq) mark_fake_command_available "${argument}" ;;
+      coreutils)
+        mark_fake_command_available od
+        mark_fake_command_available sha256sum
+        mark_fake_command_available install
+        ;;
+      esac
+    done
+  fi
 }
 
 curl() {
   printf 'curl %s\n' "$*" >>"${TP_DEP_TRACE}"
-  local argument output=""
+  local argument output="" docker_installer=0
   for argument in "$@"; do
+    [[ "${argument}" == https://get.docker.com ]] && docker_installer=1
     if [[ -n "${output}" ]]; then
       printf '#!/bin/sh\nexit 0\n' >"${argument}"
       return
     fi
     [[ "${argument}" == -o ]] && output=1
   done
+  [[ "${docker_installer}" == 1 ]] && mark_fake_command_available docker
   printf 'exit 0\n'
 }
 
@@ -107,7 +138,7 @@ sha256sum() {
 install() {
   printf 'install %s\n' "$*" >>"${TP_DEP_TRACE}"
   if [[ "${*: -1}" == /usr/local/bin/yq ]]; then
-    : >"${TP_FAKE_YQ_MARKER}"
+    mark_fake_command_available yq
   fi
 }
 
@@ -120,7 +151,7 @@ jq() {
   return 97
 }
 
-export -f fake_command_is_missing command id uname apt-get curl systemctl sha256sum install yq jq
+export -f fake_command_is_missing command mark_fake_command_available id uname apt-get curl systemctl sha256sum install yq jq
 
 run_install_cli() {
   local entrypoint="$1"
@@ -129,14 +160,18 @@ run_install_cli() {
   local architecture="$4"
   local install_deps="$5"
   local missing_commands="$6"
-  shift 6
-  rm -f "${yq_marker}"
+  local installable_commands="$7"
+  shift 7
+  find "${command_state}" -type f -delete
+  : >"${probe_trace}"
 
   TP_DEP_TRACE="${trace}" \
+    TP_DEP_PROBE_TRACE="${probe_trace}" \
     TP_FAKE_ARCH="${architecture}" \
+    TP_FAKE_COMMAND_STATE="${command_state}" \
+    TP_FAKE_INSTALLABLE_COMMANDS="${installable_commands}" \
     TP_FAKE_MISSING_COMMANDS="${missing_commands}" \
     TP_FAKE_YQ_READER="${FAKE_YQ_READER}" \
-    TP_FAKE_YQ_MARKER="${yq_marker}" \
     TP_INSTALL_DEPS="${install_deps}" \
     TP_OS_RELEASE_FILE="${os_release}" \
     TP_DATA="${work}/data" \
@@ -151,7 +186,7 @@ assert_default_installs_declared_dependencies() {
 
   : >"${trace}"
   if run_install_cli "${entrypoint}" "${config}" "${debian_release}" x86_64 1 \
-    docker,age,yq,jq >"${output}" 2>&1; then
+    docker,age,yq,jq docker,age,yq >"${output}" 2>&1; then
     fail "${label} unexpectedly passed the intentionally invalid post-preflight config"
   fi
   if [[ "${label}" != development ]]; then
@@ -173,7 +208,35 @@ assert_default_installs_declared_dependencies() {
   if grep -Eq '^apt-get .* (curl|tar|coreutils|openssl|jq)( |$)' "${trace}"; then
     fail "${label} installed an undeclared or unnecessary package"
   fi
-  printf 'TRACE entrypoint=%s mode=default packages=age yq=pinned docker-installer=1 jq-host=absent\n' "${label}"
+  test "$(grep -Fc 'probe age' "${probe_trace}")" -ge 2 ||
+    fail "${label} did not probe age again after installation"
+  printf 'TRACE entrypoint=%s mode=default packages=age yq=pinned docker-installer=1 recheck=passed jq-host=absent\n' "${label}"
+}
+
+assert_successful_installer_without_command_is_blocked() {
+  local entrypoint="$1"
+  local config="$2"
+  local label="$3"
+  local output="${work}/${label}-post-install-missing.out"
+
+  : >"${trace}"
+  if run_install_cli "${entrypoint}" "${config}" "${debian_release}" x86_64 1 \
+    docker,age,yq,jq docker,yq >"${output}" 2>&1; then
+    fail "${label} unexpectedly passed when apt-get returned success without providing age"
+  fi
+  grep -Fq 'Missing required Debian 12 dependencies:' "${output}" ||
+    fail "${label} did not aggregate dependencies still missing after installation"
+  grep -Fq -- '- age: apt-get install -y age' "${output}" ||
+    fail "${label} did not report age after the successful installer left it unavailable"
+  if grep -Fq -- '- docker:' "${output}" || grep -Fq -- '- yq:' "${output}"; then
+    fail "${label} reported a dependency that became available after installation"
+  fi
+  if grep -Fq 'TP_WEB_DOMAIN is required' "${output}"; then
+    fail "${label} entered config loading with age still unavailable"
+  fi
+  test "$(grep -Fc 'probe age' "${probe_trace}")" -ge 2 ||
+    fail "${label} did not recheck age after apt-get returned success"
+  printf 'TRACE entrypoint=%s mode=post-install-missing dependency=age installer-exit=0 recheck=blocked config-loaded=0\n' "${label}"
 }
 
 assert_disabled_reports_all_without_installing() {
@@ -184,7 +247,7 @@ assert_disabled_reports_all_without_installing() {
 
   : >"${trace}"
   if run_install_cli "${entrypoint}" "${config}" "${debian_release}" x86_64 0 \
-    docker,age,curl,tar,openssl,yq,jq --entry-spec /synthetic/entry-spec.json \
+    docker,age,curl,tar,openssl,yq,jq '' --entry-spec /synthetic/entry-spec.json \
     >"${output}" 2>&1; then
     fail "${label} unexpectedly passed with dependency installation disabled"
   fi
@@ -206,7 +269,7 @@ assert_platform_rejected_before_host_change() {
 
   : >"${trace}"
   if run_install_cli "${bundle}/install.sh" "${release_config}" "${os_release}" \
-    "${architecture}" 1 docker,age,jq >"${output}" 2>&1; then
+    "${architecture}" 1 docker,age,jq '' >"${output}" 2>&1; then
     fail "${label} unexpectedly accepted an unsupported platform"
   fi
   grep -Fq 'Debian 12 x86_64 only' "${output}" ||
@@ -219,7 +282,7 @@ assert_coreutils_is_aggregated_once() {
   local output="${work}/coreutils-disabled.out"
   : >"${trace}"
   if run_install_cli "${INSTALLER}" "${development_config}" "${debian_release}" \
-    x86_64 0 od,sha256sum,install >"${output}" 2>&1; then
+    x86_64 0 od,sha256sum,install '' >"${output}" 2>&1; then
     fail 'development installer unexpectedly passed without coreutils commands'
   fi
   test "$(grep -Fc -- '- coreutils: apt-get install -y coreutils' "${output}")" = 1 ||
@@ -231,6 +294,10 @@ assert_coreutils_is_aggregated_once() {
 assert_default_installs_declared_dependencies "${INSTALLER}" "${development_config}" development
 assert_default_installs_declared_dependencies "${bundle}/install.sh" "${release_config}" release-direct
 assert_default_installs_declared_dependencies "${bundle}/bootstrap.sh" "${release_config}" release-bootstrap
+
+assert_successful_installer_without_command_is_blocked "${INSTALLER}" "${development_config}" development
+assert_successful_installer_without_command_is_blocked "${bundle}/install.sh" "${release_config}" release-direct
+assert_successful_installer_without_command_is_blocked "${bundle}/bootstrap.sh" "${release_config}" release-bootstrap
 
 assert_disabled_reports_all_without_installing "${INSTALLER}" "${development_config}" development
 assert_disabled_reports_all_without_installing "${bundle}/install.sh" "${release_config}" release-direct
