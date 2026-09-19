@@ -131,12 +131,17 @@ docker() {
     printf 'fake-container-id\n'
     ;;
   exec)
-    cat >/dev/null || true
+    local stdin_payload
+    stdin_payload="$(cat || true)"
     if [[ " $* " == *' redis-cli '* ]]; then
       [[ "${TP_TEST_FAIL_PROBE:-}" == Redis ]] && return 1
       printf 'OK\nPONG\n'
     else
       [[ "${TP_TEST_FAIL_PROBE:-}" == MariaDB ]] && return 1
+      if [[ -n "${TP_TEST_MARIADB_ACCEPTED_PASSWORD:-}" && -n "${stdin_payload}" &&
+        "${stdin_payload%%$'\n'*}" != "${TP_TEST_MARIADB_ACCEPTED_PASSWORD}" ]]; then
+        return 1
+      fi
       printf '1\n'
     fi
     ;;
@@ -149,7 +154,7 @@ docker() {
 curl() {
   local url="${*: -1}"
   printf '%s\n' "${url}" >>"${TP_TEST_CURL_TRACE}"
-  if [[ "${url}" == */api/auth/login ]]; then
+  if [[ "${url}" == */api/auth/installer-health || "${url}" == */api/auth/login ]]; then
     cat >/dev/null
     [[ "${TP_TEST_FAIL_PROBE:-}" == sysadmin ]] && {
       printf '{"code":50000,"type":"error","message":"authentication failed"}\n'
@@ -179,6 +184,27 @@ fi
 grep -Fq 'sysadmin_password must contain 16 to 20 ASCII letters or digits' "${work}/invalid.out" ||
   fail 'weak sysadmin password validation omitted its diagnostic'
 
+symlink_target="${work}/symlink-target.yaml"
+symlink_config="${work}/symlink-web.yaml"
+cp "${config}" "${symlink_target}"
+ln -s "${symlink_target}" "${symlink_config}"
+if "${INSTALLER}" validate --mode web --config "${symlink_config}" >"${work}/symlink.out" 2>&1; then
+  fail 'validation accepted a symlink deployment configuration'
+fi
+grep -Fq 'must not contain symbolic links' "${work}/symlink.out" ||
+  fail 'symlink deployment configuration rejection omitted its diagnostic'
+
+real_parent="${work}/real-parent"
+linked_parent="${work}/linked-parent"
+mkdir -p "${real_parent}"
+cp "${config}" "${real_parent}/web.yaml"
+ln -s "${real_parent}" "${linked_parent}"
+if "${INSTALLER}" validate --mode web --config "${linked_parent}/web.yaml" >"${work}/parent-symlink.out" 2>&1; then
+  fail 'validation accepted a deployment configuration below a symlink parent'
+fi
+grep -Fq 'must not contain symbolic links' "${work}/parent-symlink.out" ||
+  fail 'symlink parent rejection omitted its diagnostic'
+
 output="${work}/install.out"
 if ! TP_DATA="${data}" \
   TP_OS_RELEASE_FILE="${os_release}" \
@@ -197,6 +223,8 @@ test "$(stat -c '%a' "${config}")" = 600 ||
   fail 'generated deployment configuration is not mode 0600'
 test "$(stat -c '%a' "${data}/trojan-panel/config/initial-admin-password")" = 600 ||
   fail 'API initial sysadmin password file is not mode 0600'
+grep -Fq 'location = /api/auth/installer-health' "${data}/trojan-panel-ui/nginx/default.conf" ||
+  fail 'public UI proxy did not block the loopback-only installer health endpoint'
 
 for secret_key in mariadb_password redis_password sysadmin_password; do
   secret="$(awk -F'"' -v key="${secret_key}" '$1 == "  " key ": " {print $2}' "${config}")"
@@ -209,7 +237,40 @@ sysadmin_secret="$(awk -F'"' '$1 == "  sysadmin_password: " {print $2}' "${confi
 test "$(tr -d '\n' <"${data}/trojan-panel/config/initial-admin-password")" = "${sysadmin_secret}" ||
   fail 'API initial password file does not match the persisted sysadmin credential'
 
+secret_link_dir="${work}/secret-link-dir"
+mkdir -p "${secret_link_dir}"
+printf 'do-not-overwrite\n' >"${secret_link_dir}/target"
+ln -s "${secret_link_dir}/target" "${secret_link_dir}/initial-admin-password"
+if INITIAL_SYSADMIN_PASSWORD_FILE="${secret_link_dir}/initial-admin-password" \
+  TP_DATA="${data}" \
+  TP_OS_RELEASE_FILE="${os_release}" \
+  TP_HEALTH_ATTEMPTS=1 \
+  TP_HEALTH_DELAY_SECONDS=0 \
+  "${INSTALLER}" install --mode web --config "${config}" >"${work}/secret-link.out" 2>&1; then
+  fail 'installation accepted a symlink initial administrator password file'
+fi
+grep -Fq 'must not contain symbolic links' "${work}/secret-link.out" ||
+  fail 'symlink initial administrator password file rejection omitted its diagnostic'
+test "$(cat "${secret_link_dir}/target")" = 'do-not-overwrite' ||
+  fail 'symlink initial administrator password target was overwritten'
+
+secret_real_parent="${work}/secret-real-parent"
+secret_link_parent="${work}/secret-link-parent"
+mkdir -p "${secret_real_parent}"
+ln -s "${secret_real_parent}" "${secret_link_parent}"
+if INITIAL_SYSADMIN_PASSWORD_FILE="${secret_link_parent}/initial-admin-password" \
+  TP_DATA="${data}" \
+  TP_OS_RELEASE_FILE="${os_release}" \
+  TP_HEALTH_ATTEMPTS=1 \
+  TP_HEALTH_DELAY_SECONDS=0 \
+  "${INSTALLER}" install --mode web --config "${config}" >"${work}/secret-parent-link.out" 2>&1; then
+  fail 'installation accepted an initial administrator password below a symlink parent'
+fi
+grep -Fq 'must not contain symbolic links' "${work}/secret-parent-link.out" ||
+  fail 'symlink initial administrator password parent rejection omitted its diagnostic'
+
 saved_secrets="$(grep -E '^  (mariadb|redis|sysadmin)_password:' "${config}")"
+mariadb_secret="$(awk -F'"' '$1 == "  mariadb_password: " {print $2}' "${config}")"
 rerun_output="${work}/rerun.out"
 if ! TP_DATA="${data}" \
   TP_OS_RELEASE_FILE="${os_release}" \
@@ -224,12 +285,26 @@ test "${saved_secrets}" = "$(grep -E '^  (mariadb|redis|sysadmin)_password:' "${
 test "$(cat "${random_state}")" = 3 ||
   fail 'same-version replay generated replacement credentials'
 
+mismatched_config="${work}/mismatched-mariadb.yaml"
+cp "${config}" "${mismatched_config}"
+sed -i 's/^  mariadb_password:.*/  mariadb_password: "WrongMariaDBCredential123"/' "${mismatched_config}"
+if TP_TEST_MARIADB_ACCEPTED_PASSWORD="${mariadb_secret}" \
+  TP_DATA="${data}" \
+  TP_OS_RELEASE_FILE="${os_release}" \
+  TP_HEALTH_ATTEMPTS=1 \
+  TP_HEALTH_DELAY_SECONDS=0 \
+  "${INSTALLER}" install --mode web --config "${mismatched_config}" >"${work}/mismatched-mariadb.out" 2>&1; then
+  fail 'installation accepted a MariaDB credential that only matched the existing container environment'
+fi
+grep -Fq 'Health check failed: MariaDB' "${work}/mismatched-mariadb.out" ||
+  fail 'MariaDB credential mismatch omitted its health diagnostic'
+
 assert_health_failure() {
   local injected_failure="$1"
   local expected_label="$2"
   local failure_output="${work}/failure-${injected_failure}.out"
   local login_calls_before
-  login_calls_before="$(grep -Fc '/api/auth/login' "${curl_trace}" 2>/dev/null || true)"
+  login_calls_before="$(grep -Fc '/api/auth/installer-health' "${curl_trace}" 2>/dev/null || true)"
   if TP_TEST_FAIL_PROBE="${injected_failure}" \
     TP_DATA="${data}" \
     TP_OS_RELEASE_FILE="${os_release}" \
@@ -244,8 +319,10 @@ assert_health_failure() {
     fail "${expected_label} failure printed the success marker"
   fi
   if [[ "${injected_failure}" == sysadmin ]]; then
-    test "$(grep -Fc '/api/auth/login' "${curl_trace}")" = "$((login_calls_before + 1))" ||
-      fail 'rejected sysadmin credentials were retried and may lock the account'
+    test "$(grep -Fc '/api/auth/installer-health' "${curl_trace}")" = "$((login_calls_before + 1))" ||
+      fail 'sysadmin credential health did not use the non-mutating installer endpoint exactly once'
+    test "$(grep -Fc '/api/auth/login' "${curl_trace}" 2>/dev/null || true)" = 0 ||
+      fail 'installer used the stateful login endpoint and may lock the account'
   fi
   local secret_key secret
   for secret_key in mariadb_password redis_password sysadmin_password; do
@@ -259,7 +336,9 @@ assert_health_failure() {
 assert_health_failure MariaDB MariaDB
 assert_health_failure Redis Redis
 assert_health_failure HTTPS 'Web HTTPS'
-assert_health_failure sysadmin 'sysadmin API login'
+for _ in 1 2 3 4; do
+  assert_health_failure sysadmin 'sysadmin API credential'
+done
 
 grep -Fq 'docker run -d --name trojan-panel-mariadb' "${trace}" ||
   fail 'MariaDB was not deployed'

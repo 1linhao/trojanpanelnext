@@ -67,8 +67,9 @@ sudo ./install.sh install --mode web --config ./web.yaml
 并将文件权限设为 `600`。终端只显示密码保存位置，不显示密码。
 安装器还会在 `pki_bundle_dir` 自动生成主控 mTLS 身份；CA 私钥只保留在 Web 主控。
 
-安装命令只有在 MariaDB、Redis、公网 HTTPS UI 和 `sysadmin` 登录 API 全部通过后才返回
+安装命令只有在当前配置身份访问 MariaDB、Redis、公网 HTTPS UI 和本机只读 `sysadmin` API 凭据验证全部通过后才返回
 成功。任一探测失败都返回非零，并输出不含秘密的定位建议。使用同一配置重跑会复用已保存的三组凭据。
+管理员凭据探测不会签发会话、更新登录时间或累计登录失败次数，公网 UI 入口也不会暴露该探测路径。
 
 Node Agent 安装前，通过可信的文件传输或密钥管理系统，将 Web 主控中的
 `/tpdata/trojanpanelnext-pki/client-ca.crt` 复制到 Node 的同一路径。只复制公开 CA

@@ -15,6 +15,8 @@ import (
 type initialAdminDBState struct {
 	passHash   string
 	lookupHash string
+	roleID     int64
+	deleted    int64
 	updates    int
 }
 
@@ -36,8 +38,17 @@ func (*initialAdminConn) Prepare(string) (driver.Stmt, error) { return nil, driv
 func (*initialAdminConn) Close() error                        { return nil }
 func (*initialAdminConn) Begin() (driver.Tx, error)           { return nil, driver.ErrSkip }
 
-func (c *initialAdminConn) QueryContext(context.Context, string, []driver.NamedValue) (driver.Rows, error) {
-	return &initialAdminRows{values: []driver.Value{c.state.passHash, c.state.lookupHash}}, nil
+func (c *initialAdminConn) QueryContext(_ context.Context, query string, _ []driver.NamedValue) (driver.Rows, error) {
+	if strings.Contains(query, "`role_id`") {
+		return &initialAdminRows{
+			columns: []string{"pass", "role_id", "deleted"},
+			values:  []driver.Value{c.state.passHash, c.state.roleID, c.state.deleted},
+		}, nil
+	}
+	return &initialAdminRows{
+		columns: []string{"pass", "hash"},
+		values:  []driver.Value{c.state.passHash, c.state.lookupHash},
+	}, nil
 }
 
 func (c *initialAdminConn) ExecContext(_ context.Context, _ string, args []driver.NamedValue) (driver.Result, error) {
@@ -48,12 +59,13 @@ func (c *initialAdminConn) ExecContext(_ context.Context, _ string, args []drive
 }
 
 type initialAdminRows struct {
-	values []driver.Value
-	done   bool
+	columns []string
+	values  []driver.Value
+	done    bool
 }
 
-func (*initialAdminRows) Columns() []string { return []string{"pass", "hash"} }
-func (*initialAdminRows) Close() error      { return nil }
+func (r *initialAdminRows) Columns() []string { return r.columns }
+func (*initialAdminRows) Close() error        { return nil }
 func (r *initialAdminRows) Next(values []driver.Value) error {
 	if r.done {
 		return io.EOF
@@ -108,6 +120,41 @@ func TestInitialSysadminCredentialsFromRestrictedFile(t *testing.T) {
 	}
 }
 
+func TestOpenedInitialSysadminPasswordDoesNotFollowReplacement(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "initial-admin-password")
+	const original = "A1B2C3D4E5F6G7H8I9J0\n"
+	if err := os.WriteFile(path, []byte(original), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	file, err := openInitialSysadminPasswordFile(path)
+	if err != nil {
+		t.Fatalf("openInitialSysadminPasswordFile() error = %v", err)
+	}
+	defer file.Close()
+
+	moved := filepath.Join(dir, "opened-password")
+	if err := os.Rename(path, moved); err != nil {
+		t.Fatal(err)
+	}
+	replacement := filepath.Join(dir, "replacement")
+	if err := os.WriteFile(replacement, []byte("Z9Y8X7W6V5U4T3S2R1Q0\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(replacement, path); err != nil {
+		t.Fatal(err)
+	}
+
+	contents, err := io.ReadAll(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(contents) != original {
+		t.Fatalf("opened credential changed after path replacement: %q", contents)
+	}
+}
+
 func TestPendingSysadminPasswordIsInitializedOnce(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "initial-admin-password")
@@ -140,6 +187,27 @@ func TestPendingSysadminPasswordIsInitializedOnce(t *testing.T) {
 	}
 }
 
+func TestVerifySysadminPasswordIsReadOnlyAcrossRepeatedFailures(t *testing.T) {
+	const password = "A1B2C3D4E5F6G7H8I9J0"
+	state := &initialAdminDBState{
+		passHash: util.Sha1String("sysadmin" + password),
+		roleID:   1,
+	}
+	useInitialAdminTestDB(t, state)
+
+	for attempt := 0; attempt < 4; attempt++ {
+		if err := VerifySysadminPassword("Z9Y8X7W6V5U4T3S2R1Q0"); err == nil {
+			t.Fatal("wrong sysadmin credential passed the health check")
+		}
+	}
+	if state.updates != 0 {
+		t.Fatalf("read-only health check performed %d updates", state.updates)
+	}
+	if err := VerifySysadminPassword(password); err != nil {
+		t.Fatalf("valid sysadmin credential failed after repeated mismatches: %v", err)
+	}
+}
+
 func TestInitialSysadminCredentialsRejectsUnsafeInput(t *testing.T) {
 	dir := t.TempDir()
 	valid := filepath.Join(dir, "valid")
@@ -156,7 +224,23 @@ func TestInitialSysadminCredentialsRejectsUnsafeInput(t *testing.T) {
 			}
 			return os.Chmod(path, 0640)
 		}},
+		"owner-executable file": {prepare: func(path string) error {
+			return os.WriteFile(path, []byte("A1B2C3D4E5F6G7H8I9J0\n"), 0700)
+		}},
 		"symlink": {prepare: func(path string) error { return os.Symlink(valid, path) }},
+		"symlink parent": {prepare: func(path string) error {
+			realParent := filepath.Join(dir, "real-parent")
+			if err := os.Mkdir(realParent, 0700); err != nil && !os.IsExist(err) {
+				return err
+			}
+			if err := os.WriteFile(filepath.Join(realParent, "password"), []byte("A1B2C3D4E5F6G7H8I9J0\n"), 0600); err != nil {
+				return err
+			}
+			if err := os.Symlink(realParent, path); err != nil {
+				return err
+			}
+			return nil
+		}},
 		"short password": {prepare: func(path string) error {
 			return os.WriteFile(path, []byte("short1\n"), 0600)
 		}},
@@ -171,7 +255,11 @@ func TestInitialSysadminCredentialsRejectsUnsafeInput(t *testing.T) {
 			if err := tt.prepare(path); err != nil {
 				t.Fatal(err)
 			}
-			if _, _, err := initialSysadminCredentials(path); err == nil {
+			credentialPath := path
+			if name == "symlink parent" {
+				credentialPath = filepath.Join(path, "password")
+			}
+			if _, _, err := initialSysadminCredentials(credentialPath); err == nil {
 				t.Fatal("unsafe initial sysadmin password input was accepted")
 			}
 		})

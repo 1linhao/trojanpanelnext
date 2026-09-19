@@ -11,6 +11,8 @@ func initAuthRouter(router *gin.Engine) {
 	{
 		trojanAuth := trojan.Group("/auth")
 		{
+			// 安装器本机只读凭据健康检查；公网入口必须阻断该路径。
+			trojanAuth.POST("/installer-health", api.InstallerHealth)
 			// 登录
 			trojanAuth.POST("/login", api.Login)
 			// 创建账户

@@ -68,8 +68,10 @@ to `web.yaml`, and changes its permissions to `600`. The terminal reports only w
 were saved; it never prints them. The installer also creates the control-plane mTLS identity in
 `pki_bundle_dir`; the CA private key stays on the Web control plane.
 
-Installation returns success only after MariaDB, Redis, the public HTTPS UI, and a real
-`sysadmin` API login all pass. Any failed probe returns non-zero with a secret-free diagnostic.
+Installation returns success only after the configured identity can access MariaDB, Redis, the public
+HTTPS UI responds, and a read-only loopback API verifies the real `sysadmin` credential. The credential
+probe does not issue a session, update login time, or increment login failures, and the public UI entry
+does not expose its path. Any failed probe returns non-zero with a secret-free diagnostic.
 Replaying the same configuration reuses all three stored credentials.
 
 Before installing a Node Agent, transfer `/tpdata/trojanpanelnext-pki/client-ca.crt` from the Web control plane to the same path on the Node through a trusted file-transfer or secret-management channel. Copy only the public CA certificate; never copy `client-ca.key`, `client.key`, or `client.crt`.

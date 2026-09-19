@@ -3,9 +3,12 @@ package dao
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"trojan-panel/util"
 )
 
@@ -13,18 +16,63 @@ const initialSysadminPasswordFileEnv = "TP_INITIAL_SYSADMIN_PASSWORD_FILE"
 
 var initialSysadminPasswordPattern = regexp.MustCompile(`^[A-Za-z0-9]{16,20}$`)
 
-func initialSysadminCredentials(path string) (string, string, error) {
-	info, err := os.Lstat(path)
+func openInitialSysadminPasswordFile(path string) (*os.File, error) {
+	absolute, err := filepath.Abs(path)
 	if err != nil {
-		return "", "", fmt.Errorf("read initial sysadmin password metadata: %w", err)
+		return nil, fmt.Errorf("resolve initial sysadmin password path: %w", err)
 	}
-	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
-		return "", "", errors.New("initial sysadmin password must be a regular non-symlink file")
+	parts := strings.Split(strings.TrimPrefix(filepath.Clean(absolute), string(filepath.Separator)), string(filepath.Separator))
+	if len(parts) == 0 || parts[0] == "" {
+		return nil, errors.New("initial sysadmin password path is invalid")
 	}
-	if info.Mode().Perm()&0077 != 0 {
-		return "", "", errors.New("initial sysadmin password file must not be accessible by group or other users")
+
+	directoryFD, err := syscall.Open(string(filepath.Separator), syscall.O_RDONLY|syscall.O_DIRECTORY|syscall.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, fmt.Errorf("open initial sysadmin password root: %w", err)
 	}
-	contents, err := os.ReadFile(path)
+	defer func() { _ = syscall.Close(directoryFD) }()
+
+	for _, component := range parts[:len(parts)-1] {
+		nextFD, openErr := syscall.Openat(directoryFD, component, syscall.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
+		if openErr != nil {
+			return nil, fmt.Errorf("open initial sysadmin password parent without symlinks: %w", openErr)
+		}
+		_ = syscall.Close(directoryFD)
+		directoryFD = nextFD
+	}
+
+	fileFD, err := syscall.Openat(directoryFD, parts[len(parts)-1], syscall.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, fmt.Errorf("open initial sysadmin password without symlinks: %w", err)
+	}
+	file := os.NewFile(uintptr(fileFD), absolute)
+	if file == nil {
+		_ = syscall.Close(fileFD)
+		return nil, errors.New("open initial sysadmin password: invalid file descriptor")
+	}
+	info, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return nil, fmt.Errorf("read initial sysadmin password metadata: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		_ = file.Close()
+		return nil, errors.New("initial sysadmin password must be a regular non-symlink file")
+	}
+	if info.Mode().Perm() != 0600 {
+		_ = file.Close()
+		return nil, errors.New("initial sysadmin password file permissions must be exactly 0600")
+	}
+	return file, nil
+}
+
+func initialSysadminCredentials(path string) (string, string, error) {
+	file, err := openInitialSysadminPasswordFile(path)
+	if err != nil {
+		return "", "", err
+	}
+	defer file.Close()
+	contents, err := io.ReadAll(file)
 	if err != nil {
 		return "", "", fmt.Errorf("read initial sysadmin password: %w", err)
 	}
@@ -80,6 +128,21 @@ func initializePendingSysadminPassword() error {
 	}
 	if rows != 1 {
 		return fmt.Errorf("initialize sysadmin password: expected one pending account, updated %d", rows)
+	}
+	return nil
+}
+
+func VerifySysadminPassword(password string) error {
+	var passHash string
+	var roleID uint
+	var deleted uint
+	if err := db.QueryRow(
+		"SELECT `pass`, `role_id`, `deleted` FROM `account` WHERE `username` = 'sysadmin'",
+	).Scan(&passHash, &roleID, &deleted); err != nil {
+		return fmt.Errorf("read sysadmin health state: %w", err)
+	}
+	if roleID != 1 || deleted != 0 || !util.Sha1Match(passHash, "sysadmin"+password) {
+		return errors.New("sysadmin credential is not healthy")
 	}
 	return nil
 }

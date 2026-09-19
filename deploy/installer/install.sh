@@ -77,7 +77,7 @@ TP_DEPENDENCY_PLAN=(
   'age|age|install|package|age|apt-get install -y age'
   'curl|curl|base|package|curl|apt-get install -y curl'
   'tar|tar|base|package|tar|apt-get install -y tar'
-  'coreutils|od sha256sum install|base|package|coreutils|apt-get install -y coreutils'
+  'coreutils|od sha256sum install realpath|base|package|coreutils|apt-get install -y coreutils'
   'openssl|openssl|base|package|openssl|apt-get install -y openssl'
   "yq|yq|install|yq|-|install the pinned ${YQ_VERSION} linux_amd64 binary from github.com/mikefarah/yq to /usr/local/bin/yq"
   'jq|jq|entry|package|jq|apt-get install -y jq'
@@ -509,6 +509,22 @@ verify_release_assets_before_host_change() {
   "${verifier}" --assets-dir "${INSTALLER_DIR}" --config "${config_file}"
 }
 
+require_path_without_symlinks() {
+  local path="$1"
+  local absolute component current=""
+  local -a components=()
+  absolute="$(realpath -ms -- "${path}")"
+  IFS=/ read -r -a components <<<"${absolute#/}"
+  for component in "${components[@]}"; do
+    [[ -n "${component}" ]] || continue
+    current="${current}/${component}"
+    if [[ -L "${current}" ]]; then
+      echo_content red "Sensitive path must not contain symbolic links: ${path}"
+      exit 1
+    fi
+  done
+}
+
 load_config() {
   local action="$1"
   local file="${2:-}"
@@ -518,6 +534,7 @@ load_config() {
     usage
     exit 1
   fi
+  require_path_without_symlinks "${file}"
   if [[ ! -f "${file}" ]]; then
     echo_content red "Config file not found: ${file}"
     exit 1
@@ -815,6 +832,7 @@ write_web_generated_secrets() {
   if [[ -z "${file}" || ! -f "${file}" ]]; then
     return
   fi
+  require_path_without_symlinks "${file}"
   MARIADB_PASSWORD="${MARIADB_PASSWORD}" REDIS_PASSWORD="${REDIS_PASSWORD}" SYSADMIN_PASSWORD="${SYSADMIN_PASSWORD}" \
     yq -i '.trojanpanelnext.mariadb_password = strenv(MARIADB_PASSWORD) | .trojanpanelnext.redis_password = strenv(REDIS_PASSWORD) | .trojanpanelnext.sysadmin_password = strenv(SYSADMIN_PASSWORD)' "${file}"
   chmod 600 "${file}"
@@ -1401,8 +1419,10 @@ EOF
 write_initial_sysadmin_password_file() {
   local directory
   local temporary
+  require_path_without_symlinks "${INITIAL_SYSADMIN_PASSWORD_FILE}"
   directory="$(dirname "${INITIAL_SYSADMIN_PASSWORD_FILE}")"
   mkdir -p "${directory}"
+  require_path_without_symlinks "${INITIAL_SYSADMIN_PASSWORD_FILE}"
   temporary="$(mktemp "${directory}/.initial-admin-password.XXXXXX")"
   chmod 0600 "${temporary}"
   printf '%s\n' "${SYSADMIN_PASSWORD}" >"${temporary}"
@@ -1603,7 +1623,7 @@ wait_for_container() {
 
 wait_for_mariadb() {
   for _ in $(seq 1 60); do
-    if docker exec "${MARIADB_CONTAINER}" sh -c "mariadb -uroot -p\"${MARIADB_PASSWORD}\" -e 'select 1' >/dev/null 2>&1 || mysql -uroot -p\"${MARIADB_PASSWORD}\" -e 'select 1' >/dev/null 2>&1"; then
+    if mariadb_query_with_configured_credential 'select 1'; then
       return
     fi
     sleep 2
@@ -1613,8 +1633,24 @@ wait_for_mariadb() {
   exit 1
 }
 
+mariadb_query_with_configured_credential() {
+  local query="$1"
+  printf '%s\n%s\n' "${MARIADB_PASSWORD}" "${query}" |
+    docker exec -i "${MARIADB_CONTAINER}" sh -c '
+      credential_file="$(mktemp)" || exit 1
+      trap '\''rm -f -- "$credential_file"'\'' EXIT
+      chmod 0600 "$credential_file" || exit 1
+      IFS= read -r password || exit 1
+      IFS= read -r query || exit 1
+      printf "[client]\npassword=%s\n" "$password" >"$credential_file" || exit 1
+      mariadb --defaults-extra-file="$credential_file" -uroot -e "$query" >/dev/null 2>&1 ||
+        mysql --defaults-extra-file="$credential_file" -uroot -e "$query" >/dev/null 2>&1
+    '
+}
+
 create_database() {
-  docker exec "${MARIADB_CONTAINER}" sh -c "mariadb -uroot -p\"${MARIADB_PASSWORD}\" -e 'create database if not exists ${MARIADB_DATABASE} default character set utf8mb4;' >/dev/null 2>&1 || mysql -uroot -p\"${MARIADB_PASSWORD}\" -e 'create database if not exists ${MARIADB_DATABASE} default character set utf8mb4;' >/dev/null 2>&1"
+  mariadb_query_with_configured_credential \
+    "create database if not exists ${MARIADB_DATABASE} default character set utf8mb4;"
 }
 
 write_ui_nginx_config() {
@@ -1631,6 +1667,10 @@ server {
 
     location /api {
         proxy_pass http://127.0.0.1:${PANEL_PORT};
+    }
+
+    location = /api/auth/installer-health {
+        return 404;
     }
 }
 EOF
@@ -1741,8 +1781,7 @@ deploy_panel_ui() {
 }
 
 probe_mariadb_health() {
-  docker exec "${MARIADB_CONTAINER}" sh -c \
-    'mariadb -uroot -p"$MYSQL_ROOT_PASSWORD" -e "select 1" >/dev/null 2>&1 || mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -e "select 1" >/dev/null 2>&1'
+  mariadb_query_with_configured_credential 'select 1'
 }
 
 probe_redis_health() {
@@ -1757,13 +1796,13 @@ probe_web_https_health() {
     --connect-timeout 5 --max-time 15 "https://${TP_WEB_DOMAIN}/" >/dev/null
 }
 
-probe_sysadmin_login_health() {
+probe_sysadmin_credential_health() {
   local response
   response="$(printf '{"username":"sysadmin","pass":"%s"}' "${SYSADMIN_PASSWORD}" |
-    curl --proto '=https' --tlsv1.2 --fail --silent --show-error \
+    curl --fail --silent --show-error \
       --connect-timeout 5 --max-time 15 \
       -H 'Content-Type: application/json' --data-binary @- \
-      "https://${TP_WEB_DOMAIN}/api/auth/login")" || return
+      "http://127.0.0.1:${PANEL_PORT}/api/auth/installer-health")" || return
   grep -Eq '"code"[[:space:]]*:[[:space:]]*20000' <<<"${response}" || return 2
 }
 
@@ -1791,7 +1830,7 @@ wait_for_web_health_probe() {
   MariaDB) echo_content yellow "    Check container ${MARIADB_CONTAINER} and its persisted data." ;;
   Redis) echo_content yellow "    Check container ${REDIS_CONTAINER} and its authentication state." ;;
   "Web HTTPS") echo_content yellow "    Check DNS, certificate issuance, ports 80/443, and the active entry provider for ${TP_WEB_DOMAIN}." ;;
-  "sysadmin API login") echo_content yellow "    Check containers ${PANEL_CONTAINER} and ${UI_CONTAINER}; the generated credential remains in the restricted configuration." ;;
+  "sysadmin API credential") echo_content yellow "    Check container ${PANEL_CONTAINER}; the generated credential remains in the restricted configuration." ;;
   esac
   return 1
 }
@@ -1801,7 +1840,7 @@ verify_web_health() {
   wait_for_web_health_probe MariaDB probe_mariadb_health
   wait_for_web_health_probe Redis probe_redis_health
   wait_for_web_health_probe "Web HTTPS" probe_web_https_health
-  wait_for_web_health_probe "sysadmin API login" probe_sysadmin_login_health
+  wait_for_web_health_probe "sysadmin API credential" probe_sysadmin_credential_health
 }
 
 print_web_success() {
