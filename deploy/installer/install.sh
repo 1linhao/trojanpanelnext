@@ -62,11 +62,23 @@ EXTERNAL_ROUTES_NOTE=""
 
 TP_FORCE="${TP_FORCE:-0}"
 TP_PURGE_DATA="${TP_PURGE_DATA:-0}"
+TP_INSTALL_DEPS="${TP_INSTALL_DEPS:-1}"
+TP_OS_RELEASE_FILE="${TP_OS_RELEASE_FILE:-/etc/os-release}"
 TP_DEPLOYMENT_MODE=""
 TP_CONFIG_ROOT="${TP_CONFIG_ROOT:-}"
 INSTALLER_ASSET_VERSION="development"
 TP_ASSET_VERSION=""
 TP_TEMP_TOOLS_DIR=""
+TP_DEPENDENCY_PLAN=(
+  'docker|docker|install|docker|-|download and run the Docker installer from https://get.docker.com'
+  'age|age|install|package|age|apt-get install -y age'
+  'curl|curl|base|package|curl|apt-get install -y curl'
+  'tar|tar|base|package|tar|apt-get install -y tar'
+  'coreutils|od sha256sum install|base|package|coreutils|apt-get install -y coreutils'
+  'openssl|openssl|base|package|openssl|apt-get install -y openssl'
+  "yq|yq|install|yq|-|install the pinned ${YQ_VERSION} linux_amd64 binary from github.com/mikefarah/yq to /usr/local/bin/yq"
+  'jq|jq|entry|package|jq|apt-get install -y jq'
+)
 
 cleanup() {
   if [[ -n "${TP_TEMP_TOOLS_DIR}" && -d "${TP_TEMP_TOOLS_DIR}" ]]; then
@@ -134,6 +146,147 @@ require_root() {
   fi
 }
 
+require_supported_install_platform() {
+  local os_id=""
+  local os_version=""
+  local architecture
+  architecture="$(uname -m)"
+
+  if [[ ! -r "${TP_OS_RELEASE_FILE}" ]]; then
+    echo_content red "Cannot identify the operating system: ${TP_OS_RELEASE_FILE} is not readable"
+    exit 1
+  fi
+
+  os_id="$(sed -nE 's/^ID="?([^"[:space:]]+)"?$/\1/p' "${TP_OS_RELEASE_FILE}" | head -n 1)"
+  os_version="$(sed -nE 's/^VERSION_ID="?([^"[:space:]]+)"?$/\1/p' "${TP_OS_RELEASE_FILE}" | head -n 1)"
+  if [[ "${os_id}" != debian || "${os_version}" != 12 || "${architecture}" != x86_64 ]]; then
+    echo_content red "Unsupported platform: ${os_id:-unknown} ${os_version:-unknown} ${architecture}"
+    echo_content yellow "Bare VPS installation currently supports Debian 12 x86_64 only"
+    exit 1
+  fi
+}
+
+append_unique_word() {
+  local array_name="$1"
+  local value="$2"
+  local known
+  local -n words="${array_name}"
+  for known in "${words[@]}"; do
+    [[ "${known}" == "${value}" ]] && return
+  done
+  words+=("${value}")
+}
+
+required_dependency_plan() {
+  local record name commands scope method target advice
+  for record in "${TP_DEPENDENCY_PLAN[@]}"; do
+    IFS='|' read -r name commands scope method target advice <<<"${record}"
+    if [[ "${scope}" == entry && -z "${ENTRY_SPEC_FILE:-}" ]]; then
+      continue
+    fi
+    printf '%s\n' "${record}"
+  done
+}
+
+dependency_record_is_missing() {
+  local record="$1"
+  local name commands scope method target advice required_command
+  IFS='|' read -r name commands scope method target advice <<<"${record}"
+  for required_command in ${commands}; do
+    command -v "${required_command}" >/dev/null 2>&1 || return 0
+  done
+  return 1
+}
+
+missing_install_dependencies() {
+  TP_MISSING_DEPENDENCY_PLAN=()
+  local method_filter="${1:-}"
+  local record name commands scope method target advice
+  while IFS= read -r record; do
+    IFS='|' read -r name commands scope method target advice <<<"${record}"
+    if [[ -n "${method_filter}" && "${method}" != "${method_filter}" ]]; then
+      continue
+    fi
+    if dependency_record_is_missing "${record}"; then
+      TP_MISSING_DEPENDENCY_PLAN+=("${record}")
+    fi
+  done < <(required_dependency_plan)
+}
+
+print_dependency_installation_advice() {
+  local record name commands scope method target advice
+  echo_content red "Missing required Debian 12 dependencies:"
+  for record in "${TP_MISSING_DEPENDENCY_PLAN[@]}"; do
+    IFS='|' read -r name commands scope method target advice <<<"${record}"
+    echo_content yellow "- ${name}: ${advice}"
+  done
+}
+
+install_missing_package_dependencies() {
+  local record name commands scope method target advice
+  local -a packages=()
+
+  for record in "${TP_MISSING_DEPENDENCY_PLAN[@]}"; do
+    IFS='|' read -r name commands scope method target advice <<<"${record}"
+    [[ "${method}" == package ]] && append_unique_word packages "${target}"
+  done
+
+  install_packages "${packages[@]}"
+}
+
+install_missing_special_dependencies() {
+  local record name commands scope method target advice
+  local docker_missing=0
+  local yq_missing=0
+
+  for record in "${TP_MISSING_DEPENDENCY_PLAN[@]}"; do
+    IFS='|' read -r name commands scope method target advice <<<"${record}"
+    case "${method}" in
+    docker) docker_missing=1 ;;
+    yq) yq_missing=1 ;;
+    esac
+  done
+
+  if [[ "${docker_missing}" == 1 ]]; then
+    install_docker
+  fi
+  if [[ "${yq_missing}" == 1 ]]; then
+    install_yq
+  fi
+}
+
+preflight_install_dependencies() {
+  require_one_of TP_INSTALL_DEPS "${TP_INSTALL_DEPS}" 0 1
+  missing_install_dependencies
+  if [[ ${#TP_MISSING_DEPENDENCY_PLAN[@]} -eq 0 ]]; then
+    return
+  fi
+
+  if [[ "${TP_INSTALL_DEPS}" == 0 ]]; then
+    print_dependency_installation_advice
+    echo_content yellow "Set TP_INSTALL_DEPS=1 to let the installer add only these dependencies"
+    exit 1
+  fi
+
+  missing_install_dependencies package
+  install_missing_package_dependencies
+  missing_install_dependencies package
+  if [[ ${#TP_MISSING_DEPENDENCY_PLAN[@]} -ne 0 ]]; then
+    print_dependency_installation_advice
+    echo_content yellow "Package installation completed, but the commands above are still unavailable"
+    exit 1
+  fi
+
+  missing_install_dependencies
+  install_missing_special_dependencies
+  missing_install_dependencies
+  if [[ ${#TP_MISSING_DEPENDENCY_PLAN[@]} -ne 0 ]]; then
+    print_dependency_installation_advice
+    echo_content yellow "Dependency installation completed, but the commands above are still unavailable"
+    exit 1
+  fi
+}
+
 require_value() {
   local name="$1"
   local value="${!name:-}"
@@ -170,8 +323,10 @@ install_packages() {
   fi
 
   if command -v apt-get >/dev/null 2>&1; then
+    DEBIAN_FRONTEND=noninteractive apt-get update
     DEBIAN_FRONTEND=noninteractive apt-get install -y "${packages[@]}"
   elif command -v apt >/dev/null 2>&1; then
+    DEBIAN_FRONTEND=noninteractive apt update
     DEBIAN_FRONTEND=noninteractive apt install -y "${packages[@]}"
   elif command -v dnf >/dev/null 2>&1; then
     dnf install -y "${packages[@]}"
@@ -184,12 +339,15 @@ install_packages() {
 }
 
 install_base_tools() {
-  command -v curl >/dev/null 2>&1 || install_packages curl
-  command -v tar >/dev/null 2>&1 || install_packages tar
-  command -v od >/dev/null 2>&1 || install_packages coreutils
-  command -v sha256sum >/dev/null 2>&1 || install_packages coreutils
-  command -v openssl >/dev/null 2>&1 || install_packages openssl
-  [[ -z "${ENTRY_SPEC_FILE:-}" ]] || command -v jq >/dev/null 2>&1 || install_packages jq
+  local record name commands scope method target advice
+  local -a packages=()
+  while IFS= read -r record; do
+    IFS='|' read -r name commands scope method target advice <<<"${record}"
+    if [[ "${scope}" != install ]] && dependency_record_is_missing "${record}"; then
+      append_unique_word packages "${target}"
+    fi
+  done < <(required_dependency_plan)
+  install_packages "${packages[@]}"
 }
 
 validate_entry_spec_binding() {
@@ -1881,7 +2039,13 @@ main() {
   if [[ "${command}" == validate ]]; then
     load_config "${mode}" "${config_file}" 0
   else
+    if [[ "${command}" == install ]]; then
+      require_supported_install_platform
+    fi
     require_root
+    if [[ "${command}" == install ]]; then
+      preflight_install_dependencies
+    fi
     load_config "${mode}" "${config_file}" 1
   fi
   [[ -n "${force_override}" ]] && TP_FORCE="${force_override}"
