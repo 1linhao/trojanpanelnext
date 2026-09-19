@@ -1,6 +1,6 @@
 # 多模型协作流程
 
-本流程适用于 DeepSeek V4.1 Flash 与 GPT-5.6-sol 的多会话开发。
+本流程适用于 GPT-5.6-terra（high）与 GPT-5.6-sol 的多会话开发。
 
 ## Skill 主链
 
@@ -22,23 +22,23 @@
 
 负责规格、拆票、ADR、安全与凭据设计、跨模块接口、高风险实现、调度、审查、集成和真实环境诊断。GPT 调度会话维护 frontier，但不代替实现会话。
 
-### DeepSeek V4.1 Flash
+### GPT-5.6-terra（high）
 
 只领取同时满足以下条件的工单：
 
-- 标签为 `agent:flash` 和 `risk:low`。
+- 标签为 `agent:terra` 和 `risk:low`。
 - 所有 blocker 已关闭。
 - 没有未决架构或安全决策。
 - 验收标准、允许修改的模块边界和验证命令完整。
 
-Flash 遇到 ADR 冲突、跨模块重构、安全选择、无法稳定复现的测试或需要扩大范围时，必须停止修改，在 issue 中记录命令、输出和已改文件，并改派 GPT。
+Terra 遇到 ADR 冲突、跨模块重构、安全选择、无法稳定复现的测试或需要扩大范围时，必须停止修改，在 issue 中记录命令、输出和已改文件，并改派 GPT-5.6-sol。
 
 ## 工单契约
 
 每张实现工单必须包含：
 
 - 父规格与 blocker。
-- `推荐模型`：`agent:flash` 或 `agent:gpt`。
+- `推荐模型`：`agent:terra` 或 `agent:gpt`。
 - `风险`：`risk:low|medium|high`。
 - 从用户视角描述的端到端交付内容。
 - 可观察的成功和失败行为。
@@ -48,7 +48,7 @@ Flash 遇到 ADR 冲突、跨模块重构、安全选择、无法稳定复现的
 - 局部测试和完整验证命令。
 - 完成后应附带的验证证据。
 
-不要给 Flash 预写容易过时的逐行实现步骤。
+不要给 Terra 预写容易过时的逐行实现步骤。
 
 ## Git 基线与 worktree
 
@@ -63,7 +63,7 @@ Flash 遇到 ADR 冲突、跨模块重构、安全选择、无法稳定复现的
 
 - 一个会话只领取一张工单；多个会话不得共享同一个工作树。
 - 每票独立 branch、worktree 和 PR。
-- Flash PR 必须由独立 GPT 做 Standards 与 Spec 双轴审查。
+- Terra PR 必须由独立 GPT-5.6-sol 做 Standards 与 Spec 双轴审查。
 - `risk:high` 的 GPT PR 也必须由另一个 GPT 会话审查。
 - 默认按依赖图 blockers-first 合并，只并行不存在接口或文件所有权冲突的 frontier。
 
