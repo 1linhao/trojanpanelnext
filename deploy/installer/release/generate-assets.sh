@@ -71,7 +71,7 @@ install -m 0755 "${INSTALLER_DIR}/entry/entryctl.sh" "${output}/entry/entryctl.s
 install -m 0644 "${INSTALLER_DIR}/entry/controller.sh" "${output}/entry/controller.sh"
 install -m 0644 "${INSTALLER_DIR}/entry/adapters/external.sh" "${output}/entry/adapters/external.sh"
 install -m 0755 "${INSTALLER_DIR}/entry/adapters/nginx_certbot.sh" "${output}/entry/adapters/nginx_certbot.sh"
-sed -i "s|TP_INSTALLER_ASSET_VERSION:-development|TP_INSTALLER_ASSET_VERSION:-${version}|" "${output}/install.sh"
+sed -i "s|INSTALLER_ASSET_VERSION=\"development\"|INSTALLER_ASSET_VERSION=\"${version}\"|" "${output}/install.sh"
 
 render_template() {
   local source="$1"

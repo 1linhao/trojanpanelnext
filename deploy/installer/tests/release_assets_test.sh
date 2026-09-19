@@ -70,7 +70,7 @@ jq -e '.release_version == "1.2.3" and (.assets | length == 10)' \
   "${bundle}/release-manifest.json" >/dev/null
 bash -c 'source "$1"; test "${INSTALLER_ASSET_VERSION}" = 1.2.3' \
   release-version-test "${bundle}/install.sh"
-assert_fails bash -c '
+assert_fails env TP_INSTALLER_ASSET_VERSION=development bash -c '
   set -Eeuo pipefail
   source "$1"
   yaml_read_raw() { printf "1\n"; }
