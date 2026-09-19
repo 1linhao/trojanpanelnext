@@ -10,4 +10,4 @@
 | `ready-for-human` | `ready-for-human` | 需要人工判断或操作 |
 | `wontfix` | `wontfix` | 已决定不处理 |
 
-实现工单另用 `agent:flash` 或 `agent:gpt` 标记最低模型等级，并用 `risk:low`、`risk:medium` 或 `risk:high` 标记风险。`/to-tickets` 生成的工单直接标记 `ready-for-agent`，不重复分诊。
+实现工单另用 `agent:terra` 或 `agent:gpt` 标记最低模型等级；其中 `agent:terra` 固定使用 GPT-5.6-terra（high）。风险使用 `risk:low`、`risk:medium` 或 `risk:high` 标记。`/to-tickets` 生成的工单直接标记 `ready-for-agent`，不重复分诊。
