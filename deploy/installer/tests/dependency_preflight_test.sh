@@ -258,9 +258,20 @@ assert_package_prerequisites_are_rechecked_before_special_installers() {
   local output="${work}/${label}-${coreutils_command}-package-prerequisites-missing.out"
 
   if [[ "${label}" != development && "${coreutils_command}" == sha256sum ]]; then
-    delayed_missing_command=sha256sum
-    present_probes_before_missing=1
-    [[ "${label}" == release-bootstrap ]] && present_probes_before_missing=2
+    : >"${trace}"
+    if run_install_cli "${entrypoint}" "${config}" "${debian_release}" x86_64 1 \
+      "docker,curl,sha256sum,yq,jq" '' >"${output}" 2>&1; then
+      fail "${label} unexpectedly passed without the trusted release checksum tool"
+    fi
+    grep -Fq 'sha256sum is required' "${output}" ||
+      fail "${label} did not reject the release before executing unverified assets"
+    test ! -s "${trace}" ||
+      fail "${label} changed the host before its release checksum prerequisite passed"
+    if grep -Fq 'TP_WEB_DOMAIN is required' "${output}"; then
+      fail "${label} entered config loading without a trusted release checksum tool"
+    fi
+    printf 'TRACE entrypoint=%s mode=release-trust-prerequisite missing=sha256sum host-changes=0 config-loaded=0\n' "${label}"
+    return
   fi
   : >"${trace}"
   if TP_FAKE_DELAYED_MISSING_COMMAND="${delayed_missing_command}" \

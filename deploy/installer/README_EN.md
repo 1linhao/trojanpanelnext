@@ -65,7 +65,11 @@ sudo ./install.sh install --mode web --config ./web.yaml
 
 The first installation generates random `sysadmin`, MariaDB, and Redis passwords, writes them back
 to `web.yaml`, and changes its permissions to `600`. The terminal reports only where the secrets
-were saved; it never prints them. The installer also creates the control-plane mTLS identity in
+were saved; it never prints them.
+Sensitive writes use the Linux amd64 `secure-file` helper, which keeps the parent and original target
+file descriptors open through commit. Existing targets use a verified `renameat2(RENAME_EXCHANGE)`
+with rollback, while new targets use `RENAME_NOREPLACE`; a final-target or parent swap therefore
+fails without overwriting the target. The installer also creates the control-plane mTLS identity in
 `pki_bundle_dir`; the CA private key stays on the Web control plane.
 
 Installation returns success only after the configured identity can access MariaDB, Redis, the public
@@ -154,7 +158,9 @@ released `install.sh` runs the same preflight when called directly, before cross
 mutation boundary. The verifier only depends on Bash, awk, grep, and coreutils from the Debian 12
 base system; it does not require a preinstalled `jq`. It checks `SHA256SUMS` against its fixed asset
 set, rejects symlink components in bundle paths, and accepts only the generator's printable ASCII +
-LF manifest bytes before sourcing or executing any other bundled program.
+LF manifest bytes before sourcing or executing any other bundled program. Both entrypoints verify all
+12 assets, including `secure-file`, before the helper can first execute, then verify the configuration
+contract again from the descriptor-safe snapshot before crossing the host mutation boundary.
 
 The release configuration contract uses `deployment_mode`, `api_image`, `web_image`, and
 `node_agent_image`. The legacy `purpose`, `panel_image`, `ui_image`, and `core_image` keys are

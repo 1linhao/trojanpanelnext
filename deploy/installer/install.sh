@@ -2205,6 +2205,7 @@ main() {
     echo_content red "--entry-spec is not valid with refresh-cert"
     exit 1
   fi
+  verify_release_assets_before_host_change "${config_file}"
   prepare_secure_config "${config_file}"
   verify_release_assets_before_host_change "${TP_CONFIG_READ_FILE}"
   if [[ "${command}" == validate ]]; then

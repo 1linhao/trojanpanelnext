@@ -1,4 +1,4 @@
-//go:build linux
+//go:build linux && amd64
 
 package main
 
@@ -13,9 +13,19 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unsafe"
 )
 
 const noSymlinkMessage = "sensitive path must not contain symbolic links or .. components"
+
+const (
+	// Go 1.20's syscall package omits SYS_RENAMEAT2 on linux/amd64. The
+	// release contract supports linux/amd64 only, where the syscall number is
+	// stable and part of the kernel ABI.
+	linuxAMD64Renameat2 = 316
+	renameNoReplace     = 1
+	renameExchange      = 2
+)
 
 type fileIdentity struct {
 	device     uint64
@@ -33,6 +43,35 @@ func identityFromStat(stat *syscall.Stat_t) fileIdentity {
 		modifiedNS: stat.Mtim.Sec*int64(time.Second) + stat.Mtim.Nsec,
 		changedNS:  stat.Ctim.Sec*int64(time.Second) + stat.Ctim.Nsec,
 	}
+}
+
+type objectIdentity struct {
+	device uint64
+	inode  uint64
+}
+
+func objectIdentityFromStat(stat *syscall.Stat_t) objectIdentity {
+	return objectIdentity{device: uint64(stat.Dev), inode: stat.Ino}
+}
+
+func statFD(fd int) (syscall.Stat_t, error) {
+	var stat syscall.Stat_t
+	if err := syscall.Fstat(fd, &stat); err != nil {
+		return syscall.Stat_t{}, err
+	}
+	return stat, nil
+}
+
+func sameOpenObject(leftFD int, rightFD int) (bool, error) {
+	left, err := statFD(leftFD)
+	if err != nil {
+		return false, err
+	}
+	right, err := statFD(rightFD)
+	if err != nil {
+		return false, err
+	}
+	return objectIdentityFromStat(&left) == objectIdentityFromStat(&right), nil
 }
 
 func (identity fileIdentity) String() string {
@@ -126,6 +165,26 @@ func openRegularAt(directoryFD int, name string, flags int) (int, fileIdentity, 
 	return fileFD, identityFromStat(&stat), nil
 }
 
+func openOptionalRegularAt(directoryFD int, name string) (int, fileIdentity, uint32, bool, error) {
+	fileFD, err := syscall.Openat(directoryFD, name, syscall.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC|syscall.O_NONBLOCK, 0)
+	if errors.Is(err, syscall.ENOENT) {
+		return -1, fileIdentity{}, 0, false, nil
+	}
+	if err != nil {
+		return -1, fileIdentity{}, 0, false, errors.New(noSymlinkMessage)
+	}
+	stat, err := statFD(fileFD)
+	if err != nil {
+		_ = syscall.Close(fileFD)
+		return -1, fileIdentity{}, 0, false, fmt.Errorf("inspect sensitive file: %w", err)
+	}
+	if stat.Mode&syscall.S_IFMT != syscall.S_IFREG {
+		_ = syscall.Close(fileFD)
+		return -1, fileIdentity{}, 0, false, errors.New("sensitive file must be regular")
+	}
+	return fileFD, identityFromStat(&stat), stat.Mode, true, nil
+}
+
 func copyFD(destinationFD int, sourceFD int) error {
 	destinationCopy, err := syscall.Dup(destinationFD)
 	if err != nil {
@@ -198,22 +257,68 @@ func snapshot(path string, output string) (fileIdentity, error) {
 }
 
 func identityAt(parentFD int, name string) (fileIdentity, uint32, bool, error) {
-	fd, err := syscall.Openat(parentFD, name, syscall.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC|syscall.O_NONBLOCK, 0)
-	if errors.Is(err, syscall.ENOENT) {
+	fd, identity, mode, exists, err := openOptionalRegularAt(parentFD, name)
+	if err != nil {
+		return fileIdentity{}, 0, false, err
+	}
+	if !exists {
 		return fileIdentity{}, 0, false, nil
 	}
-	if err != nil {
-		return fileIdentity{}, 0, false, errors.New(noSymlinkMessage)
-	}
 	defer syscall.Close(fd)
-	var stat syscall.Stat_t
-	if err := syscall.Fstat(fd, &stat); err != nil {
-		return fileIdentity{}, 0, false, fmt.Errorf("inspect sensitive file: %w", err)
+	return identity, mode, true, nil
+}
+
+func renameat2(oldDirectoryFD int, oldName string, newDirectoryFD int, newName string, flags uintptr) error {
+	oldPointer, err := syscall.BytePtrFromString(oldName)
+	if err != nil {
+		return err
 	}
-	if stat.Mode&syscall.S_IFMT != syscall.S_IFREG {
-		return fileIdentity{}, 0, false, errors.New("sensitive file must be regular")
+	newPointer, err := syscall.BytePtrFromString(newName)
+	if err != nil {
+		return err
 	}
-	return identityFromStat(&stat), stat.Mode, true, nil
+	_, _, errno := syscall.Syscall6(
+		linuxAMD64Renameat2,
+		uintptr(oldDirectoryFD),
+		uintptr(unsafe.Pointer(oldPointer)),
+		uintptr(newDirectoryFD),
+		uintptr(unsafe.Pointer(newPointer)),
+		flags,
+		0,
+	)
+	if errno != 0 {
+		return errno
+	}
+	return nil
+}
+
+func pathStillNamesParent(path string, expectedParentFD int, expectedName string) error {
+	observedParentFD, observedName, err := openParent(path, false)
+	if err != nil {
+		return errors.New("sensitive path parent changed during atomic write")
+	}
+	defer syscall.Close(observedParentFD)
+	if observedName != expectedName {
+		return errors.New("sensitive path name changed during atomic write")
+	}
+	same, err := sameOpenObject(expectedParentFD, observedParentFD)
+	if err != nil {
+		return fmt.Errorf("reinspect sensitive path parent: %w", err)
+	}
+	if !same {
+		return errors.New("sensitive path parent changed during atomic write")
+	}
+	return nil
+}
+
+func rollbackExchange(parentFD int, temporaryName string, name string) error {
+	if err := renameat2(parentFD, temporaryName, parentFD, name, renameExchange); err != nil {
+		return fmt.Errorf("roll back sensitive file exchange: %w", err)
+	}
+	if err := syscall.Fsync(parentFD); err != nil {
+		return fmt.Errorf("sync rolled-back sensitive file directory: %w", err)
+	}
+	return nil
 }
 
 func atomicWrite(path string, input string, expectedValue string, mode uint32, createParents bool) error {
@@ -236,9 +341,12 @@ func atomicWrite(path string, input string, expectedValue string, mode uint32, c
 		return err
 	}
 	defer syscall.Close(parentFD)
-	current, currentMode, exists, err := identityAt(parentFD, name)
+	currentFD, current, currentMode, exists, err := openOptionalRegularAt(parentFD, name)
 	if err != nil {
 		return err
+	}
+	if currentFD >= 0 {
+		defer syscall.Close(currentFD)
 	}
 	if expectedValue != "" {
 		expected, parseErr := parseIdentity(expectedValue)
@@ -275,16 +383,112 @@ func atomicWrite(path string, input string, expectedValue string, mode uint32, c
 	if err := syscall.Fsync(temporaryFD); err != nil {
 		return fmt.Errorf("sync atomic sensitive file: %w", err)
 	}
-
-	latest, _, latestExists, err := identityAt(parentFD, name)
+	latestFD, latest, _, latestExists, err := openOptionalRegularAt(parentFD, name)
 	if err != nil {
 		return err
+	}
+	if latestFD >= 0 {
+		defer syscall.Close(latestFD)
 	}
 	if latestExists != exists || (exists && latest != current) {
 		return errors.New("sensitive file changed during atomic write")
 	}
-	if err := syscall.Renameat(parentFD, temporaryName, parentFD, name); err != nil {
-		return fmt.Errorf("replace sensitive file atomically: %w", err)
+	if exists {
+		same, compareErr := sameOpenObject(currentFD, latestFD)
+		if compareErr != nil {
+			return fmt.Errorf("reinspect sensitive file descriptor: %w", compareErr)
+		}
+		if !same {
+			return errors.New("sensitive file descriptor changed during atomic write")
+		}
+	}
+	if err := pathStillNamesParent(path, parentFD, name); err != nil {
+		return err
+	}
+	if err := waitAtPreCommitTestHook(); err != nil {
+		return err
+	}
+
+	if exists {
+		// RENAME_EXCHANGE gives us the exact directory entry displaced by the
+		// commit under temporaryName. We can compare that entry with the
+		// original target fd, and exchange the names back without overwriting a
+		// raced target if either the target or its parent namespace changed.
+		if err := renameat2(parentFD, temporaryName, parentFD, name, renameExchange); err != nil {
+			return fmt.Errorf("exchange sensitive file atomically: %w", err)
+		}
+
+		displacedFD, _, _, displacedExists, displacedErr := openOptionalRegularAt(parentFD, temporaryName)
+		if displacedFD >= 0 {
+			defer syscall.Close(displacedFD)
+		}
+		replacementFD, _, _, replacementExists, replacementErr := openOptionalRegularAt(parentFD, name)
+		if replacementFD >= 0 {
+			defer syscall.Close(replacementFD)
+		}
+		var commitErr error
+		if displacedErr != nil || replacementErr != nil || !displacedExists || !replacementExists {
+			commitErr = errors.New("sensitive file names changed during atomic exchange")
+		} else {
+			displacedSame, compareErr := sameOpenObject(currentFD, displacedFD)
+			if compareErr != nil {
+				commitErr = compareErr
+			} else if !displacedSame {
+				commitErr = errors.New("sensitive target changed immediately before atomic exchange")
+			}
+			replacementSame, compareErr := sameOpenObject(temporaryFD, replacementFD)
+			if compareErr != nil && commitErr == nil {
+				commitErr = compareErr
+			} else if !replacementSame && commitErr == nil {
+				commitErr = errors.New("atomic exchange installed an unexpected sensitive file")
+			}
+		}
+		if namespaceErr := pathStillNamesParent(path, parentFD, name); namespaceErr != nil && commitErr == nil {
+			commitErr = namespaceErr
+		}
+		if commitErr != nil {
+			if rollbackErr := rollbackExchange(parentFD, temporaryName, name); rollbackErr != nil {
+				return fmt.Errorf("%v; %w", commitErr, rollbackErr)
+			}
+			return commitErr
+		}
+		if err := syscall.Unlinkat(parentFD, temporaryName); err != nil {
+			if rollbackErr := rollbackExchange(parentFD, temporaryName, name); rollbackErr != nil {
+				return fmt.Errorf("remove replaced sensitive file: %v; %w", err, rollbackErr)
+			}
+			return fmt.Errorf("remove replaced sensitive file: %w", err)
+		}
+	} else {
+		// A missing target uses an atomic create-if-absent operation. A
+		// concurrent creator wins with EEXIST and is never overwritten.
+		if err := renameat2(parentFD, temporaryName, parentFD, name, renameNoReplace); err != nil {
+			return fmt.Errorf("create sensitive file atomically without replacement: %w", err)
+		}
+		replacementFD, _, _, replacementExists, replacementErr := openOptionalRegularAt(parentFD, name)
+		if replacementFD >= 0 {
+			defer syscall.Close(replacementFD)
+		}
+		commitErr := replacementErr
+		if commitErr == nil && !replacementExists {
+			commitErr = errors.New("atomic create did not install the sensitive file")
+		}
+		if commitErr == nil {
+			replacementSame, compareErr := sameOpenObject(temporaryFD, replacementFD)
+			if compareErr != nil {
+				commitErr = compareErr
+			} else if !replacementSame {
+				commitErr = errors.New("atomic create installed an unexpected sensitive file")
+			}
+		}
+		if namespaceErr := pathStillNamesParent(path, parentFD, name); namespaceErr != nil && commitErr == nil {
+			commitErr = namespaceErr
+		}
+		if commitErr != nil {
+			if rollbackErr := renameat2(parentFD, name, parentFD, temporaryName, renameNoReplace); rollbackErr != nil {
+				return fmt.Errorf("%v; roll back atomic sensitive file create: %w", commitErr, rollbackErr)
+			}
+			return commitErr
+		}
 	}
 	removeTemporary = false
 	if err := syscall.Fsync(parentFD); err != nil {

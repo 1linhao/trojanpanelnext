@@ -65,6 +65,9 @@ sudo ./install.sh install --mode web --config ./web.yaml
 
 首次安装会生成 `sysadmin`、MariaDB 与 Redis 的随机密码，写回 `web.yaml`
 并将文件权限设为 `600`。终端只显示密码保存位置，不显示密码。
+敏感写入由 Linux amd64 `secure-file` helper 完成：父目录与原目标 fd 在提交期间保持打开；
+已有目标使用 `renameat2(RENAME_EXCHANGE)` 交换、核验并在竞态时回滚，新目标使用
+`RENAME_NOREPLACE`，因此最终文件或父目录在提交窗口被替换时安装会失败且不覆盖目标。
 安装器还会在 `pki_bundle_dir` 自动生成主控 mTLS 身份；CA 私钥只保留在 Web 主控。
 
 安装命令只有在当前配置身份访问 MariaDB、Redis、公网 HTTPS UI 和容器内只读 `sysadmin` 凭据验证全部通过后才返回
@@ -164,7 +167,8 @@ sudo ./install.sh remove --mode node --config ./node-agent.yaml --purge-data
 发布包内的 `install.sh` 在被直接调用时也会执行同一预检。验证器只依赖 Debian 12
 基础系统提供的 Bash、awk、grep 与 coreutils，不要求宿主预装 `jq`；它先依据固定资产集合校验
 `SHA256SUMS`，拒绝 bundle 路径中的符号链接，并只接受生成器输出的 printable ASCII + LF manifest；
-且不会在此之前 source 或执行其他随包程序。两条入口都只在全部通过后才越过宿主变更边界。
+且不会在此之前 source 或执行其他随包程序。两条入口只有在完整校验 12 个资产（包括
+`secure-file`）后才首次执行 helper，并在安全快照后再次验证配置契约；全部通过后才越过宿主变更边界。
 
 发布配置契约使用 `deployment_mode`、`api_image`、`web_image` 和 `node_agent_image`；旧的
 `purpose`、`panel_image`、`ui_image` 和 `core_image` 只供既有安装配置兼容读取，不会出现在新模板中。
