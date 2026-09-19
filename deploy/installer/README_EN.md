@@ -140,7 +140,9 @@ The release workflow uses `release/generate-assets.sh` to produce matching versi
 `bootstrap.sh`, `install.sh`, the `web|node|combined` configuration templates,
 `release-manifest.json`, and `SHA256SUMS`. Product and runtime images are pinned as
 `name@sha256:<digest>`. Before invoking the installer, `bootstrap.sh` runs the bundled
-`verify-assets.sh` to verify versions, asset digests, image references, and configuration.
+`verify-assets.sh` to verify versions, asset digests, image references, and configuration. The
+released `install.sh` runs the same preflight when called directly, before crossing the host
+mutation boundary.
 
 The release configuration contract uses `deployment_mode`, `api_image`, `web_image`, and
 `node_agent_image`. The legacy `purpose`, `panel_image`, `ui_image`, and `core_image` keys are

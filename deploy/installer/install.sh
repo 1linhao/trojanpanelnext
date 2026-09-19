@@ -328,6 +328,18 @@ cfg_apply_compat() {
   fi
 }
 
+verify_release_assets_before_host_change() {
+  local config_file="$1"
+  local verifier="${INSTALLER_DIR}/verify-assets.sh"
+
+  [[ "${INSTALLER_ASSET_VERSION}" != development ]] || return 0
+  if [[ ! -x "${verifier}" || -L "${verifier}" ]]; then
+    echo_content red "Released installer requires its bundled verify-assets.sh"
+    exit 1
+  fi
+  "${verifier}" --assets-dir "${INSTALLER_DIR}" --config "${config_file}"
+}
+
 load_config() {
   local action="$1"
   local file="${2:-}"
@@ -1865,6 +1877,7 @@ main() {
     echo_content red "--entry-spec is not valid with refresh-cert"
     exit 1
   fi
+  verify_release_assets_before_host_change "${config_file}"
   if [[ "${command}" == validate ]]; then
     load_config "${mode}" "${config_file}" 0
   else

@@ -19,6 +19,33 @@ assert_fails() {
   fi
 }
 
+# Hermetic yq-compatible reader for direct release-installer validation. The
+# release preflight must reject unsafe images before dependency installation.
+yq() {
+  local operation="$1"
+  local expression="$2"
+  local file="$3"
+  if [[ "${operation}" == -e ]]; then
+    grep -q '^trojanpanelnext:' "${file}"
+    return
+  fi
+  [[ "${operation}" == -r ]] || return 2
+  local key value
+  key="${expression#.trojanpanelnext.}"
+  key="${key%% *}"
+  value="$(awk -F: -v key="${key}" '
+    $1 ~ "^[[:space:]]+" key "$" {
+      sub(/^[^:]*:[[:space:]]*/, "")
+      sub(/[[:space:]]+#.*$/, "")
+      gsub(/^"|"$/, "")
+      print
+      exit
+    }
+  ' "${file}")"
+  printf '%s\n' "${value}"
+}
+export -f yq
+
 digest() {
   printf 'sha256:%064d' "$1"
 }
@@ -52,6 +79,48 @@ work="$(mktemp -d)"
 trap 'rm -rf -- "${work}"' EXIT
 bundle="${work}/bundle"
 generate "${bundle}"
+release_validate_output="$("${bundle}/install.sh" validate --mode web --config "${bundle}/config-web.yaml")"
+grep -q 'valid for web deployment mode' <<<"${release_validate_output}"
+
+tag_only_config="${work}/tag-only-config.yaml"
+cp "${bundle}/config-web.yaml" "${tag_only_config}"
+sed -i 's#^  api_image:.*#  api_image: ghcr.io/1linhao/trojanpanelnext-api:latest#' \
+  "${tag_only_config}"
+assert_fails "${bundle}/install.sh" validate --mode web --config "${tag_only_config}"
+for image_key in web_image node_agent_image caddy_image mariadb_image redis_image; do
+  tag_config="${work}/tag-only-${image_key}.yaml"
+  cp "${bundle}/config-web.yaml" "${tag_config}"
+  sed -i "s#^  ${image_key}:.*#  ${image_key}: example.invalid/${image_key}:latest#" "${tag_config}"
+  assert_fails "${bundle}/install.sh" validate --mode web --config "${tag_config}"
+done
+
+invalid_digest_config="${work}/invalid-digest-config.yaml"
+cp "${bundle}/config-web.yaml" "${invalid_digest_config}"
+sed -i 's#^  api_image:.*#  api_image: ghcr.io/1linhao/trojanpanelnext-api@sha256:abc#' \
+  "${invalid_digest_config}"
+assert_fails "${bundle}/install.sh" validate --mode web --config "${invalid_digest_config}"
+
+other_digest_config="${work}/other-digest-config.yaml"
+cp "${bundle}/config-web.yaml" "${other_digest_config}"
+sed -i 's#^  api_image:.*#  api_image: ghcr.io/1linhao/trojanpanelnext-api@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff#' \
+  "${other_digest_config}"
+assert_fails "${bundle}/install.sh" validate --mode web --config "${other_digest_config}"
+
+host_sentinel="${work}/host-side-effect"
+for unsafe_config in "${tag_only_config}" "${invalid_digest_config}" "${other_digest_config}"; do
+  assert_fails env TP_HOST_SENTINEL="${host_sentinel}" bash -c '
+    set -Eeuo pipefail
+    source "$1"
+    host_side_effect() { printf called >"${TP_HOST_SENTINEL}"; }
+    require_root() { host_side_effect; }
+    load_config() { host_side_effect; }
+    validate_config() { :; }
+    validate_entry_spec_binding() { :; }
+    deploy_web() { host_side_effect; }
+    main install --mode web --config "$2"
+  ' release-install-preflight "${bundle}/install.sh" "${unsafe_config}"
+  test ! -e "${host_sentinel}" || fail 'release install crossed the host mutation boundary before image rejection'
+done
 
 "${VERIFY}" --assets-dir "${bundle}" --config "${bundle}/config-web.yaml"
 test -x "${bundle}/bootstrap.sh"
