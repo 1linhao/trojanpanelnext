@@ -156,7 +156,9 @@ sudo ./install.sh remove --mode node --config ./node-agent.yaml --purge-data
 `install.sh`、`web|node|combined` 配置模板、`release-manifest.json` 和
 `SHA256SUMS`。产品镜像和运行时镜像都以 `name@sha256:<digest>` 固定；
 `bootstrap.sh` 会先调用同包内的 `verify-assets.sh` 校验版本、资产摘要、镜像引用和配置；
-发布包内的 `install.sh` 在被直接调用时也会执行同一预检。两条入口都只在全部通过后才越过宿主变更边界。
+发布包内的 `install.sh` 在被直接调用时也会执行同一预检。验证器只依赖 Debian 12
+基础系统提供的 Bash、awk 与 coreutils，不要求宿主预装 `jq`；它先依据固定资产集合校验
+`SHA256SUMS`，且不会在此之前 source 或执行其他随包程序。两条入口都只在全部通过后才越过宿主变更边界。
 
 发布配置契约使用 `deployment_mode`、`api_image`、`web_image` 和 `node_agent_image`；旧的
 `purpose`、`panel_image`、`ui_image` 和 `core_image` 只供既有安装配置兼容读取，不会出现在新模板中。

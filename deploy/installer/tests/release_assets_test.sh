@@ -312,6 +312,14 @@ resign_asset() {
   )
 }
 
+resign_manifest() {
+  local target="$1"
+  (
+    cd "${target}"
+    sha256sum "${EXPECTED_RELEASE_ASSET_PATHS[@]}" release-manifest.json >SHA256SUMS
+  )
+}
+
 case_dir="$(copy_case missing-asset)"
 rm "${case_dir}/install.sh"
 assert_fails "${VERIFY}" --assets-dir "${case_dir}" --config "${case_dir}/config-web.yaml"
@@ -328,6 +336,7 @@ assert_fails "${VERIFY}" --assets-dir "${case_dir}" --config "${case_dir}/config
 case_dir="$(copy_case invalid-manifest-semver)"
 jq '.release_version = "1.2.3-01"' "${case_dir}/release-manifest.json" >"${case_dir}/manifest.tmp"
 mv "${case_dir}/manifest.tmp" "${case_dir}/release-manifest.json"
+resign_manifest "${case_dir}"
 assert_fails "${VERIFY}" --assets-dir "${case_dir}" --config "${case_dir}/config-web.yaml"
 
 case_dir="$(copy_case wrong-deployment-mode)"
@@ -338,17 +347,30 @@ assert_fails "${VERIFY}" --assets-dir "${case_dir}" --config "${case_dir}/config
 case_dir="$(copy_case traversal)"
 jq '(.assets[0].path) = "../bootstrap.sh"' "${case_dir}/release-manifest.json" >"${case_dir}/manifest.tmp"
 mv "${case_dir}/manifest.tmp" "${case_dir}/release-manifest.json"
+resign_manifest "${case_dir}"
 assert_fails "${VERIFY}" --assets-dir "${case_dir}" --config "${case_dir}/config-web.yaml"
 
 case_dir="$(copy_case duplicate-path)"
 jq '(.assets[1].path) = .assets[0].path' "${case_dir}/release-manifest.json" >"${case_dir}/manifest.tmp"
 mv "${case_dir}/manifest.tmp" "${case_dir}/release-manifest.json"
+resign_manifest "${case_dir}"
 assert_fails "${VERIFY}" --assets-dir "${case_dir}" --config "${case_dir}/config-web.yaml"
 
 case_dir="$(copy_case bad-attestation)"
 jq '(.attestations[0].digest) = "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"' \
   "${case_dir}/release-manifest.json" >"${case_dir}/manifest.tmp"
 mv "${case_dir}/manifest.tmp" "${case_dir}/release-manifest.json"
+resign_manifest "${case_dir}"
+assert_fails "${VERIFY}" --assets-dir "${case_dir}" --config "${case_dir}/config-web.yaml"
+
+case_dir="$(copy_case duplicate-json-key)"
+sed -i '/"release_version":/a\  "release_version": "1.2.3",' "${case_dir}/release-manifest.json"
+resign_manifest "${case_dir}"
+assert_fails "${VERIFY}" --assets-dir "${case_dir}" --config "${case_dir}/config-web.yaml"
+
+case_dir="$(copy_case unknown-manifest-field)"
+sed -i '/"schema_version":/a\  "unexpected": "field",' "${case_dir}/release-manifest.json"
+resign_manifest "${case_dir}"
 assert_fails "${VERIFY}" --assets-dir "${case_dir}" --config "${case_dir}/config-web.yaml"
 
 workflow="${REPO_ROOT}/.github/workflows/publish-images.yml"

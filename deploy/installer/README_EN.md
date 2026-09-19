@@ -142,7 +142,9 @@ The release workflow uses `release/generate-assets.sh` to produce matching versi
 `name@sha256:<digest>`. Before invoking the installer, `bootstrap.sh` runs the bundled
 `verify-assets.sh` to verify versions, asset digests, image references, and configuration. The
 released `install.sh` runs the same preflight when called directly, before crossing the host
-mutation boundary.
+mutation boundary. The verifier only depends on Bash, awk, and coreutils from the Debian 12 base
+system; it does not require a preinstalled `jq`. It checks `SHA256SUMS` against its fixed asset set
+before sourcing or executing any other bundled program.
 
 The release configuration contract uses `deployment_mode`, `api_image`, `web_image`, and
 `node_agent_image`. The legacy `purpose`, `panel_image`, `ui_image`, and `core_image` keys are
