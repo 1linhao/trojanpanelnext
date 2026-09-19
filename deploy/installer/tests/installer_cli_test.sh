@@ -55,23 +55,39 @@ assert_fails "${INSTALLER}" install --mode web --config /dev/null --keep-data
 assert_fails "${INSTALLER}" remove --mode web --config /dev/null --purge-data --keep-data
 
 "${INSTALLER}" validate --mode web \
-  --config "$(dirname "${INSTALLER}")/examples/web.yaml" | grep -q 'valid for web purpose'
+  --config "$(dirname "${INSTALLER}")/examples/web.yaml" | grep -q 'valid for web deployment mode'
 "${INSTALLER}" validate --mode node \
-  --config "$(dirname "${INSTALLER}")/examples/node-agent.yaml" | grep -q 'valid for node purpose'
+  --config "$(dirname "${INSTALLER}")/examples/node-agent.yaml" | grep -q 'valid for node deployment mode'
 assert_fails "${INSTALLER}" validate --mode node \
   --config "$(dirname "${INSTALLER}")/examples/web.yaml"
 
 legacy_config="$(mktemp)"
-missing_purpose_config="$(mktemp)"
+missing_mode_config="$(mktemp)"
+canonical_config="$(mktemp)"
+legacy_key_config="$(mktemp)"
+conflicting_mode_config="$(mktemp)"
 pki_dir="$(mktemp -d)"
 node_pki_dir="$(mktemp -d)"
 node_runtime_dir="$(mktemp -d)"
-trap 'rm -f "${legacy_config}" "${missing_purpose_config}"; rm -rf -- "${pki_dir}" "${node_pki_dir}" "${node_runtime_dir}"' EXIT
+trap 'rm -f "${legacy_config}" "${missing_mode_config}" "${canonical_config}" "${legacy_key_config}" "${conflicting_mode_config}"; rm -rf -- "${pki_dir}" "${node_pki_dir}" "${node_runtime_dir}"' EXIT
 sed 's/grpc_tls_mode: mtls/grpc_tls_mode: legacy/' \
   "$(dirname "${INSTALLER}")/examples/node-agent.yaml" >"${legacy_config}"
-sed '/purpose: web/d' "$(dirname "${INSTALLER}")/examples/web.yaml" >"${missing_purpose_config}"
+sed '/deployment_mode: web/d' "$(dirname "${INSTALLER}")/examples/web.yaml" >"${missing_mode_config}"
 assert_fails "${INSTALLER}" validate --mode node --config "${legacy_config}"
-assert_fails env TP_PURPOSE=web "${INSTALLER}" validate --mode web --config "${missing_purpose_config}"
+assert_fails env TP_DEPLOYMENT_MODE=web "${INSTALLER}" validate --mode web --config "${missing_mode_config}"
+cp "$(dirname "${INSTALLER}")/examples/web.yaml" "${canonical_config}"
+"${INSTALLER}" validate --mode web --config "${canonical_config}" |
+  grep -q 'valid for web deployment mode'
+sed \
+  -e 's/^  deployment_mode:/  purpose:/' \
+  -e 's/^  api_image:/  panel_image:/' \
+  -e 's/^  web_image:/  ui_image:/' \
+  -e 's/^  node_agent_image:/  core_image:/' \
+  "${canonical_config}" >"${legacy_key_config}"
+"${INSTALLER}" validate --mode web --config "${legacy_key_config}" |
+  grep -q 'valid for web deployment mode'
+sed '/deployment_mode: web/a\  purpose: node' "${canonical_config}" >"${conflicting_mode_config}"
+assert_fails "${INSTALLER}" validate --mode web --config "${conflicting_mode_config}"
 
 bash -c 'set -Eeuo pipefail; source "$1"; TP_PKI_BUNDLE_DIR="$2"; generate_web_client_pki' \
   installer-test "${INSTALLER}" "${pki_dir}"
@@ -98,7 +114,7 @@ external_refresh_dir="$(mktemp -d)"
 entry_spec="$(mktemp)"
 entry_trace="$(mktemp)"
 fake_entryctl="$(mktemp)"
-trap 'rm -f "${legacy_config}" "${missing_purpose_config}" "${entry_spec}" "${entry_trace}" "${fake_entryctl}"; rm -rf -- "${pki_dir}" "${node_pki_dir}" "${node_runtime_dir}" "${external_cases_dir}" "${external_tls_dir}" "${external_pairs_dir}" "${external_data_dir}" "${external_mismatch_dir}" "${external_wrong_domain_dir}" "${external_refresh_dir}"' EXIT
+trap 'rm -f "${legacy_config}" "${missing_mode_config}" "${canonical_config}" "${legacy_key_config}" "${conflicting_mode_config}" "${entry_spec}" "${entry_trace}" "${fake_entryctl}"; rm -rf -- "${pki_dir}" "${node_pki_dir}" "${node_runtime_dir}" "${external_cases_dir}" "${external_tls_dir}" "${external_pairs_dir}" "${external_data_dir}" "${external_mismatch_dir}" "${external_wrong_domain_dir}" "${external_refresh_dir}"' EXIT
 
 # The shipped template points at a real external certificate directory, which
 # cannot exist on a test host. Validate the template against a local pair.
@@ -127,9 +143,9 @@ jq -n '{
 }' >"${entry_spec}"
 chmod 0600 "${entry_spec}"
 
-"${INSTALLER}" validate --mode node --config "${external_cases_dir}/ready.yaml" | grep -q 'valid for node purpose'
+"${INSTALLER}" validate --mode node --config "${external_cases_dir}/ready.yaml" | grep -q 'valid for node deployment mode'
 "${INSTALLER}" validate --mode node --config "${external_cases_dir}/ready.yaml" \
-  --entry-spec "${entry_spec}" | grep -q 'valid for node purpose'
+  --entry-spec "${entry_spec}" | grep -q 'valid for node deployment mode'
 assert_fails "${INSTALLER}" validate --mode web --config "${EXAMPLES}/external-web.yaml" \
   --entry-spec "${entry_spec}"
 assert_fails "${INSTALLER}" validate --mode node --config "${EXAMPLES}/node-agent.yaml" \
@@ -137,7 +153,7 @@ assert_fails "${INSTALLER}" validate --mode node --config "${EXAMPLES}/node-agen
 assert_fails "${INSTALLER}" refresh-cert --mode node --config "${external_cases_dir}/ready.yaml" \
   --entry-spec "${entry_spec}"
 "${INSTALLER}" validate --mode node --config "${external_cases_dir}/ready.yaml" | grep -q 'External TLS material'
-"${INSTALLER}" validate --mode web --config "${EXAMPLES}/external-web.yaml" | grep -q 'valid for web purpose'
+"${INSTALLER}" validate --mode web --config "${EXAMPLES}/external-web.yaml" | grep -q 'valid for web deployment mode'
 assert_fails "${INSTALLER}" validate --mode web --config "${external_cases_dir}/ready.yaml"
 
 cat >"${fake_entryctl}" <<'EOF'
@@ -153,8 +169,8 @@ test "$(grep -Fxc "remove --spec ${entry_spec}" "${entry_trace}")" = 1
 grep -Fxq "remove --spec ${entry_spec} --purge" "${entry_trace}"
 
 # Defaults stay acme, so the pre-existing templates must keep validating.
-"${INSTALLER}" validate --mode web --config "${EXAMPLES}/web.yaml" | grep -q 'valid for web purpose'
-"${INSTALLER}" validate --mode node --config "${EXAMPLES}/node-agent.yaml" | grep -q 'valid for node purpose'
+"${INSTALLER}" validate --mode web --config "${EXAMPLES}/web.yaml" | grep -q 'valid for web deployment mode'
+"${INSTALLER}" validate --mode node --config "${EXAMPLES}/node-agent.yaml" | grep -q 'valid for node deployment mode'
 
 sed '/tls_cert_dir:/d' "${EXAMPLES}/external-node.yaml" >"${external_cases_dir}/missing-cert-dir.yaml"
 sed "s#tls_cert_dir: /etc/vps-factory/certs/node.example.com#tls_cert_dir: ${external_tls_dir}#; s/tls_mode: external/tls_mode: bogus/" \
@@ -171,7 +187,7 @@ sed "s#tls_cert_dir: /etc/vps-factory/certs/node.example.com#tls_cert_dir: ${ext
 assert_fails "${INSTALLER}" validate --mode node --config "${external_cases_dir}/hex-word-bind.yaml"
 sed "s#tls_cert_dir: /etc/vps-factory/certs/node.example.com#tls_cert_dir: ${external_tls_dir}#; s/bind_address: 127.0.0.1/bind_address: \"::1\"/" \
   "${EXAMPLES}/external-node.yaml" >"${external_cases_dir}/ipv6-bind.yaml"
-"${INSTALLER}" validate --mode node --config "${external_cases_dir}/ipv6-bind.yaml" | grep -q 'valid for node purpose'
+"${INSTALLER}" validate --mode node --config "${external_cases_dir}/ipv6-bind.yaml" | grep -q 'valid for node deployment mode'
 # A tls_cert_dir that exists but holds no pair must fail the same way.
 assert_fails "${INSTALLER}" validate --mode node --config "${external_cases_dir}/empty-cert-dir.yaml"
 
@@ -428,4 +444,4 @@ if grep -qiE 'password|mariadb_pas|redis_pass' "${external_data_dir}/trojanpanel
   fail "external contract README leaks a credential"
 fi
 
-printf 'PASS installer CLI and purpose/config contract\n'
+printf 'PASS installer CLI and deployment mode/config contract\n'

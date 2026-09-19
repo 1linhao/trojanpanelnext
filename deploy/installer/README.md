@@ -101,7 +101,8 @@ sudo ./install.sh install --mode node --config ./node-agent.yaml \
 成功后才删除应用容器。EntrySpec 必须与配置的 purpose、domain 一致，且变更动作要求 root 所有的
 0600 普通文件。
 
-`--mode` 必须和配置中的 `trojanpanelnext.purpose` 一致，模式不匹配时安装器会立即退出。
+`--mode` 必须和配置中的 `trojanpanelnext.deployment_mode` 一致，模式不匹配时安装器会立即退出。
+旧配置的 `purpose` 仅作为兼容输入继续接受。
 
 ## 重建与卸载
 
@@ -148,6 +149,38 @@ sudo ./install.sh remove --mode node --config ./node-agent.yaml --purge-data
 （certd 布局）→ 同词干的 `.crt`/`.key` 配对（递归三层）。存在多对且未显式指定时报错。
 
 配置中的密码不会打印到终端。请将实际配置作为敏感文件保存，不要提交到 Git。
+
+## 版本化发布资产
+
+正式发布工作流使用 `release/generate-assets.sh` 生成同一版本的 `bootstrap.sh`、
+`install.sh`、`web|node|combined` 配置模板、`release-manifest.json` 和
+`SHA256SUMS`。产品镜像和运行时镜像都以 `name@sha256:<digest>` 固定；
+`bootstrap.sh` 会先调用同包内的 `verify-assets.sh` 校验版本、资产摘要、镜像引用和配置；
+发布包内的 `install.sh` 在被直接调用时也会执行同一预检。两条入口都只在全部通过后才越过宿主变更边界。
+
+发布配置契约使用 `deployment_mode`、`api_image`、`web_image` 和 `node_agent_image`；旧的
+`purpose`、`panel_image`、`ui_image` 和 `core_image` 只供既有安装配置兼容读取，不会出现在新模板中。
+
+`combined` 是统一配置契约中的有效部署模式，但本工单不提供其容器编排；发布资产校验可以验证
+combined 配置，现有安装器仍只执行 `web` 与 `node`。无秘密的 manifest 结构示例见
+[example-release-manifest.json](release/example-release-manifest.json)。Release 使用 tar.gz 保留脚本可执行位，
+并同时附带 manifest 与 SHA256SUMS。下载后先验证归档 attestation，再解包并验证包内摘要：
+
+```bash
+archive=trojanpanelnext-installer-<version>.tar.gz
+gh attestation verify "${archive}" --repo 1linhao/trojanpanelnext
+mkdir trojanpanelnext-installer
+tar -xzf "${archive}" -C trojanpanelnext-installer
+cd trojanpanelnext-installer
+sha256sum -c SHA256SUMS
+```
+
+复制对应模板并编辑副本，不要修改发布包中受摘要保护的模板；然后验证实际配置：
+
+```bash
+cp ./config-web.yaml ./deployment.yaml
+./verify-assets.sh --assets-dir . --config ./deployment.yaml
+```
 
 ## 支持
 

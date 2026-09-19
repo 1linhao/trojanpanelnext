@@ -2,7 +2,7 @@
 
 [简体中文](README.md) | English
 
-The installer deploys a server non-interactively with one script, one YAML file, and one explicit server purpose.
+The installer deploys a server non-interactively with one script, one YAML file, and one explicit deployment mode.
 
 ## Purpose modes
 
@@ -95,7 +95,8 @@ After the application install succeeds, the installer calls the adjacent
 containers. The EntrySpec purpose and domain must match the installer config;
 mutating actions require a root-owned regular file with mode 0600.
 
-`--mode` must match `trojanpanelnext.purpose`; the installer exits immediately when they differ.
+`--mode` must match `trojanpanelnext.deployment_mode`; the installer exits immediately when they
+differ. Legacy `purpose` remains accepted only as compatibility input.
 
 ## Recreate or remove
 
@@ -132,6 +133,44 @@ Certificate discovery order: the files named by `tls_cert_file`/`tls_key_file`, 
 searched three levels deep. Several pairs without an explicit choice is an error.
 
 Passwords are never printed. Treat populated configuration files as secrets and do not commit them to Git.
+
+## Versioned release assets
+
+The release workflow uses `release/generate-assets.sh` to produce matching versions of
+`bootstrap.sh`, `install.sh`, the `web|node|combined` configuration templates,
+`release-manifest.json`, and `SHA256SUMS`. Product and runtime images are pinned as
+`name@sha256:<digest>`. Before invoking the installer, `bootstrap.sh` runs the bundled
+`verify-assets.sh` to verify versions, asset digests, image references, and configuration. The
+released `install.sh` runs the same preflight when called directly, before crossing the host
+mutation boundary.
+
+The release configuration contract uses `deployment_mode`, `api_image`, `web_image`, and
+`node_agent_image`. The legacy `purpose`, `panel_image`, `ui_image`, and `core_image` keys are
+accepted only when reading existing installer configurations and are not emitted in new templates.
+
+`combined` is valid in the unified configuration contract, but its container orchestration is
+outside this ticket. Release validation accepts a combined configuration while the existing
+installer continues to execute only `web` and `node`. See
+[example-release-manifest.json](release/example-release-manifest.json) for a secret-free manifest
+example. The Release tar.gz preserves executable modes and is accompanied by the manifest and
+SHA256SUMS. Verify its attestation before extracting and checking the bundled digests:
+
+```bash
+archive=trojanpanelnext-installer-<version>.tar.gz
+gh attestation verify "${archive}" --repo 1linhao/trojanpanelnext
+mkdir trojanpanelnext-installer
+tar -xzf "${archive}" -C trojanpanelnext-installer
+cd trojanpanelnext-installer
+sha256sum -c SHA256SUMS
+```
+
+Copy and edit a template instead of changing the digest-protected file in the release bundle,
+then validate the deployment configuration:
+
+```bash
+cp ./config-web.yaml ./deployment.yaml
+./verify-assets.sh --assets-dir . --config ./deployment.yaml
+```
 
 ## Support
 

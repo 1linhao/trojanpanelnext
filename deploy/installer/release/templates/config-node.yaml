@@ -1,29 +1,26 @@
 trojanpanelnext:
   schema_version: 1
+  asset_version: __ASSET_VERSION__
   deployment_mode: node
-
-  # DNS A/AAAA records must point to this Node Agent server.
   hostname: node.example.com
   email: admin@example.com
-
-  caddy_image: caddy:2.8.4
-  node_agent_image: ghcr.io/1linhao/trojanpanelnext-node-agent:latest
+  caddy_image: __CADDY_IMAGE__
+  mariadb_image: __MARIADB_IMAGE__
+  redis_image: __REDIS_IMAGE__
+  api_image: __API_IMAGE__
+  web_image: __WEB_IMAGE__
+  node_agent_image: __NODE_AGENT_IMAGE__
   node_caddy_http_port: 80
   node_caddy_https_port: 8863
-
-  # Connection to the Web control plane's MariaDB instance.
   mariadb_host: panel.example.com
   mariadb_port: 9507
-  mariadb_user: root
-  mariadb_password: replace-with-web-mariadb-password
+  mariadb_user: trojanpanelnext-node
+  mariadb_password: replace-from-node-bootstrap-bundle
   database: trojan_panel_db
   account_table: account
-
-  # Connection to the Web control plane's Redis instance.
   redis_host: panel.example.com
   redis_port: 6378
-  redis_password: replace-with-web-redis-password
-
+  redis_password: replace-from-node-bootstrap-bundle
   grpc_port: 8100
   core_port: 8082
   node_server_id: 1
@@ -32,6 +29,5 @@ trojanpanelnext:
   grpc_client_ca_path: /tpdata/trojan-panel-core/pki/client-ca.crt
   pki_bundle_dir: /tpdata/trojanpanelnext-pki
   kernel_runtime_path: /tpdata/trojan-panel-core/runtime
-
   force: 0
   purge_data: 0
