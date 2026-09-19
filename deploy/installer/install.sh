@@ -1856,7 +1856,7 @@ wait_for_web_health_probe() {
   MariaDB) echo_content yellow "    Check container ${MARIADB_CONTAINER} and its persisted data." ;;
   Redis) echo_content yellow "    Check container ${REDIS_CONTAINER} and its authentication state." ;;
   "Web HTTPS") echo_content yellow "    Check DNS, certificate issuance, ports 80/443, and the active entry provider for ${TP_WEB_DOMAIN}." ;;
-  "sysadmin API credential") echo_content yellow "    Check container ${PANEL_CONTAINER}; the generated credential remains in the restricted configuration." ;;
+  "sysadmin container credential") echo_content yellow "    Check container ${PANEL_CONTAINER}; the generated credential remains in the restricted configuration." ;;
   esac
   return 1
 }
@@ -1866,7 +1866,7 @@ verify_web_health() {
   wait_for_web_health_probe MariaDB probe_mariadb_health
   wait_for_web_health_probe Redis probe_redis_health
   wait_for_web_health_probe "Web HTTPS" probe_web_https_health
-  wait_for_web_health_probe "sysadmin API credential" probe_sysadmin_credential_health
+  wait_for_web_health_probe "sysadmin container credential" probe_sysadmin_credential_health
 }
 
 print_web_success() {

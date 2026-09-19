@@ -354,7 +354,7 @@ assert_health_failure MariaDB MariaDB
 assert_health_failure Redis Redis
 assert_health_failure HTTPS 'Web HTTPS'
 for _ in 1 2 3 4; do
-  assert_health_failure sysadmin 'sysadmin API credential'
+  assert_health_failure sysadmin 'sysadmin container credential'
 done
 
 grep -Fq 'docker run -d --name trojan-panel-mariadb' "${trace}" ||
