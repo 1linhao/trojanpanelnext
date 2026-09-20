@@ -1287,9 +1287,15 @@ validate_external_cert_pair() {
     echo_content red "TLS certificate and private key do not match"
     exit 1
   fi
-  if [[ -n "${domain}" ]] && ! openssl x509 -in "${cert}" -noout -checkhost "${domain}" >/dev/null 2>&1; then
-    echo_content red "TLS certificate does not cover node hostname: ${domain}"
-    exit 1
+  if [[ -n "${domain}" ]]; then
+    # Some OpenSSL releases print a hostname mismatch but still exit zero, so
+    # require the positive result text as well as invoking the public checker.
+    local hostname_check
+    hostname_check="$(openssl x509 -in "${cert}" -noout -checkhost "${domain}" 2>&1 || true)"
+    if [[ "${hostname_check}" != *" does match certificate"* ]]; then
+      echo_content red "TLS certificate does not cover node hostname: ${domain}"
+      exit 1
+    fi
   fi
 }
 
