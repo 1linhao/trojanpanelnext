@@ -25,24 +25,33 @@ sudo ./install.sh install --mode web --config ./web.yaml
 
 首次安装生成的 MariaDB 与 Redis 密码会写回 `web.yaml`。请妥善保存该文件，不要提交到 Git。
 
-安装器同时在 `/tpdata/trojanpanelnext-pki` 生成主控 mTLS 身份。Node Agent 只需要其中的
-`client-ca.crt`；CA 私钥与主控客户端证书不得离开 Web 主控。
+安装器同时在 `/tpdata/trojanpanelnext-pki` 生成主控 mTLS 身份。Node 引导包只携带其中的
+公开 `client-ca.crt`；CA 私钥与主控客户端证书不得离开 Web 主控。
 
 ## 安装 Node Agent
 
 ```bash
-cp examples/node-agent.yaml ./node-agent.yaml
-chmod 600 ./node-agent.yaml
+cp ./config-node.yaml ./node-sg.yaml
+chmod 600 ./node-sg.yaml
+./node-bundle create \
+  --credential-file /tpdata/trojan-panel/config/node-identities/node-sg.g1.json \
+  --node-config ./node-sg.yaml \
+  --client-ca /tpdata/trojanpanelnext-pki/client-ca.crt \
+  --output ./node-sg.g1.age
 ```
 
-编辑节点域名，并从 Web 主控的 `web.yaml` 填入 MariaDB 和 Redis 连接信息。通过可信的
-文件传输或密钥管理系统，将 Web 主控的 `/tpdata/trojanpanelnext-pki/client-ca.crt`
-复制到 Node 的同一路径。
+先用 Web 主控的 `node-identity register` 登记 Node。编辑 `node-sg.yaml` 中的节点域名、
+MariaDB/Redis 地址和镜像；`node-bundle` 从权限为 `0600` 的登记凭据文件注入三组专用身份，
+并交互读取加密口令。把生成的 `.age` 文件传到 Node，不传明文凭据或任何私钥。
 
 ```bash
-./install.sh validate --mode node --config ./node-agent.yaml
-sudo ./install.sh install --mode node --config ./node-agent.yaml
+sudo ./install.sh validate --mode node --bundle ./node-sg.g1.age
+sudo ./install.sh install --mode node --bundle ./node-sg.g1.age
 ```
+
+安装等待期间，在 Web 主控另一终端执行
+`node-identity verify --id <node-identity-id>`。MariaDB、Redis、Node API 和 Web→Node
+mTLS/gRPC 四项检查全部通过后安装才成功。
 
 ## 更新容器
 

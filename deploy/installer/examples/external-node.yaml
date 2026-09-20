@@ -49,6 +49,8 @@ trojanpanelnext:
   grpc_port: 8100
   core_port: 8082
   node_server_id: 1
+  node_identity_id: 11111111-2222-4333-8444-555555555555
+  node_identity_generation: 1
   grpc_tls_mode: mtls
   grpc_tls_server_name: node.example.com
   grpc_client_ca_path: /tpdata/trojan-panel-core/pki/client-ca.crt

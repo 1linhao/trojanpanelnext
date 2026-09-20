@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
@@ -13,8 +14,78 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+	"trojan-panel-core/bootstrap"
 	"trojan-panel-core/core"
 )
+
+func TestTrustedWebMTLSStateProbeMarksBootstrapReady(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("TP_NODE_BOOTSTRAP_MARKER", filepath.Join(dir, "bootstrap-ready.json"))
+	caCert, caKey, caPEM := createTestCA(t, "controller-ca")
+	serverCert, serverKey := issueTestCertificate(t, caCert, caKey, "node.test", []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth})
+	clientCert, clientKey := issueTestCertificate(t, caCert, caKey, "controller", []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth})
+	serverCertPath, serverKeyPath := writeTestPair(t, dir, "server", serverCert, serverKey)
+	caPath := filepath.Join(dir, "client-ca.crt")
+	if err := os.WriteFile(caPath, caPEM, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	oldCert := core.Config.CertConfig
+	oldGRPC := core.Config.GrpcConfig
+	oldNode := core.Config.NodeConfig
+	t.Cleanup(func() {
+		core.Config.CertConfig = oldCert
+		core.Config.GrpcConfig = oldGRPC
+		core.Config.NodeConfig = oldNode
+	})
+	core.Config.CertConfig.CrtPath = serverCertPath
+	core.Config.CertConfig.KeyPath = serverKeyPath
+	core.Config.GrpcConfig.TLSMode = "mtls"
+	core.Config.GrpcConfig.ClientCAPath = caPath
+	core.Config.NodeConfig = core.NodeConfig{
+		ServerID: 42, IdentityID: "11111111-2222-4333-8444-555555555555", IdentityGeneration: 7,
+	}
+	serverTLS, err := grpcTLSConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := grpc.NewServer(grpc.Creds(credentials.NewTLS(serverTLS)))
+	RegisterApiStateServiceServer(server, new(StateApiServer))
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(func() {
+		server.Stop()
+		_ = listener.Close()
+	})
+
+	roots := x509.NewCertPool()
+	roots.AppendCertsFromPEM(caPEM)
+	clientTLS := &tls.Config{
+		MinVersion: tls.VersionTLS12, ServerName: "node.test", RootCAs: roots,
+		Certificates: []tls.Certificate{{Certificate: [][]byte{clientCert.Raw}, PrivateKey: clientKey}},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	connection, err := grpc.DialContext(ctx, listener.Addr().String(),
+		grpc.WithTransportCredentials(credentials.NewTLS(clientTLS)), grpc.WithBlock())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.Close()
+	response, err := NewApiStateServiceClient(connection).GetNodeServerState(ctx, &NodeServerStateDto{})
+	if err != nil || !response.Success {
+		t.Fatalf("trusted Web state probe failed: response=%v error=%v", response, err)
+	}
+	if !bootstrap.Ready() {
+		t.Fatal("trusted Web mTLS/gRPC state probe did not mark the Node bootstrap ready")
+	}
+}
 
 func TestGRPCMTLSAcceptsOnlyTrustedClientAndServerName(t *testing.T) {
 	dir := t.TempDir()

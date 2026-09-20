@@ -11,7 +11,8 @@
 | `web` | Web 主控 | API、Web UI、MariaDB、Redis、Caddy |
 | `node` | Node Agent | 节点 Agent、代理内核运行环境、证书与伪装站 |
 
-Web 主控应先安装。Node Agent 使用 Web 主控配置文件中生成的 MariaDB 和 Redis 密码。
+Web 主控应先安装。每个 Node Agent 使用 Web 主控签发的独立 MariaDB 与 Redis 身份，不复用
+Web 的 root 或 default 用户。
 
 ## 外部 TLS 模式
 
@@ -74,31 +75,52 @@ sudo ./install.sh install --mode web --config ./web.yaml
 成功。任一探测失败都返回非零，并输出不含秘密的定位建议。使用同一配置重跑会复用已保存的三组凭据。
 管理员凭据探测不暴露 HTTP 路径，也不会启动 Redis/限流、签发会话、更新登录时间或累计登录失败次数。
 
-Node Agent 安装前，通过可信的文件传输或密钥管理系统，将 Web 主控中的
-`/tpdata/trojanpanelnext-pki/client-ca.crt` 复制到 Node 的同一路径。只复制公开 CA
-证书，不要复制 `client-ca.key`、`client.key` 或 `client.crt`。
-安装器会把 CA 摘要写入 Core 容器环境；首次接管旧容器或 CA 内容变化时会自动重建
-Core，使新的信任根立即生效。CA 未变化时重复安装不会重启 Core。
-
 ## Node Agent 安装
 
-复制配置模板：
+在 Web 主控登记 Node 后，使用同一版本 Release 中的 `node-bundle` 生成加密引导包。先把
+Node 模板复制到权限为 `0600` 的工作文件，填写节点域名、Web MariaDB/Redis 地址和镜像；
+身份 ID、代次及三组专用凭据会从 `node-identity register|rotate` 生成的文件中注入：
 
 ```bash
-cp examples/node-agent.yaml ./node-agent.yaml
-chmod 600 ./node-agent.yaml
+cp ./config-node.yaml ./node-sg.yaml
+chmod 600 ./node-sg.yaml
+./node-bundle create \
+  --credential-file /tpdata/trojan-panel/config/node-identities/node-sg.g1.json \
+  --node-config ./node-sg.yaml \
+  --client-ca /tpdata/trojanpanelnext-pki/client-ca.crt \
+  --output ./node-sg.g1.age
 ```
 
-填写节点域名和 Web 主控地址，并把 Web 主控 `node-identity register|rotate` 产生的受限凭据文件中
-`mariadb.username`、`mariadb.password`、`redis.username`、`redis.password`、
-`redis_auth.username`、`redis_auth.password` 和 `node_server_id`
-写入配置；不要复用 Web 的 root/默认用户密码。确认公开 CA 证书已放入 `pki_bundle_dir`：
+口令默认从终端交互读取并在创建时确认；自动化可设置 `TP_NODE_BUNDLE_PASSWORD`，但口令没有
+命令行参数。包固定且仅含 `config-node.yaml`、`manifest.json`、`pki/client-ca.crt`；公开 CA
+经过解析校验，包中不含 `client-ca.key`、Web `client.key` 或其他私钥。只需通过可信通道把
+`.age` 文件传到 Node VPS。
+
+在 Node VPS 上使用同一 Release 安装。安装器在校验 Release 资产后只把明文解到 `/dev/shm`
+的私有目录，并在成功或失败退出时清理。默认交互输入口令；非交互场景可把环境变量显式传给
+`sudo`：
 
 ```bash
-./install.sh validate --mode node --config ./node-agent.yaml
-sudo ./install.sh install --mode node --config ./node-agent.yaml
-sudo ./install.sh refresh-cert --mode node --config ./node-agent.yaml
+sudo ./install.sh validate --mode node --bundle ./node-sg.g1.age
+sudo ./install.sh install --mode node --bundle ./node-sg.g1.age
+# 非交互示例：sudo env TP_NODE_BUNDLE_PASSWORD="$TP_NODE_BUNDLE_PASSWORD" \
+#   ./install.sh install --mode node --bundle ./node-sg.g1.age
 ```
+
+安装器会先以 Node 的专用身份检查 MariaDB、Redis cache ACL 与 Redis auth ACL，然后等待
+Web→Node mTLS/gRPC 验证。在 Node 安装等待期间，从 Web 主控的另一终端执行：
+
+```bash
+sudo docker exec trojan-panel /tpdata/trojan-panel/trojan-panel \
+  node-identity verify --id <node-identity-id>
+```
+
+该调用使用 Web 持有的客户端证书并校验 Node 服务端证书；Node 的 `/healthz` 只在当前身份代次
+收到此调用后就绪，四项检查全部通过安装才返回成功。Node 每 30 秒用新连接复检三组数据层身份；
+轮换或撤销后，旧包不能通过安装检查，已经运行的旧代 Node 也会停止。新代次需生成新包重装。
+
+直接使用权限为 `0600` 的 `--config` 仍用于开发、移除和证书刷新，但正式 Node 首装应使用
+加密 `--bundle`。
 
 当宿主管理系统已经生成 Protocol v1 EntrySpec 时，通过 `--entry-spec` 把它交给安装器：
 
@@ -163,14 +185,14 @@ sudo ./install.sh remove --mode node --config ./node-agent.yaml --purge-data
 ## 版本化发布资产
 
 正式发布工作流使用 `release/generate-assets.sh` 生成同一版本的 `bootstrap.sh`、
-`install.sh`、用于安全打开/原子写入敏感配置的 `secure-file`、`web|node|combined` 配置模板、`release-manifest.json` 和
+`install.sh`、`node-bundle`、用于安全打开/原子写入敏感配置的 `secure-file`、`web|node|combined` 配置模板、`release-manifest.json` 和
 `SHA256SUMS`。产品镜像和运行时镜像都以 `name@sha256:<digest>` 固定；
 `bootstrap.sh` 会先调用同包内的 `verify-assets.sh` 校验版本、资产摘要、镜像引用和配置；
 发布包内的 `install.sh` 在被直接调用时也会执行同一预检。验证器只依赖 Debian 12
 基础系统提供的 Bash、awk、grep 与 coreutils，不要求宿主预装 `jq`；它先依据固定资产集合校验
 `SHA256SUMS`，拒绝 bundle 路径中的符号链接，并只接受生成器输出的 printable ASCII + LF manifest；
-且不会在此之前 source 或执行其他随包程序。两条入口只有在完整校验 12 个资产（包括
-`secure-file`）后才首次执行 helper，并在安全快照后再次验证配置契约；全部通过后才越过宿主变更边界。
+且不会在此之前 source 或执行其他随包程序。两条入口只有在完整校验 13 个资产（包括
+`secure-file` 和 `node-bundle`）后才首次执行 helper，并在安全快照后再次验证配置契约；全部通过后才越过宿主变更边界。
 
 发布配置契约使用 `deployment_mode`、`api_image`、`web_image` 和 `node_agent_image`；旧的
 `purpose`、`panel_image`、`ui_image` 和 `core_image` 只供既有安装配置兼容读取，不会出现在新模板中。

@@ -6,26 +6,31 @@
     {
       "name": "bootstrap",
       "path": "bootstrap.sh",
-      "sha256": "f8cb31ee3bf70d3d0bd97ee25ab26d4225b335e1002774ee1767e24111ffd3ae"
+      "sha256": "0e2e1f4b90227cacd2c19e8cfe1826f9cc84cb33665f69816f639754ad542317"
     },
     {
       "name": "release-contract",
       "path": "release-contract.sh",
-      "sha256": "94b4074f99a55d5d97c1a8c947a12d3fe7c8b22b7dfad1a498617ca6a1e805c8"
+      "sha256": "6779c469ea7d9f6a397ffef130e89db1ba1bf6e0eed8b88827c93f30b273f5f9"
     },
     {
       "name": "verify-assets",
       "path": "verify-assets.sh",
-      "sha256": "3b608e17af94d1ad75e5e564319086cb805c78a580be786772b517be51211288"
+      "sha256": "e45e44f3d0a71f64157653cfdce9550dfae0d1c1117ca322b364cbd77ab821eb"
     },
     {
       "name": "install",
       "path": "install.sh",
-      "sha256": "31de872e939f68b8ea4d6725537444cbb16cc22a52710925b407c879f6b71a9f"
+      "sha256": "7e5973662f22e290040fbeabb83ee8ccfe788ae3d6e9584543a359dfb68a4136"
     },
     {
       "name": "secure-file",
       "path": "secure-file",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "name": "node-bundle",
+      "path": "node-bundle",
       "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
     },
     {
@@ -36,7 +41,7 @@
     {
       "name": "config-node",
       "path": "config-node.yaml",
-      "sha256": "03c724eafac9f68d5bb50dabfa7dc39d7c5b37b7102cd7b94adffa9de7653d1a"
+      "sha256": "99ed2cc92991b5c58e892d4d8787ea9c138229cb7e9e89f3171f5f57c1dddaa1"
     },
     {
       "name": "config-combined",

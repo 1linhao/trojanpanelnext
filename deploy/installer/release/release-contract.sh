@@ -9,6 +9,7 @@ TP_RELEASE_ASSET_PATHS=(
   verify-assets.sh
   install.sh
   secure-file
+  node-bundle
   config-web.yaml
   config-node.yaml
   config-combined.yaml

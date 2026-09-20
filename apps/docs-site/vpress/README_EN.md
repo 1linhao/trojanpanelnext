@@ -24,9 +24,9 @@ sudo ./install.sh install --mode web --config ./web.yaml
 Install a Node Agent:
 
 ```bash
-cp examples/node-agent.yaml ./node-agent.yaml
-./install.sh validate --mode node --config ./node-agent.yaml
-sudo ./install.sh install --mode node --config ./node-agent.yaml
+# After registering the identity on Web and creating node-sg.age with node-bundle
+sudo ./install.sh validate --mode node --bundle ./node-sg.age
+sudo ./install.sh install --mode node --bundle ./node-sg.age
 ```
 
 ## Support

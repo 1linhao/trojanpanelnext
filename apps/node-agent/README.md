@@ -47,6 +47,20 @@ create table trojan_panel_db.account
 
 router->api->middleware->app->service/dao->core
 
+## 引导就绪与凭据失效
+
+Node Agent 启动前会用配置中的专用身份建立新连接，检查 MariaDB 的 `node_server` 读取权限、
+Redis cache 身份的 `trojan-panel-core:*` 读写权限和 auth 身份的共享 JWT 键读取权限。任一失败
+都会阻止启动。运行期间默认每 30 秒重新建立连接复检；轮换或撤销导致旧身份认证失败时进程退出，
+由容器重启策略重试，但旧配置不会恢复健康。
+
+`GET /healthz` 在当前 `node_identity_id`、`identity_generation` 与 `server_id` 收到经过客户端
+证书认证的 Web→Node gRPC 状态调用前返回 `503`，之后返回 `200`。就绪标记以 `0600` 原子写入
+运行目录，并与身份代次绑定；复制旧标记不能让新代次就绪。安装器用这一端点作为最终门禁。
+
+排障时可在容器内设置 `TP_VERIFY_NODE_DATA_SERVICES=mariadb|redis|all` 单独执行数据层探测；
+输出只报告成功类别或通用失败，不打印凭据。
+
 ## 构建
 
 [compile.bat](compile.bat)

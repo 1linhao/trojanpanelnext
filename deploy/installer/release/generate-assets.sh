@@ -61,6 +61,9 @@ install -m 0755 "${installer_source}" "${output}/install.sh"
 (cd "${INSTALLER_DIR}/securefile" && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
   go build -trimpath -ldflags '-s -w -buildid=' -o "${output}/secure-file" .)
 chmod 0755 "${output}/secure-file"
+(cd "${INSTALLER_DIR}/nodebundle" && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+  go build -trimpath -ldflags '-s -w -buildid=' -o "${output}/node-bundle" .)
+chmod 0755 "${output}/node-bundle"
 install -m 0755 "${INSTALLER_DIR}/entry/entryctl.sh" "${output}/entry/entryctl.sh"
 install -m 0644 "${INSTALLER_DIR}/entry/controller.sh" "${output}/entry/controller.sh"
 install -m 0644 "${INSTALLER_DIR}/entry/adapters/external.sh" "${output}/entry/adapters/external.sh"

@@ -4,6 +4,7 @@ import (
 	"context"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
+	"trojan-panel-core/bootstrap"
 	"trojan-panel-core/core/process"
 	"trojan-panel-core/model/constant"
 )
@@ -35,6 +36,9 @@ func (s *StateApiServer) GetNodeState(ctx context.Context, nodeStateDto *NodeSta
 func (s *StateApiServer) GetNodeServerState(ctx context.Context, nodeServerStateDto *NodeServerStateDto) (*Response, error) {
 	if err := authRequest(ctx); err != nil {
 		return &Response{Success: false, Msg: err.Error()}, nil
+	}
+	if err := bootstrap.MarkVerified(); err != nil {
+		return &Response{Success: false, Msg: "bootstrap readiness could not be recorded"}, nil
 	}
 	nodeServerStateVo := &NodeServerStateVo{
 		Version: constant.TrojanPanelCoreVersion,

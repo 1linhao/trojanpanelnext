@@ -12,6 +12,7 @@ INITIAL_SYSADMIN_PASSWORD_FILE="${INITIAL_SYSADMIN_PASSWORD_FILE:-${TP_DATA}/tro
 TP_PKI_BUNDLE_DIR="${TP_PKI_BUNDLE_DIR:-${TP_DATA}/trojanpanelnext-pki}"
 INSTALLER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SECURE_FILE_HELPER="${SECURE_FILE_HELPER:-${INSTALLER_DIR}/secure-file}"
+NODE_BUNDLE_HELPER="${NODE_BUNDLE_HELPER:-${INSTALLER_DIR}/node-bundle}"
 ENTRYCTL_PATH="${ENTRYCTL_PATH:-${INSTALLER_DIR}/entry/entryctl.sh}"
 ENTRY_SPEC_FILE="${ENTRY_SPEC_FILE:-}"
 EXTERNAL_MANAGED_DIR="${EXTERNAL_MANAGED_DIR:-${TP_DATA}/trojanpanelnext-external}"
@@ -46,6 +47,8 @@ UI_PORT="${UI_PORT:-8888}"
 CORE_PORT="${CORE_PORT:-8082}"
 GRPC_PORT="${GRPC_PORT:-8100}"
 NODE_SERVER_ID="${NODE_SERVER_ID:-0}"
+NODE_IDENTITY_ID="${NODE_IDENTITY_ID:-}"
+NODE_IDENTITY_GENERATION="${NODE_IDENTITY_GENERATION:-0}"
 GRPC_TLS_MODE="${GRPC_TLS_MODE:-mtls}"
 GRPC_TLS_SERVER_NAME="${GRPC_TLS_SERVER_NAME:-}"
 GRPC_CLIENT_CA_PATH="${GRPC_CLIENT_CA_PATH:-${TP_DATA}/trojan-panel-core/pki/client-ca.crt}"
@@ -79,6 +82,9 @@ INSTALLER_ASSET_VERSION="development"
 TP_ASSET_VERSION=""
 TP_TEMP_TOOLS_DIR=""
 TP_SECURE_CONFIG_DIR=""
+TP_NODE_BUNDLE_DIR=""
+TP_NODE_BUNDLE_TMP_ROOT="${TP_NODE_BUNDLE_TMP_ROOT:-/dev/shm}"
+TP_NODE_BUNDLE_ACTIVE=0
 TP_DEPENDENCY_PLAN=(
   'docker|docker|install|docker|-|download and run the Docker installer from https://get.docker.com'
   'age|age|install|package|age|apt-get install -y age'
@@ -96,6 +102,9 @@ cleanup() {
   fi
   if [[ -n "${TP_SECURE_CONFIG_DIR}" && -d "${TP_SECURE_CONFIG_DIR}" ]]; then
     rm -rf -- "${TP_SECURE_CONFIG_DIR}"
+  fi
+  if [[ -n "${TP_NODE_BUNDLE_DIR}" && -d "${TP_NODE_BUNDLE_DIR}" ]]; then
+    rm -rf -- "${TP_NODE_BUNDLE_DIR}"
   fi
 }
 
@@ -115,15 +124,16 @@ usage() {
   local mode="${1:-web|node}"
   cat <<EOF
 Usage:
-  $0 install  --mode $mode --config <file> [--entry-spec <0600-file>]
+  $0 install  --mode $mode (--config <file>|--bundle <encrypted.age>) [--entry-spec <0600-file>]
   $0 remove   --mode $mode --config <file> [--entry-spec <0600-file>] [--purge-data|--keep-data]
-  $0 validate --mode $mode --config <file> [--entry-spec <file>]
+  $0 validate --mode $mode (--config <file>|--bundle <encrypted.age>) [--entry-spec <file>]
   $0 refresh-cert --mode node --config <file>
 
 Options:
   --mode <mode>      Deployment mode: Web control plane or Node Agent
   --entry-spec <file>  Versioned EntrySpec consumed by EntryController
   --config <file>    YAML configuration file
+  --bundle <file>    Encrypted Node bootstrap bundle (node install/validate only)
   --force            Recreate existing containers during installation
   --purge-data       Delete generated data during removal
   --keep-data        Preserve generated data during removal, overriding the config
@@ -508,7 +518,8 @@ cfg_apply_compat() {
 }
 
 verify_release_assets_before_host_change() {
-  local config_file="$1"
+  local config_file="${1:-}"
+  local assets_only="${2:-0}"
   local verifier="${INSTALLER_DIR}/verify-assets.sh"
 
   [[ "${INSTALLER_ASSET_VERSION}" != development ]] || return 0
@@ -516,7 +527,57 @@ verify_release_assets_before_host_change() {
     echo_content red "Released installer requires its bundled verify-assets.sh"
     exit 1
   fi
-  "${verifier}" --assets-dir "${INSTALLER_DIR}" --config "${config_file}"
+  if [[ "${assets_only}" == 1 ]]; then
+    "${verifier}" --assets-dir "${INSTALLER_DIR}" --assets-only
+  else
+    "${verifier}" --assets-dir "${INSTALLER_DIR}" --config "${config_file}"
+  fi
+}
+
+ensure_node_bundle_helper() {
+  if [[ -x "${NODE_BUNDLE_HELPER}" && ! -L "${NODE_BUNDLE_HELPER}" ]]; then
+    return
+  fi
+  if [[ "${INSTALLER_ASSET_VERSION}" == development ]] && command -v go >/dev/null 2>&1; then
+    [[ -n "${TP_TEMP_TOOLS_DIR}" ]] || {
+      TP_TEMP_TOOLS_DIR="$(mktemp -d /tmp/trojanpanelnext-tools.XXXXXX)"
+      chmod 0700 "${TP_TEMP_TOOLS_DIR}"
+    }
+    NODE_BUNDLE_HELPER="${TP_TEMP_TOOLS_DIR}/node-bundle"
+    (cd "${INSTALLER_DIR}/nodebundle" && CGO_ENABLED=0 go build -trimpath -o "${NODE_BUNDLE_HELPER}" .)
+    chmod 0700 "${NODE_BUNDLE_HELPER}"
+    return
+  fi
+  echo_content red "Installer node-bundle helper is missing or unsafe"
+  exit 1
+}
+
+prepare_node_bundle() {
+  local bundle="$1"
+  [[ -f "${bundle}" && ! -L "${bundle}" ]] || {
+    echo_content red "Encrypted Node bootstrap bundle is missing or unsafe: ${bundle}"
+    exit 1
+  }
+  [[ -d "${TP_NODE_BUNDLE_TMP_ROOT}" && ! -L "${TP_NODE_BUNDLE_TMP_ROOT}" ]] || {
+    echo_content red "Node bootstrap temporary root is missing or unsafe: ${TP_NODE_BUNDLE_TMP_ROOT}"
+    exit 1
+  }
+  if [[ "$(stat -f -c %T "${TP_NODE_BUNDLE_TMP_ROOT}")" != tmpfs ]]; then
+    echo_content red "Node bootstrap plaintext may only be opened on a tmpfs temporary root"
+    exit 1
+  fi
+  ensure_node_bundle_helper
+  TP_NODE_BUNDLE_DIR="$(mktemp -d "${TP_NODE_BUNDLE_TMP_ROOT%/}/trojanpanelnext-node-bundle.XXXXXX")"
+  chmod 0700 "${TP_NODE_BUNDLE_DIR}"
+  if ! "${NODE_BUNDLE_HELPER}" extract --bundle "${bundle}" --directory "${TP_NODE_BUNDLE_DIR}"; then
+    echo_content red "Could not decrypt or validate the Node bootstrap bundle"
+    exit 1
+  fi
+  unset TP_NODE_BUNDLE_PASSWORD
+  mkdir -m 0700 "${TP_NODE_BUNDLE_DIR}/secure"
+  TP_SECURE_CONFIG_DIR="${TP_NODE_BUNDLE_DIR}/secure"
+  TP_NODE_BUNDLE_ACTIVE=1
+  prepare_secure_config "${TP_NODE_BUNDLE_DIR}/config-node.yaml"
 }
 
 ensure_secure_file_helper() {
@@ -597,6 +658,8 @@ load_config() {
   cfg_apply "${file}" CORE_PORT core_port
   cfg_apply "${file}" GRPC_PORT grpc_port
   cfg_apply "${file}" NODE_SERVER_ID node_server_id
+  cfg_apply "${file}" NODE_IDENTITY_ID node_identity_id
+  cfg_apply "${file}" NODE_IDENTITY_GENERATION node_identity_generation
   cfg_apply "${file}" GRPC_TLS_MODE grpc_tls_mode
   cfg_apply "${file}" GRPC_TLS_SERVER_NAME grpc_tls_server_name
   cfg_apply "${file}" GRPC_CLIENT_CA_PATH grpc_client_ca_path
@@ -799,6 +862,14 @@ validate_config() {
     require_value REDIS_AUTH_PASSWORD
     if [[ ! "${NODE_SERVER_ID}" =~ ^[1-9][0-9]*$ ]]; then
       echo_content red "node_server_id must be a positive integer"
+      exit 1
+    fi
+    if [[ ! "${NODE_IDENTITY_ID}" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
+      echo_content red "node_identity_id must be a UUID from the Node bootstrap bundle"
+      exit 1
+    fi
+    if [[ ! "${NODE_IDENTITY_GENERATION}" =~ ^[1-9][0-9]*$ ]]; then
+      echo_content red "node_identity_generation must be a positive integer"
       exit 1
     fi
     require_value CORE_IMAGE
@@ -1540,6 +1611,8 @@ host=${BIND_ADDRESS}
 [node]
 server_id=${NODE_SERVER_ID}
 domain=${TP_NODE_DOMAIN}
+identity_id=${NODE_IDENTITY_ID}
+identity_generation=${NODE_IDENTITY_GENERATION}
 EOF
   chmod 0600 "${temporary}"
   "${SECURE_FILE_HELPER}" atomic-write \
@@ -1905,6 +1978,40 @@ wait_for_web_health_probe() {
   return 1
 }
 
+probe_node_mariadb_health() {
+  docker exec -e TP_VERIFY_NODE_DATA_SERVICES=mariadb "${CORE_CONTAINER}" \
+    /tpdata/trojan-panel-core/trojan-panel-core >/dev/null 2>&1
+}
+
+probe_node_redis_health() {
+  docker exec -e TP_VERIFY_NODE_DATA_SERVICES=redis "${CORE_CONTAINER}" \
+    /tpdata/trojan-panel-core/trojan-panel-core >/dev/null 2>&1
+}
+
+probe_node_api_health() {
+  curl --fail --silent --show-error --connect-timeout 2 --max-time 5 \
+    "http://127.0.0.1:${CORE_PORT}/healthz" >/dev/null
+}
+
+verify_node_health() {
+  echo_content green "---> Verify Node Agent health"
+  wait_for_web_health_probe "Node MariaDB identity" probe_node_mariadb_health
+  wait_for_web_health_probe "Node Redis identities" probe_node_redis_health
+  echo_content yellow "Run this on the Web control-plane host if automatic polling has not verified the Node yet:"
+  echo_content yellow "  docker exec ${PANEL_CONTAINER} /tpdata/trojan-panel/trojan-panel node-identity verify --id ${NODE_IDENTITY_ID}"
+  wait_for_web_health_probe "Web-to-Node mTLS/gRPC and Node API" probe_node_api_health
+}
+
+print_node_success() {
+  echo_content red "\n=============================================================="
+  echo_content skyBlue "Node Agent is healthy"
+  echo_content yellow "Node identity: ${NODE_IDENTITY_ID} (generation ${NODE_IDENTITY_GENERATION})"
+  echo_content yellow "Node domain: ${TP_NODE_DOMAIN}"
+  echo_content yellow "Core gRPC port: ${GRPC_PORT}"
+  echo_content yellow "Core API port: ${CORE_PORT}"
+  echo_content red "==============================================================\n"
+}
+
 verify_web_health() {
   echo_content green "---> Verify Web control plane health"
   wait_for_web_health_probe MariaDB probe_mariadb_health
@@ -2122,14 +2229,6 @@ deploy_node() {
     write_external_entry_contract node
     warn_external_ports node
 
-    echo_content red "\n=============================================================="
-    echo_content skyBlue "Trojan Panel node side deployed with external TLS"
-    echo_content yellow "Node domain: ${TP_NODE_DOMAIN}"
-    echo_content yellow "Core gRPC port: ${GRPC_PORT}"
-    echo_content yellow "Core API port: ${CORE_PORT}"
-    echo_content yellow "Kernel TLS material: ${MANAGED_CERT_DIR}"
-    echo_content yellow "Routing list: ${EXTERNAL_ROUTES_DIR}/routes.json"
-    echo_content red "==============================================================\n"
     return
   fi
 
@@ -2138,12 +2237,6 @@ deploy_node() {
   wait_for_cert "${TP_NODE_DOMAIN}" "${TP_DATA}/custom/node-caddy/data"
   deploy_core "${TP_NODE_DOMAIN}"
 
-  echo_content red "\n=============================================================="
-  echo_content skyBlue "Trojan Panel node side deployed"
-  echo_content yellow "Node domain: ${TP_NODE_DOMAIN}"
-  echo_content yellow "Core gRPC port: ${GRPC_PORT}"
-  echo_content yellow "Core API port: ${CORE_PORT}"
-  echo_content red "==============================================================\n"
 }
 
 remove_web() {
@@ -2174,6 +2267,7 @@ main() {
   local command="${1:-}"
   local mode=""
   local config_file=""
+  local bundle_file=""
   local force_override=""
   local purge_override=""
   local entry_spec_override=""
@@ -2203,6 +2297,11 @@ main() {
     --config)
       [[ $# -ge 2 ]] || { echo_content red "--config requires a value"; exit 1; }
       config_file="$2"
+      shift 2
+      ;;
+    --bundle)
+      [[ $# -ge 2 ]] || { echo_content red "--bundle requires a value"; exit 1; }
+      bundle_file="$2"
       shift 2
       ;;
     --entry-spec)
@@ -2237,9 +2336,13 @@ main() {
   done
 
   require_one_of mode "${mode}" web node
-  if [[ -z "${config_file}" ]]; then
-    echo_content red "--config is required"
+  if [[ -n "${config_file}" && -n "${bundle_file}" ]] || [[ -z "${config_file}" && -z "${bundle_file}" ]]; then
+    echo_content red "Exactly one of --config or --bundle is required"
     usage
+    exit 1
+  fi
+  if [[ -n "${bundle_file}" && ( "${mode}" != node || ( "${command}" != install && "${command}" != validate ) ) ]]; then
+    echo_content red "--bundle is only valid with node install or validate"
     exit 1
   fi
   if [[ -n "${force_override}" && "${command}" != install ]]; then
@@ -2255,8 +2358,14 @@ main() {
     echo_content red "--entry-spec is not valid with refresh-cert"
     exit 1
   fi
-  verify_release_assets_before_host_change "${config_file}"
-  prepare_secure_config "${config_file}"
+  if [[ -n "${bundle_file}" ]]; then
+    verify_release_assets_before_host_change "" 1
+    prepare_node_bundle "${bundle_file}"
+    config_file="${TP_NODE_BUNDLE_DIR}/config-node.yaml"
+  else
+    verify_release_assets_before_host_change "${config_file}"
+    prepare_secure_config "${config_file}"
+  fi
   verify_release_assets_before_host_change "${TP_CONFIG_READ_FILE}"
   if [[ "${command}" == validate ]]; then
     load_config "${mode}" "${TP_CONFIG_READ_FILE}" 0
@@ -2269,6 +2378,9 @@ main() {
       preflight_install_dependencies
     fi
     load_config "${mode}" "${TP_CONFIG_READ_FILE}" 1
+  fi
+  if [[ "${TP_NODE_BUNDLE_ACTIVE}" == 1 ]]; then
+    TP_PKI_BUNDLE_DIR="${TP_NODE_BUNDLE_DIR}/pki"
   fi
   [[ -n "${force_override}" ]] && TP_FORCE="${force_override}"
   [[ -n "${purge_override}" ]] && TP_PURGE_DATA="${purge_override}"
@@ -2321,6 +2433,9 @@ main() {
   if [[ "${command}:${mode}" == install:web ]]; then
     verify_web_health
     print_web_success
+  elif [[ "${command}:${mode}" == install:node ]]; then
+    verify_node_health
+    print_node_success
   fi
 }
 

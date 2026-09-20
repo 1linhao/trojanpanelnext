@@ -39,6 +39,8 @@ var (
 	serverPort        string
 	nodeServerID      string
 	nodeDomain        string
+	nodeIdentityID    string
+	nodeIdentityGen   string
 	version           bool
 )
 
@@ -67,6 +69,8 @@ func init() {
 	flag.StringVar(&serverPort, "serverPort", envOr("SERVER_PORT", "server_port", "8082"), "service port")
 	flag.StringVar(&nodeServerID, "nodeServerId", envOr("NODE_SERVER_ID", "node_server_id", "0"), "panel node_server id")
 	flag.StringVar(&nodeDomain, "nodeDomain", envOr("TP_NODE_DOMAIN", "node_domain", ""), "node domain used for TLS SNI")
+	flag.StringVar(&nodeIdentityID, "nodeIdentityId", envOr("TP_NODE_IDENTITY_ID", "node_identity_id", ""), "stable Node identity id")
+	flag.StringVar(&nodeIdentityGen, "nodeIdentityGeneration", envOr("TP_NODE_IDENTITY_GENERATION", "node_identity_generation", "0"), "Node identity credential generation")
 	flag.BoolVar(&version, "version", false, "print version info")
 	flag.Usage = usage
 	isTest := strings.HasSuffix(os.Args[0], ".test")
@@ -145,8 +149,10 @@ port=%s
 [node]
 server_id=%s
 domain=%s
+identity_id=%s
+identity_generation=%s
 `, host, user, password, port, database, accountTable, redisHost, redisPort, redisUsername, redisPassword, redisAuthUsername, redisAuthPassword, redisDb,
-			redisMaxIdle, redisMaxActive, redisWait, crtPath, keyPath, grpcPort, grpcTLSMode, grpcClientCA, serverPort, nodeServerID, nodeDomain))
+			redisMaxIdle, redisMaxActive, redisWait, crtPath, keyPath, grpcPort, grpcTLSMode, grpcClientCA, serverPort, nodeServerID, nodeDomain, nodeIdentityID, nodeIdentityGen))
 		if err != nil {
 			logrus.Errorf("config.ini file write err: %v", err)
 			panic(err)
@@ -216,7 +222,31 @@ func ValidateNodeIdentityConfig(config *AppConfig) error {
 	if config.NodeConfig.ServerID == 0 {
 		return errors.New("Node Agent requires a positive node_server_id")
 	}
+	if !isUUID(config.NodeConfig.IdentityID) {
+		return errors.New("Node Agent requires a UUID node_identity_id")
+	}
+	if config.NodeConfig.IdentityGeneration == 0 {
+		return errors.New("Node Agent requires a positive node_identity_generation")
+	}
 	return nil
+}
+
+func isUUID(value string) bool {
+	if len(value) != 36 {
+		return false
+	}
+	for index, character := range value {
+		if index == 8 || index == 13 || index == 18 || index == 23 {
+			if character != '-' {
+				return false
+			}
+			continue
+		}
+		if !((character >= '0' && character <= '9') || (character >= 'a' && character <= 'f') || (character >= 'A' && character <= 'F')) {
+			return false
+		}
+	}
+	return true
 }
 
 type AppConfig struct {
@@ -258,8 +288,10 @@ type CertConfig struct {
 }
 
 type NodeConfig struct {
-	ServerID uint   `ini:"server_id"`
-	Domain   string `ini:"domain"`
+	ServerID           uint   `ini:"server_id"`
+	Domain             string `ini:"domain"`
+	IdentityID         string `ini:"identity_id"`
+	IdentityGeneration uint64 `ini:"identity_generation"`
 }
 
 // LogConfig log

@@ -127,6 +127,7 @@ test -x "${bundle}/bootstrap.sh"
 test -f "${bundle}/release-contract.sh"
 test -x "${bundle}/install.sh"
 test -x "${bundle}/secure-file"
+test -x "${bundle}/node-bundle"
 test -x "${bundle}/entry/entryctl.sh"
 test -f "${bundle}/entry/controller.sh"
 test -f "${bundle}/entry/adapters/external.sh"
@@ -139,6 +140,7 @@ tar -C "${work}/extracted" -xzf "${archive}"
 test -x "${work}/extracted/bootstrap.sh"
 test -x "${work}/extracted/install.sh"
 test -x "${work}/extracted/secure-file"
+test -x "${work}/extracted/node-bundle"
 test -x "${work}/extracted/verify-assets.sh"
 test -f "${work}/extracted/release-contract.sh"
 test -x "${work}/extracted/entry/entryctl.sh"
@@ -156,7 +158,7 @@ for config in "${bundle}"/config-*.yaml; do
   grep -q '^  node_agent_image:' "${config}"
   ! grep -Eq '^  (purpose|panel_image|ui_image|core_image):' "${config}"
 done
-jq -e '.release_version == "1.2.3" and (.assets | length == 12)' \
+jq -e '.release_version == "1.2.3" and (.assets | length == 13)' \
   "${bundle}/release-manifest.json" >/dev/null
 EXPECTED_RELEASE_ASSET_PATHS=(
   bootstrap.sh
@@ -164,6 +166,7 @@ EXPECTED_RELEASE_ASSET_PATHS=(
   verify-assets.sh
   install.sh
   secure-file
+  node-bundle
   config-web.yaml
   config-node.yaml
   config-combined.yaml
@@ -190,10 +193,10 @@ example_bundle="${work}/example-bundle"
   --redis-image "redis@$(repeated_digest 6)" >/dev/null
 normalized_example_manifest="${work}/normalized-example-release-manifest.json"
 awk '
-  /"name": "secure-file"/ { secure_file = 1 }
-  secure_file && /"sha256":/ {
+  /"name": "(secure-file|node-bundle)"/ { generated_binary = 1 }
+  generated_binary && /"sha256":/ {
     sub(/"sha256": "[^"]+"/, "\"sha256\": \"0000000000000000000000000000000000000000000000000000000000000000\"")
-    secure_file = 0
+    generated_binary = 0
   }
   { print }
 ' "${example_bundle}/release-manifest.json" >"${normalized_example_manifest}"

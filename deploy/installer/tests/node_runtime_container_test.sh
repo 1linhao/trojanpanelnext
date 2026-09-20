@@ -53,6 +53,8 @@ REDIS_PASSWORD='generation-one-cache-secret'
 REDIS_AUTH_USERNAME=tpn-auth-test
 REDIS_AUTH_PASSWORD='generation-one-auth-secret'
 NODE_SERVER_ID=42
+NODE_IDENTITY_ID=11111111-2222-4333-8444-555555555555
+NODE_IDENTITY_GENERATION=1
 TP_NODE_DOMAIN=node.example.test
 GRPC_PORT=18100
 CORE_PORT=18082
@@ -106,6 +108,7 @@ fi
 MARIADB_PASSWORD='generation-two-mariadb-secret'
 REDIS_PASSWORD='generation-two-cache-secret'
 REDIS_AUTH_PASSWORD='generation-two-auth-secret'
+NODE_IDENTITY_GENERATION=2
 deploy_core "${TP_NODE_DOMAIN}" >/dev/null
 second_id="$(docker inspect --format '{{.Id}}' "${container}")"
 [[ "${second_id}" != "${first_id}" ]] || fail 'credential generation change did not recreate the running Node Agent'
