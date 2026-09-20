@@ -1055,6 +1055,11 @@ cover: 1
 |-----|-----|-----|
 | id  | 是   | 主键  |
 
+该接口仅删除没有关联 `node_identity` 的历史服务器记录。由 Node 身份生命周期管理的服务器在任意
+状态下都会 fail-closed，返回业务错误且不会撤销或修改 MariaDB、cache Redis、auth Redis 凭据。
+运维人员必须在 Web 主控使用 `node-identity force-evict --id <node-identity-id>`，以明确执行完整的
+强制踢除流程。不要通过本接口绕过 Node 身份生命周期。
+
 返回示例:
 
 ```json
@@ -1062,6 +1067,17 @@ cover: 1
   "code": 20000,
   "type": "success",
   "message": "",
+  "data": null
+}
+```
+
+受管服务器失败示例（沿用现有 API envelope，HTTP 状态为 200）：
+
+```json
+{
+  "code": 50000,
+  "type": "error",
+  "message": "this server is managed by a Node identity; use node-identity force-evict",
   "data": null
 }
 ```

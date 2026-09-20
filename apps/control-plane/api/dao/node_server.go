@@ -1,6 +1,7 @@
 package dao
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"github.com/didi/gendry/builder"
@@ -118,13 +119,35 @@ func SelectNodeServerPage(queryName *string, queryIp *string, pageNum *uint, pag
 }
 
 func DeleteNodeServerById(id *uint) error {
-	buildDelete, values, err := builder.BuildDelete("node_server", map[string]interface{}{"id": *id})
+	transaction, err := db.Begin()
 	if err != nil {
 		logrus.Errorln(err.Error())
 		return errors.New(constant.SysError)
 	}
+	defer transaction.Rollback()
 
-	if _, err = db.Exec(buildDelete, values...); err != nil {
+	var lockedID uint
+	if err = transaction.QueryRow("SELECT id FROM node_server WHERE id=? FOR UPDATE", *id).Scan(&lockedID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		logrus.Errorln(err.Error())
+		return errors.New(constant.SysError)
+	}
+
+	var identityID string
+	if err = transaction.QueryRow("SELECT identity_id FROM node_identity WHERE node_server_id=? FOR UPDATE", *id).Scan(&identityID); err == nil {
+		return errors.New(constant.NodeServerManagedDeleteError)
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		logrus.Errorln(err.Error())
+		return errors.New(constant.SysError)
+	}
+
+	if _, err = transaction.Exec("DELETE FROM node_server WHERE id=?", *id); err != nil {
+		logrus.Errorln(err.Error())
+		return errors.New(constant.SysError)
+	}
+	if err = transaction.Commit(); err != nil {
 		logrus.Errorln(err.Error())
 		return errors.New(constant.SysError)
 	}

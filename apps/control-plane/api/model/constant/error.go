@@ -50,7 +50,8 @@ const (
 	GrpcAddNodeError string = "remote service failed to add node, please try again later"
 	LoadKeyPairError string = "failed to load local key and certificate"
 
-	PortIsOccupied         string = "the port is occupied, please check the port or choose another port"
-	PortRangeError         string = "the port range is between 100-30000"
-	NodeServerDeletedError string = "there are nodes under this server"
+	PortIsOccupied               string = "the port is occupied, please check the port or choose another port"
+	PortRangeError               string = "the port range is between 100-30000"
+	NodeServerDeletedError       string = "there are nodes under this server"
+	NodeServerManagedDeleteError string = "this server is managed by a Node identity; use node-identity force-evict"
 )

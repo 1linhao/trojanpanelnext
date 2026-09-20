@@ -50,7 +50,9 @@ jobs:
       - name: Test
         run: go test ./...
       - name: Test Node identity lifecycle with MariaDB and Redis ACL
-        run: bash testing/node_identity_cli_test.sh
+        run: |
+          bash testing/node_identity_cli_test.sh
+          bash testing/node_server_delete_api_test.sh
       - name: Build
         run: CGO_ENABLED=0 go build -trimpath -o /tmp/trojanpanelnext-api .
 

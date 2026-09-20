@@ -61,6 +61,11 @@ sudo docker exec trojan-panel /tpdata/trojan-panel/trojan-panel node-identity fo
 还会删除活动 `node_server` 登记并明确表达故障处置意图。两者都不连接 Node 宿主，因此 Node 离线时
 仍可完成，但不承诺删除失联宿主上的进程、证书或数据。重复执行同一动作会安全收敛。
 
+不要使用 HTTP `POST /api/nodeServer/deleteNodeServerById` 删除由 Node 身份生命周期管理的
+`node_server`。无论身份当前处于 `active`、`revoked`、`provisioning`、`rotating` 或其他生命周期状态，
+该 API 都会 fail-closed 返回业务错误，并保持登记及三类数据层凭据不变；运维人员必须明确执行
+`node-identity force-evict`。这个旧 API 仅保留给没有关联 `node_identity` 的历史服务器记录。
+
 ## 支持
 
 - [TrojanPanel 原项目](https://github.com/trojanpanel)

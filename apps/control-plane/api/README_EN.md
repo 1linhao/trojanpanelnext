@@ -73,6 +73,12 @@ registration and explicitly records incident-response intent. Neither command co
 offline, but neither promises to remove processes, certificates, or data from the unreachable host.
 Replaying the same action converges safely.
 
+Do not use HTTP `POST /api/nodeServer/deleteNodeServerById` for a `node_server` managed by the Node
+identity lifecycle. The API fails closed for every lifecycle state, including `active`, `revoked`,
+`provisioning`, and `rotating`, while leaving the registration and all three data-layer credentials
+unchanged. An operator must explicitly run `node-identity force-evict`. The legacy HTTP endpoint remains
+available only for historical server records that have no associated `node_identity`.
+
 ## Support
 
 - [Original TrojanPanel project](https://github.com/trojanpanel)
