@@ -12,22 +12,34 @@ import (
 
 // 连接池
 var pool *redis.Pool
+var authPool *redis.Pool
 
 // 分布式锁
 var rs *redsync.Redsync
 
 func InitRedis() {
 	redisConfig := core.Config.RedisConfig
-	pool = &redis.Pool{
+	pool = newPool(redisConfig.Username, redisConfig.Password)
+	authPool = newPool(redisConfig.AuthUsername, redisConfig.AuthPassword)
+	rs = redsync.New(redigo.NewPool(pool))
+}
+
+func newPool(username, password string) *redis.Pool {
+	redisConfig := core.Config.RedisConfig
+	return &redis.Pool{
 		MaxIdle:     redisConfig.MaxIdle,
 		MaxActive:   redisConfig.MaxActive,
 		Wait:        redisConfig.Wait,
 		IdleTimeout: 30 * time.Second,
 		Dial: func() (redis.Conn, error) {
-			conn, err := redis.Dial("tcp", fmt.Sprintf("%s:%d", redisConfig.Host, redisConfig.Port),
-				redis.DialPassword(redisConfig.Password),
+			options := []redis.DialOption{
+				redis.DialPassword(password),
 				redis.DialDatabase(redisConfig.Db),
-			)
+			}
+			if username != "" {
+				options = append([]redis.DialOption{redis.DialUsername(username)}, options...)
+			}
+			conn, err := redis.Dial("tcp", fmt.Sprintf("%s:%d", redisConfig.Host, redisConfig.Port), options...)
 			if err != nil {
 				logrus.Errorf("Redis初始化失败 err: %v", err)
 				panic(err)
@@ -41,13 +53,17 @@ func InitRedis() {
 			return conn, nil
 		},
 	}
-	rs = redsync.New(redigo.NewPool(pool))
 }
 
 func CloseRedis() {
 	if pool != nil {
 		if err := pool.Close(); err != nil {
 			logrus.Errorf("redis close err: %v", err)
+		}
+	}
+	if authPool != nil {
+		if err := authPool.Close(); err != nil {
+			logrus.Errorf("redis auth close err: %v", err)
 		}
 	}
 }

@@ -2,7 +2,7 @@ name: CI
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, codex/entry-provider-nginx-certbot]
   push:
     branches: [main]
   workflow_dispatch:
@@ -49,6 +49,10 @@ jobs:
           cache-dependency-path: apps/control-plane/api/go.sum
       - name: Test
         run: go test ./...
+      - name: Test Node identity lifecycle with MariaDB and Redis ACL
+        run: |
+          bash testing/node_identity_cli_test.sh
+          bash testing/node_server_delete_api_test.sh
       - name: Build
         run: CGO_ENABLED=0 go build -trimpath -o /tmp/trojanpanelnext-api .
 
@@ -92,7 +96,9 @@ jobs:
           cache: true
           cache-dependency-path: apps/node-agent/go.sum
       - name: Test
-        run: go test ./...
+        run: |
+          go test ./...
+          bash testing/node_agent_config_cli_test.sh
       - name: Build
         run: CGO_ENABLED=0 go build -trimpath -o /tmp/trojanpanelnext-node-agent .
 
@@ -119,6 +125,7 @@ jobs:
       - name: Test installer CLI contract
         run: |
           bash deploy/installer/tests/installer_cli_test.sh
+          bash deploy/installer/tests/node_runtime_container_test.sh
           bash deploy/installer/tests/entry_controller_test.sh
           bash deploy/installer/tests/dependency_preflight_test.sh
           bash deploy/installer/tests/secure_file_test.sh

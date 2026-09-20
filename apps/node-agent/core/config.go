@@ -1,6 +1,7 @@
 package core
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"github.com/sirupsen/logrus"
@@ -14,28 +15,31 @@ import (
 )
 
 var (
-	host           string
-	user           string
-	password       string
-	port           string
-	database       string
-	accountTable   string
-	redisHost      string
-	redisPort      string
-	redisPassword  string
-	redisDb        string
-	redisMaxIdle   string
-	redisMaxActive string
-	redisWait      string
-	crtPath        string
-	keyPath        string
-	grpcPort       string
-	grpcTLSMode    string
-	grpcClientCA   string
-	serverPort     string
-	nodeServerID   string
-	nodeDomain     string
-	version        bool
+	host              string
+	user              string
+	password          string
+	port              string
+	database          string
+	accountTable      string
+	redisHost         string
+	redisPort         string
+	redisUsername     string
+	redisPassword     string
+	redisAuthUsername string
+	redisAuthPassword string
+	redisDb           string
+	redisMaxIdle      string
+	redisMaxActive    string
+	redisWait         string
+	crtPath           string
+	keyPath           string
+	grpcPort          string
+	grpcTLSMode       string
+	grpcClientCA      string
+	serverPort        string
+	nodeServerID      string
+	nodeDomain        string
+	version           bool
 )
 
 func init() {
@@ -47,7 +51,10 @@ func init() {
 	flag.StringVar(&accountTable, "accountTable", envOr("ACCOUNT_TABLE", "account_table", "account"), "account table name")
 	flag.StringVar(&redisHost, "redisHost", envOr("REDIS_HOST", "redis_host", "127.0.0.1"), "redis address")
 	flag.StringVar(&redisPort, "redisPort", envOr("REDIS_PORT", "redis_port", "6379"), "redis port")
+	flag.StringVar(&redisUsername, "redisUsername", envOr("REDIS_USERNAME", "redis_username", ""), "Redis ACL username")
 	flag.StringVar(&redisPassword, "redisPassword", envOr("REDIS_PASSWORD", "redis_pass", ""), "deprecated: use REDIS_PASSWORD")
+	flag.StringVar(&redisAuthUsername, "redisAuthUsername", envOr("REDIS_AUTH_USERNAME", "redis_auth_username", ""), "Redis read-only auth ACL username")
+	flag.StringVar(&redisAuthPassword, "redisAuthPassword", envOr("REDIS_AUTH_PASSWORD", "redis_auth_password", ""), "Redis read-only auth ACL password")
 	flag.StringVar(&redisDb, "redisDb", "0", "redis default database")
 	flag.StringVar(&redisMaxIdle, "redisMaxIdle", strconv.FormatInt(int64(runtime.NumCPU()*2), 10), "redis maximum number of idle connections")
 	flag.StringVar(&redisMaxActive, "redisMaxActive", strconv.FormatInt(int64(runtime.NumCPU()*2+2), 10), "redis maximum number of connections")
@@ -112,7 +119,10 @@ account_table=%s
 [redis]
 host=%s
 port=%s
+username=%s
 password=%s
+auth_username=%s
+auth_password=%s
 db=%s
 max_idle=%s
 max_active=%s
@@ -135,7 +145,7 @@ port=%s
 [node]
 server_id=%s
 domain=%s
-`, host, user, password, port, database, accountTable, redisHost, redisPort, redisPassword, redisDb,
+`, host, user, password, port, database, accountTable, redisHost, redisPort, redisUsername, redisPassword, redisAuthUsername, redisAuthPassword, redisDb,
 			redisMaxIdle, redisMaxActive, redisWait, crtPath, keyPath, grpcPort, grpcTLSMode, grpcClientCA, serverPort, nodeServerID, nodeDomain))
 		if err != nil {
 			logrus.Errorf("config.ini file write err: %v", err)
@@ -163,7 +173,7 @@ domain=%s
 
 func usage() {
 	_, _ = fmt.Fprintln(os.Stdout, `trojan panel core manage help
-Usage: trojan-panel-core [-host] [-user] [-password] [-port] [-database] [-accountTable] [-redisHost] [-redisPort] [-redisPassword] [-redisDb] [-redisMaxIdle] [-redisMaxActive] [-redisWait] [-crtPath] [-keyPath] [-grpcPort] [-serverPort] [-h] [-version]`)
+Usage: trojan-panel-core [-host] [-user] [-password] [-port] [-database] [-accountTable] [-redisHost] [-redisPort] [-redisUsername] [-redisPassword] [-redisDb] [-redisMaxIdle] [-redisMaxActive] [-redisWait] [-crtPath] [-keyPath] [-grpcPort] [-serverPort] [-h] [-version]`)
 	flag.PrintDefaults()
 }
 
@@ -175,6 +185,38 @@ func InitConfig() {
 		logrus.Errorf("configuration file failed to load err: %v", err)
 		panic(err)
 	}
+	if err := ValidateNodeIdentityConfig(Config); err != nil {
+		logrus.Errorf("unsafe shared Node identity configuration: %v", err)
+		panic(err)
+	}
+}
+
+func ValidateNodeIdentityConfig(config *AppConfig) error {
+	if strings.TrimSpace(config.MySQLConfig.User) == "" || strings.EqualFold(config.MySQLConfig.User, "root") {
+		return errors.New("Node Agent requires a non-root MariaDB identity")
+	}
+	if strings.TrimSpace(config.MySQLConfig.Password) == "" {
+		return errors.New("Node Agent requires a non-empty MariaDB password")
+	}
+	if strings.TrimSpace(config.RedisConfig.Username) == "" || strings.EqualFold(config.RedisConfig.Username, "default") {
+		return errors.New("Node Agent requires a non-default Redis cache identity")
+	}
+	if strings.TrimSpace(config.RedisConfig.Password) == "" {
+		return errors.New("Node Agent requires a non-empty Redis cache password")
+	}
+	if strings.TrimSpace(config.RedisConfig.AuthUsername) == "" || strings.EqualFold(config.RedisConfig.AuthUsername, "default") {
+		return errors.New("Node Agent requires a non-default Redis auth identity")
+	}
+	if strings.TrimSpace(config.RedisConfig.AuthPassword) == "" {
+		return errors.New("Node Agent requires a non-empty Redis auth password")
+	}
+	if config.RedisConfig.Username == config.RedisConfig.AuthUsername {
+		return errors.New("Node Agent Redis cache and auth identities must be distinct")
+	}
+	if config.NodeConfig.ServerID == 0 {
+		return errors.New("Node Agent requires a positive node_server_id")
+	}
+	return nil
 }
 
 type AppConfig struct {
@@ -198,13 +240,16 @@ type MySQLConfig struct {
 }
 
 type RedisConfig struct {
-	Host      string `ini:"host"`
-	Port      int    `ini:"port"`
-	Password  string `ini:"password"`
-	Db        int    `ini:"db"`
-	MaxIdle   int    `ini:"max_idle"`
-	MaxActive int    `ini:"max_active"`
-	Wait      bool   `ini:"wait"`
+	Host         string `ini:"host"`
+	Port         int    `ini:"port"`
+	Username     string `ini:"username"`
+	Password     string `ini:"password"`
+	AuthUsername string `ini:"auth_username"`
+	AuthPassword string `ini:"auth_password"`
+	Db           int    `ini:"db"`
+	MaxIdle      int    `ini:"max_idle"`
+	MaxActive    int    `ini:"max_active"`
+	Wait         bool   `ini:"wait"`
 }
 
 type CertConfig struct {

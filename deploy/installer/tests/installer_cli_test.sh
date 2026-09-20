@@ -66,11 +66,20 @@ missing_mode_config="$(mktemp)"
 canonical_config="$(mktemp)"
 legacy_key_config="$(mktemp)"
 conflicting_mode_config="$(mktemp)"
+missing_mariadb_user_config="$(mktemp)"
+empty_mariadb_password_config="$(mktemp)"
+missing_redis_username_config="$(mktemp)"
+empty_redis_password_config="$(mktemp)"
+root_mariadb_user_config="$(mktemp)"
+default_redis_user_config="$(mktemp)"
+zero_node_id_config="$(mktemp)"
+missing_redis_auth_user_config="$(mktemp)"
+empty_redis_auth_password_config="$(mktemp)"
 pki_dir="$(mktemp -d)"
 node_pki_dir="$(mktemp -d)"
 node_runtime_dir="$(mktemp -d)"
 path_contract_dir="$(mktemp -d)"
-trap 'rm -f "${legacy_config}" "${missing_mode_config}" "${canonical_config}" "${legacy_key_config}" "${conflicting_mode_config}"; rm -rf -- "${pki_dir}" "${node_pki_dir}" "${node_runtime_dir}" "${path_contract_dir}"' EXIT
+trap 'rm -f "${legacy_config}" "${missing_mode_config}" "${canonical_config}" "${legacy_key_config}" "${conflicting_mode_config}" "${missing_mariadb_user_config}" "${empty_mariadb_password_config}" "${missing_redis_username_config}" "${empty_redis_password_config}" "${root_mariadb_user_config}" "${default_redis_user_config}" "${zero_node_id_config}" "${missing_redis_auth_user_config}" "${empty_redis_auth_password_config}"; rm -rf -- "${pki_dir}" "${node_pki_dir}" "${node_runtime_dir}" "${path_contract_dir}"' EXIT
 
 ln -s "$(command -v bash)" "${path_contract_dir}/bash"
 PATH="${path_contract_dir}" "${INSTALLER}" --help >/dev/null ||
@@ -106,6 +115,34 @@ sed \
 sed '/deployment_mode: web/a\  purpose: node' "${canonical_config}" >"${conflicting_mode_config}"
 assert_fails "${INSTALLER}" validate --mode web --config "${conflicting_mode_config}"
 
+sed '/^  mariadb_user:/d' "$(dirname "${INSTALLER}")/examples/node-agent.yaml" \
+  >"${missing_mariadb_user_config}"
+sed 's/^  mariadb_password:.*/  mariadb_password: ""/' \
+  "$(dirname "${INSTALLER}")/examples/node-agent.yaml" >"${empty_mariadb_password_config}"
+sed '/^  redis_username:/d' "$(dirname "${INSTALLER}")/examples/node-agent.yaml" \
+  >"${missing_redis_username_config}"
+sed 's/^  redis_password:.*/  redis_password: ""/' \
+  "$(dirname "${INSTALLER}")/examples/node-agent.yaml" >"${empty_redis_password_config}"
+sed 's/^  mariadb_user:.*/  mariadb_user: root/' \
+  "$(dirname "${INSTALLER}")/examples/node-agent.yaml" >"${root_mariadb_user_config}"
+sed 's/^  redis_username:.*/  redis_username: default/' \
+  "$(dirname "${INSTALLER}")/examples/node-agent.yaml" >"${default_redis_user_config}"
+sed 's/^  node_server_id:.*/  node_server_id: 0/' \
+  "$(dirname "${INSTALLER}")/examples/node-agent.yaml" >"${zero_node_id_config}"
+sed '/^  redis_auth_username:/d' "$(dirname "${INSTALLER}")/examples/node-agent.yaml" \
+  >"${missing_redis_auth_user_config}"
+sed 's/^  redis_auth_password:.*/  redis_auth_password: ""/' \
+  "$(dirname "${INSTALLER}")/examples/node-agent.yaml" >"${empty_redis_auth_password_config}"
+assert_fails "${INSTALLER}" validate --mode node --config "${missing_mariadb_user_config}"
+assert_fails "${INSTALLER}" validate --mode node --config "${empty_mariadb_password_config}"
+assert_fails "${INSTALLER}" validate --mode node --config "${missing_redis_username_config}"
+assert_fails "${INSTALLER}" validate --mode node --config "${empty_redis_password_config}"
+assert_fails "${INSTALLER}" validate --mode node --config "${root_mariadb_user_config}"
+assert_fails "${INSTALLER}" validate --mode node --config "${default_redis_user_config}"
+assert_fails "${INSTALLER}" validate --mode node --config "${zero_node_id_config}"
+assert_fails "${INSTALLER}" validate --mode node --config "${missing_redis_auth_user_config}"
+assert_fails "${INSTALLER}" validate --mode node --config "${empty_redis_auth_password_config}"
+
 bash -c 'set -Eeuo pipefail; source "$1"; TP_PKI_BUNDLE_DIR="$2"; generate_web_client_pki' \
   installer-test "${INSTALLER}" "${pki_dir}"
 openssl verify -CAfile "${pki_dir}/client-ca.crt" "${pki_dir}/client.crt" >/dev/null
@@ -131,7 +168,7 @@ external_refresh_dir="$(mktemp -d)"
 entry_spec="$(mktemp)"
 entry_trace="$(mktemp)"
 fake_entryctl="$(mktemp)"
-trap 'rm -f "${legacy_config}" "${missing_mode_config}" "${canonical_config}" "${legacy_key_config}" "${conflicting_mode_config}" "${entry_spec}" "${entry_trace}" "${fake_entryctl}"; rm -rf -- "${pki_dir}" "${node_pki_dir}" "${node_runtime_dir}" "${path_contract_dir}" "${external_cases_dir}" "${external_tls_dir}" "${external_pairs_dir}" "${external_data_dir}" "${external_mismatch_dir}" "${external_wrong_domain_dir}" "${external_refresh_dir}"' EXIT
+trap 'rm -f "${legacy_config}" "${missing_mode_config}" "${canonical_config}" "${legacy_key_config}" "${conflicting_mode_config}" "${missing_mariadb_user_config}" "${empty_mariadb_password_config}" "${missing_redis_username_config}" "${empty_redis_password_config}" "${root_mariadb_user_config}" "${default_redis_user_config}" "${zero_node_id_config}" "${missing_redis_auth_user_config}" "${empty_redis_auth_password_config}" "${entry_spec}" "${entry_trace}" "${fake_entryctl}"; rm -rf -- "${pki_dir}" "${node_pki_dir}" "${node_runtime_dir}" "${path_contract_dir}" "${external_cases_dir}" "${external_tls_dir}" "${external_pairs_dir}" "${external_data_dir}" "${external_mismatch_dir}" "${external_wrong_domain_dir}" "${external_refresh_dir}"' EXIT
 
 # The shipped template points at a real external certificate directory, which
 # cannot exist on a test host. Validate the template against a local pair.
@@ -439,13 +476,68 @@ bash -c '
   TP_DATA="$2"
   mkdir -p "${TP_DATA}/trojan-panel-core/config"
   MARIADB_HOST=db.example.com
+  MARIADB_USER=tpn-node
   MARIADB_PASSWORD=db-secret
   REDIS_HOST=redis.example.com
+  REDIS_USERNAME=tpn-cache
   REDIS_PASSWORD=redis-secret
+  REDIS_AUTH_USERNAME=tpn-auth
+  REDIS_AUTH_PASSWORD=redis-auth-secret
+  NODE_SERVER_ID=1
   TP_NODE_DOMAIN=node.example.com
   write_core_runtime_config cert.pem key.pem
 ' installer-test "${INSTALLER}" "${external_data_dir}/core-config"
 grep -q '^domain=node.example.com$' "${external_data_dir}/core-config/trojan-panel-core/config/config.ini"
+runtime_config="${external_data_dir}/core-config/trojan-panel-core/config/config.ini"
+runtime_victim="${external_data_dir}/core-config/runtime-config-victim"
+printf 'must-not-change\n' >"${runtime_victim}"
+rm "${runtime_config}"
+ln -s "${runtime_victim}" "${runtime_config}"
+if bash -c '
+  set -Eeuo pipefail
+  source "$1"
+  TP_DATA="$2"
+  MARIADB_HOST=db.example.com
+  MARIADB_USER=tpn-node
+  MARIADB_PASSWORD=db-secret
+  REDIS_HOST=redis.example.com
+  REDIS_USERNAME=tpn-cache
+  REDIS_PASSWORD=redis-secret
+  REDIS_AUTH_USERNAME=tpn-auth
+  REDIS_AUTH_PASSWORD=redis-auth-secret
+  NODE_SERVER_ID=1
+  TP_NODE_DOMAIN=node.example.com
+  write_core_runtime_config cert.pem key.pem
+' installer-test "${INSTALLER}" "${external_data_dir}/core-config"; then
+  fail 'core runtime config writer followed a symlink destination'
+fi
+grep -Fxq 'must-not-change' "${runtime_victim}" || fail 'core runtime config writer changed a symlink target'
+
+# Node data credentials are consumed only through the restricted runtime file.
+# They must never be duplicated into docker argv or persistent container Env.
+if sed -n '/^deploy_core()/,/^}/p' "${INSTALLER}" |
+  grep -Eq -- '-e "?(mariadb_pas|MARIADB_PASSWORD|redis_pass|REDIS_PASSWORD|REDIS_AUTH_PASSWORD)='; then
+  fail 'Node data credentials are still passed through docker environment arguments'
+fi
+grep -Fq '${runtime_config}:${runtime_config}:ro' "${INSTALLER}" ||
+  fail 'Node Agent runtime credential file is not mounted read-only'
+grep -Fq 'TP_NODE_CONFIG_SHA256' "${INSTALLER}" ||
+  fail 'Node Agent container reconciliation does not track the runtime credential generation'
+
+# Same-version reconciliation recreates the Node Agent exactly when the
+# restricted configuration digest changes. An unchanged replay is a no-op.
+bash -c '
+  set -Eeuo pipefail
+  source "$1"
+  container_exists() { return 0; }
+  container_env_value() { printf "%s\n" "${CURRENT_VALUE:-}"; }
+  docker() { printf "%s\n" "$*"; }
+  CURRENT_VALUE= recreate_container_if_env_changed core TP_NODE_CONFIG_SHA256 new ""
+  CURRENT_VALUE=old recreate_container_if_env_changed core TP_NODE_CONFIG_SHA256 new ""
+  CURRENT_VALUE=new recreate_container_if_env_changed core TP_NODE_CONFIG_SHA256 new ""
+' installer-test "${INSTALLER}" >"${external_cases_dir}/node-config-generation.out"
+test "$(grep -c 'recreate container' "${external_cases_dir}/node-config-generation.out")" = 2 ||
+  fail 'Node Agent configuration generation caused an unnecessary or missing restart'
 
 # The documented manifest path, image default, and installer mount must agree.
 grep -q 'TP_EXTERNAL_DIR=/tpdata/trojan-panel-core/external' \

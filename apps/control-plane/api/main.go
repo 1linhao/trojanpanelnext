@@ -10,10 +10,14 @@ import (
 	"trojan-panel/dao"
 	"trojan-panel/dao/redis"
 	"trojan-panel/middleware"
+	"trojan-panel/nodeidentity"
 	"trojan-panel/router"
 )
 
 func main() {
+	if core.NodeIdentityCommandRequested() {
+		os.Exit(nodeidentity.Run(os.Args, os.Stdout, os.Stderr))
+	}
 	core.InitConfig()
 	if core.VerifySysadminCredentialRequested() {
 		verifySysadminCredential()

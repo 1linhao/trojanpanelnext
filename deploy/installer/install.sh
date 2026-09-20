@@ -39,6 +39,8 @@ MARIADB_USER="${MARIADB_USER:-root}"
 MARIADB_DATABASE="${MARIADB_DATABASE:-trojan_panel_db}"
 ACCOUNT_TABLE="${ACCOUNT_TABLE:-account}"
 REDIS_PORT="${REDIS_PORT:-6378}"
+REDIS_USERNAME="${REDIS_USERNAME:-}"
+REDIS_AUTH_USERNAME="${REDIS_AUTH_USERNAME:-}"
 PANEL_PORT="${PANEL_PORT:-8081}"
 UI_PORT="${UI_PORT:-8888}"
 CORE_PORT="${CORE_PORT:-8082}"
@@ -587,7 +589,6 @@ load_config() {
   cfg_apply "${file}" IMAGE_BUNDLE_DIR image_bundle_dir
 
   cfg_apply "${file}" MARIADB_PORT mariadb_port
-  cfg_apply "${file}" MARIADB_USER mariadb_user
   cfg_apply "${file}" MARIADB_DATABASE database
   cfg_apply "${file}" ACCOUNT_TABLE account_table
   cfg_apply "${file}" REDIS_PORT redis_port
@@ -623,6 +624,7 @@ load_config() {
     MARIADB_PASSWORD=""
     REDIS_PASSWORD=""
     SYSADMIN_PASSWORD=""
+    cfg_apply "${file}" MARIADB_USER mariadb_user
     cfg_apply "${file}" TP_WEB_DOMAIN hostname
     cfg_apply "${file}" TP_EMAIL email
     cfg_apply "${file}" MARIADB_PASSWORD mariadb_password
@@ -633,15 +635,23 @@ load_config() {
     TP_NODE_DOMAIN=""
     TP_EMAIL=""
     MARIADB_HOST=""
+    MARIADB_USER=""
     MARIADB_PASSWORD=""
     REDIS_HOST=""
+    REDIS_USERNAME=""
+    REDIS_AUTH_USERNAME=""
+    REDIS_AUTH_PASSWORD=""
     REDIS_PASSWORD=""
     cfg_apply "${file}" TP_NODE_DOMAIN hostname
     cfg_apply "${file}" TP_EMAIL email
     cfg_apply "${file}" MARIADB_HOST mariadb_host
+    cfg_apply "${file}" MARIADB_USER mariadb_user
     cfg_apply "${file}" MARIADB_PASSWORD mariadb_password
     cfg_apply "${file}" REDIS_HOST redis_host
+    cfg_apply "${file}" REDIS_USERNAME redis_username
     cfg_apply "${file}" REDIS_PASSWORD redis_password
+    cfg_apply "${file}" REDIS_AUTH_USERNAME redis_auth_username
+    cfg_apply "${file}" REDIS_AUTH_PASSWORD redis_auth_password
     ;;
   esac
 }
@@ -768,9 +778,29 @@ validate_config() {
   node)
     require_value TP_NODE_DOMAIN
     require_value MARIADB_HOST
+    require_value MARIADB_USER
+    if [[ "${MARIADB_USER,,}" == "root" ]]; then
+      echo_content red "mariadb_user must be the dedicated user from the Node credential file"
+      exit 1
+    fi
     require_value MARIADB_PASSWORD
     require_value REDIS_HOST
+    require_value REDIS_USERNAME
+    if [[ "${REDIS_USERNAME,,}" == "default" ]]; then
+      echo_content red "redis_username must be the dedicated cache user from the Node credential file"
+      exit 1
+    fi
     require_value REDIS_PASSWORD
+    require_value REDIS_AUTH_USERNAME
+    if [[ "${REDIS_AUTH_USERNAME,,}" == "default" || "${REDIS_AUTH_USERNAME}" == "${REDIS_USERNAME}" ]]; then
+      echo_content red "redis_auth_username must be a distinct dedicated read-only user"
+      exit 1
+    fi
+    require_value REDIS_AUTH_PASSWORD
+    if [[ ! "${NODE_SERVER_ID}" =~ ^[1-9][0-9]*$ ]]; then
+      echo_content red "node_server_id must be a positive integer"
+      exit 1
+    fi
     require_value CORE_IMAGE
     require_port CORE_PORT
     require_port GRPC_PORT
@@ -1276,9 +1306,15 @@ validate_external_cert_pair() {
     echo_content red "TLS certificate and private key do not match"
     exit 1
   fi
-  if [[ -n "${domain}" ]] && ! openssl x509 -in "${cert}" -noout -checkhost "${domain}" >/dev/null 2>&1; then
-    echo_content red "TLS certificate does not cover node hostname: ${domain}"
-    exit 1
+  if [[ -n "${domain}" ]]; then
+    # Some OpenSSL releases print a hostname mismatch but still exit zero, so
+    # require the positive result text as well as invoking the public checker.
+    local hostname_check
+    hostname_check="$(openssl x509 -in "${cert}" -noout -checkhost "${domain}" 2>&1 || true)"
+    if [[ "${hostname_check}" != *" does match certificate"* ]]; then
+      echo_content red "TLS certificate does not cover node hostname: ${domain}"
+      exit 1
+    fi
   fi
 }
 
@@ -1461,8 +1497,10 @@ write_initial_sysadmin_password_file() {
 write_core_runtime_config() {
   local crt_path="$1"
   local key_path="$2"
+  ensure_secure_file_helper
+  local temporary="${TP_SECURE_CONFIG_DIR}/core-config.ini"
 
-  cat >"${TP_DATA}/trojan-panel-core/config/config.ini" <<EOF
+  cat >"${temporary}" <<EOF
 [mysql]
 host=${MARIADB_HOST}
 user=${MARIADB_USER}
@@ -1473,7 +1511,10 @@ account_table=${ACCOUNT_TABLE}
 [redis]
 host=${REDIS_HOST}
 port=${REDIS_PORT}
+username=${REDIS_USERNAME}
 password=${REDIS_PASSWORD}
+auth_username=${REDIS_AUTH_USERNAME}
+auth_password=${REDIS_AUTH_PASSWORD}
 db=0
 max_idle=2
 max_active=4
@@ -1500,7 +1541,10 @@ host=${BIND_ADDRESS}
 server_id=${NODE_SERVER_ID}
 domain=${TP_NODE_DOMAIN}
 EOF
-  chmod 600 "${TP_DATA}/trojan-panel-core/config/config.ini"
+  chmod 0600 "${temporary}"
+  "${SECURE_FILE_HELPER}" atomic-write \
+    --path "${TP_DATA}/trojan-panel-core/config/config.ini" --input "${temporary}" \
+    --mode 0600 --create-parents
 }
 
 prepare_static_web() {
@@ -1882,6 +1926,8 @@ deploy_core() {
   local domain="$1"
   local client_ca_sha256
   client_ca_sha256="$(sha256sum "${GRPC_CLIENT_CA_PATH}" | awk '{print $1}')"
+  local runtime_config="${TP_DATA}/trojan-panel-core/config/config.ini"
+  local node_config_sha256
   local cert_data="${TP_DATA}/custom/node-caddy/data"
   local crt_path="${cert_data}/caddy/certificates/acme-v02.api.letsencrypt.org-directory/${domain}/${domain}.crt"
   local key_path="${cert_data}/caddy/certificates/acme-v02.api.letsencrypt.org-directory/${domain}/${domain}.key"
@@ -1891,9 +1937,11 @@ deploy_core() {
   fi
 
   write_core_runtime_config "${crt_path}" "${key_path}"
+  node_config_sha256="$(sha256sum "${runtime_config}" | awk '{print $1}')"
   remove_container_if_force "${CORE_CONTAINER}"
   recreate_container_if_env_changed "${CORE_CONTAINER}" TP_TLS_MODE "${TLS_MODE}" acme
   recreate_container_if_env_changed "${CORE_CONTAINER}" TP_CLIENT_CA_SHA256 "${client_ca_sha256}" ""
+  recreate_container_if_env_changed "${CORE_CONTAINER}" TP_NODE_CONFIG_SHA256 "${node_config_sha256}" ""
   if container_running "${CORE_CONTAINER}"; then
     echo_content skyBlue "---> Trojan Panel Core already running"
     if [[ "${TLS_MODE}" == "external" ]]; then
@@ -1917,6 +1965,7 @@ deploy_core() {
     -v "${TP_DATA}/trojan-panel-core/bin/hysteria2/config/:${TP_DATA}/trojan-panel-core/bin/hysteria2/config/" \
     -v "${TP_DATA}/trojan-panel-core/logs/:${TP_DATA}/trojan-panel-core/logs/" \
     -v "${TP_DATA}/trojan-panel-core/config/:${TP_DATA}/trojan-panel-core/config/" \
+    -v "${runtime_config}:${runtime_config}:ro" \
     -v "${TP_DATA}/trojan-panel-core/pki/:${TP_DATA}/trojan-panel-core/pki/:ro" \
     -v "${KERNEL_RUNTIME_PATH}:${TP_DATA}/trojan-panel-core/runtime/" \
     -v "${cert_data}:${cert_data}" \
@@ -1929,12 +1978,12 @@ deploy_core() {
     -e "mariadb_ip=${MARIADB_HOST}" \
     -e "mariadb_port=${MARIADB_PORT}" \
     -e "mariadb_user=${MARIADB_USER}" \
-    -e "mariadb_pas=${MARIADB_PASSWORD}" \
     -e "database=${MARIADB_DATABASE}" \
     -e "account_table=${ACCOUNT_TABLE}" \
     -e "redis_host=${REDIS_HOST}" \
     -e "redis_port=${REDIS_PORT}" \
-    -e "redis_pass=${REDIS_PASSWORD}" \
+    -e "REDIS_USERNAME=${REDIS_USERNAME}" \
+    -e "REDIS_AUTH_USERNAME=${REDIS_AUTH_USERNAME}" \
     -e "crt_path=${crt_path}" \
     -e "key_path=${key_path}" \
     -e "grpc_port=${GRPC_PORT}" \
@@ -1942,6 +1991,7 @@ deploy_core() {
     -e "grpc_tls_mode=${GRPC_TLS_MODE}" \
     -e "grpc_client_ca_path=${GRPC_CLIENT_CA_PATH}" \
     -e "TP_CLIENT_CA_SHA256=${client_ca_sha256}" \
+    -e "TP_NODE_CONFIG_SHA256=${node_config_sha256}" \
     -e "TP_KERNEL_RUNTIME=${TP_DATA}/trojan-panel-core/runtime" \
     -e "TP_EXTERNAL_DIR=${EXTERNAL_ROUTES_DIR}" \
     -e "TP_TLS_MODE=${TLS_MODE}" \
