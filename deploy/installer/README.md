@@ -112,12 +112,14 @@ Web→Node mTLS/gRPC 验证。在 Node 安装等待期间，从 Web 主控的另
 
 ```bash
 sudo docker exec trojan-panel /tpdata/trojan-panel/trojan-panel \
-  node-identity verify --id <node-identity-id>
+  node-identity verify --id <node-identity-id> --challenge <installer-printed-challenge>
 ```
 
-该调用使用 Web 持有的客户端证书并校验 Node 服务端证书；Node 的 `/healthz` 只在当前身份代次
-收到此调用后就绪，四项检查全部通过安装才返回成功。Node 每 30 秒用新连接复检三组数据层身份；
-轮换或撤销后，旧包不能通过安装检查，已经运行的旧代 Node 也会停止。新代次需生成新包重装。
+challenge 由本次安装随机生成并打印，只能使用该次输出。调用使用 Web 持有的客户端证书并校验
+Node 服务端证书；Node 的 `/healthz` 只在身份 ID、代次、服务器 ID 与 challenge 全部精确匹配后
+就绪，四项检查全部通过安装才返回成功。Node 使用固定生产频率通过新连接复检三组数据层身份，
+凭据失效后至多 10 秒退出；轮换或撤销后，旧包不能通过安装检查，已经运行的旧代 Node 也会停止。
+新代次需生成新包重装。
 
 直接使用权限为 `0600` 的 `--config` 仍用于开发、移除和证书刷新，但正式 Node 首装应使用
 加密 `--bundle`。

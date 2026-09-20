@@ -28,6 +28,10 @@ const (
 	clientCAPath        = "pki/client-ca.crt"
 	nodeClientCAPath    = "/tpdata/trojan-panel-core/pki/client-ca.crt"
 	nodePKIBundleDir    = "/tpdata/trojanpanelnext-pki"
+	nodeKernelRuntime   = "/tpdata/trojan-panel-core/runtime"
+	nodeManagedCertDir  = "/tpdata/trojan-panel-core/cert"
+	nodeExternalDir     = "/tpdata/trojanpanelnext-external"
+	nodeExternalRoutes  = "/tpdata/trojan-panel-core/external"
 )
 
 var bundleInventory = []string{configPath, manifestPath, clientCAPath}
@@ -144,6 +148,10 @@ func createBundle(options createOptions, password []byte) error {
 	manifestContents = append(manifestContents, '\n')
 	entries := map[string][]byte{manifestPath: manifestContents, configPath: config, clientCAPath: clientCA}
 
+	archive, err := encodeCanonicalArchive(entries)
+	if err != nil {
+		return err
+	}
 	var encrypted bytes.Buffer
 	recipient, err := age.NewScryptRecipient(string(password))
 	if err != nil {
@@ -153,21 +161,7 @@ func createBundle(options createOptions, password []byte) error {
 	if err != nil {
 		return fmt.Errorf("start age encryption: %w", err)
 	}
-	tarWriter := tar.NewWriter(ageWriter)
-	for _, name := range bundleInventory {
-		contents := entries[name]
-		mode := int64(0600)
-		if name == clientCAPath {
-			mode = 0644
-		}
-		if err = tarWriter.WriteHeader(&tar.Header{Name: name, Mode: mode, Size: int64(len(contents)), Typeflag: tar.TypeReg}); err != nil {
-			return err
-		}
-		if _, err = tarWriter.Write(contents); err != nil {
-			return err
-		}
-	}
-	if err = tarWriter.Close(); err != nil {
+	if _, err = ageWriter.Write(archive); err != nil {
 		return err
 	}
 	if err = ageWriter.Close(); err != nil {
@@ -183,48 +177,12 @@ func createBundle(options createOptions, password []byte) error {
 }
 
 func renderNodeConfig(template []byte, credential credentialFile) ([]byte, error) {
-	var root map[string]interface{}
-	if err := yaml.Unmarshal(template, &root); err != nil {
-		return nil, fmt.Errorf("parse Node configuration: %w", err)
-	}
-	if len(root) != 1 {
-		return nil, errors.New("Node configuration must contain only trojanpanelnext")
-	}
-	raw, ok := root["trojanpanelnext"]
-	if !ok {
-		return nil, errors.New("Node configuration is missing trojanpanelnext")
-	}
-	config, ok := raw.(map[string]interface{})
-	if !ok {
-		return nil, errors.New("trojanpanelnext must be a mapping")
-	}
-	for key := range config {
-		if !allowedNodeConfigKeys[key] {
-			return nil, fmt.Errorf("unsupported node configuration key %q", key)
-		}
-	}
-	if scalarString(config["deployment_mode"]) != "node" {
-		return nil, errors.New("Node configuration deployment_mode must be node")
+	root, config, err := parseAndValidateNodeConfig(template, nil)
+	if err != nil {
+		return nil, err
 	}
 	if scalarString(config["hostname"]) != credential.NodeDomain {
 		return nil, errors.New("Node configuration hostname must match the registered Node domain")
-	}
-	if scalarString(config["grpc_tls_mode"]) != "mtls" {
-		return nil, errors.New("Node configuration must keep grpc_tls_mode mtls")
-	}
-	if uint64Value(config["grpc_port"]) != 8100 {
-		return nil, errors.New("Node configuration grpc_port must match the registered port 8100")
-	}
-	if scalarString(config["grpc_client_ca_path"]) != nodeClientCAPath {
-		return nil, fmt.Errorf("Node configuration grpc_client_ca_path must be %s", nodeClientCAPath)
-	}
-	if scalarString(config["pki_bundle_dir"]) != nodePKIBundleDir {
-		return nil, fmt.Errorf("Node configuration pki_bundle_dir must be %s", nodePKIBundleDir)
-	}
-	for _, key := range []string{"mariadb_host", "redis_host", "node_agent_image", "grpc_client_ca_path"} {
-		if strings.TrimSpace(scalarString(config[key])) == "" {
-			return nil, fmt.Errorf("Node configuration requires %s", key)
-		}
 	}
 	config["hostname"] = credential.NodeDomain
 	config["node_server_id"] = credential.NodeServerID
@@ -239,11 +197,16 @@ func renderNodeConfig(template []byte, credential credentialFile) ([]byte, error
 	config["redis_auth_password"] = credential.RedisAuth.Password
 	config["grpc_tls_mode"] = "mtls"
 	config["grpc_tls_server_name"] = credential.NodeDomain
-	result, err := yaml.Marshal(root)
-	if err != nil {
+	var encoded bytes.Buffer
+	encoder := yaml.NewEncoder(&encoded)
+	encoder.SetIndent(2)
+	if err = encoder.Encode(root); err != nil {
 		return nil, err
 	}
-	return result, nil
+	if err = encoder.Close(); err != nil {
+		return nil, err
+	}
+	return encoded.Bytes(), nil
 }
 
 func decryptAndValidate(path string, password []byte) (map[string][]byte, bundleManifest, error) {
@@ -297,6 +260,10 @@ func decryptAndValidate(path string, password []byte) (map[string][]byte, bundle
 	if strings.Join(sortedKeys(entries), "\x00") != strings.Join(bundleInventory, "\x00") {
 		return nil, bundleManifest{}, errors.New("Node bootstrap archive inventory is incomplete")
 	}
+	canonical, canonicalErr := encodeCanonicalArchive(entries)
+	if canonicalErr != nil || !bytes.Equal(archive, canonical) {
+		return nil, bundleManifest{}, errors.New("Node bootstrap archive is not in the canonical fixed-inventory format")
+	}
 	var manifest bundleManifest
 	if err = decodeStrictJSON(entries[manifestPath], &manifest); err != nil || manifest.SchemaVersion != bundleSchemaVersion {
 		return nil, bundleManifest{}, errors.New("Node bootstrap manifest is invalid")
@@ -317,18 +284,105 @@ func decryptAndValidate(path string, password []byte) (map[string][]byte, bundle
 	if err = validatePublicCA(entries[clientCAPath]); err != nil {
 		return nil, bundleManifest{}, err
 	}
-	var configRoot map[string]interface{}
-	if err = yaml.Unmarshal(entries[configPath], &configRoot); err != nil {
-		return nil, bundleManifest{}, errors.New("Node bootstrap configuration is invalid")
-	}
-	config, ok := configRoot["trojanpanelnext"].(map[string]interface{})
-	if !ok || scalarString(config["node_identity_id"]) != manifest.NodeIdentityID ||
-		uint64Value(config["node_identity_generation"]) != manifest.Generation ||
-		uint64Value(config["node_server_id"]) != manifest.NodeServerID ||
-		scalarString(config["hostname"]) != manifest.NodeDomain || scalarString(config["grpc_tls_mode"]) != "mtls" {
-		return nil, bundleManifest{}, errors.New("Node bootstrap manifest and configuration identity disagree")
+	if _, _, err = parseAndValidateNodeConfig(entries[configPath], &manifest); err != nil {
+		return nil, bundleManifest{}, err
 	}
 	return entries, manifest, nil
+}
+
+func encodeCanonicalArchive(entries map[string][]byte) ([]byte, error) {
+	var archive bytes.Buffer
+	writer := tar.NewWriter(&archive)
+	for _, name := range bundleInventory {
+		contents, exists := entries[name]
+		if !exists {
+			return nil, fmt.Errorf("Node bootstrap archive is missing %s", name)
+		}
+		mode := int64(0600)
+		if name == clientCAPath {
+			mode = 0644
+		}
+		if err := writer.WriteHeader(&tar.Header{Name: name, Mode: mode, Size: int64(len(contents)), Typeflag: tar.TypeReg}); err != nil {
+			return nil, err
+		}
+		if _, err := writer.Write(contents); err != nil {
+			return nil, err
+		}
+	}
+	if err := writer.Close(); err != nil {
+		return nil, err
+	}
+	return archive.Bytes(), nil
+}
+
+func parseAndValidateNodeConfig(contents []byte, expected *bundleManifest) (map[string]interface{}, map[string]interface{}, error) {
+	var root map[string]interface{}
+	if err := yaml.Unmarshal(contents, &root); err != nil {
+		return nil, nil, fmt.Errorf("parse Node configuration: %w", err)
+	}
+	if len(root) != 1 {
+		return nil, nil, errors.New("Node configuration must contain only trojanpanelnext")
+	}
+	raw, ok := root["trojanpanelnext"]
+	if !ok {
+		return nil, nil, errors.New("Node configuration is missing trojanpanelnext")
+	}
+	config, ok := raw.(map[string]interface{})
+	if !ok {
+		return nil, nil, errors.New("trojanpanelnext must be a mapping")
+	}
+	for key := range config {
+		if !allowedNodeConfigKeys[key] {
+			return nil, nil, fmt.Errorf("unsupported node configuration key %q", key)
+		}
+	}
+	if scalarString(config["deployment_mode"]) != "node" {
+		return nil, nil, errors.New("Node configuration deployment_mode must be node")
+	}
+	if scalarString(config["grpc_tls_mode"]) != "mtls" {
+		return nil, nil, errors.New("Node configuration must keep grpc_tls_mode mtls")
+	}
+	if uint64Value(config["grpc_port"]) != 8100 {
+		return nil, nil, errors.New("Node configuration grpc_port must match the registered port 8100")
+	}
+	fixedPaths := map[string]string{
+		"grpc_client_ca_path": nodeClientCAPath,
+		"pki_bundle_dir":      nodePKIBundleDir,
+		"kernel_runtime_path": nodeKernelRuntime,
+	}
+	for key, expectedPath := range fixedPaths {
+		if scalarString(config[key]) != expectedPath {
+			return nil, nil, fmt.Errorf("Node configuration %s must be %s", key, expectedPath)
+		}
+	}
+	optionalFixedPaths := map[string]string{
+		"managed_cert_dir":     nodeManagedCertDir,
+		"external_managed_dir": nodeExternalDir,
+		"external_routes_dir":  nodeExternalRoutes,
+	}
+	for key, expectedPath := range optionalFixedPaths {
+		if value := strings.TrimSpace(scalarString(config[key])); value != "" && value != expectedPath {
+			return nil, nil, fmt.Errorf("Node configuration %s must be %s", key, expectedPath)
+		}
+	}
+	for _, key := range []string{"tls_cert_file", "tls_key_file"} {
+		if value := strings.TrimSpace(scalarString(config[key])); value != "" && (filepath.Base(value) != value || value == "." || value == "..") {
+			return nil, nil, fmt.Errorf("Node configuration %s must be a file name without path components", key)
+		}
+	}
+	for _, key := range []string{"hostname", "mariadb_host", "redis_host", "node_agent_image", "grpc_client_ca_path"} {
+		if strings.TrimSpace(scalarString(config[key])) == "" {
+			return nil, nil, fmt.Errorf("Node configuration requires %s", key)
+		}
+	}
+	if expected != nil && (scalarString(config["node_identity_id"]) != expected.NodeIdentityID ||
+		uint64Value(config["node_identity_generation"]) != expected.Generation ||
+		uint64Value(config["node_server_id"]) != expected.NodeServerID ||
+		scalarString(config["hostname"]) != expected.NodeDomain ||
+		scalarString(config["grpc_tls_server_name"]) != expected.NodeDomain) {
+		return nil, nil, errors.New("Node bootstrap manifest and configuration identity disagree")
+	}
+	return root, config, nil
 }
 
 func decodeStrictJSON(contents []byte, destination interface{}) error {

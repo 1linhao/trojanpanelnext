@@ -16,12 +16,12 @@
     {
       "name": "verify-assets",
       "path": "verify-assets.sh",
-      "sha256": "e45e44f3d0a71f64157653cfdce9550dfae0d1c1117ca322b364cbd77ab821eb"
+      "sha256": "639638c46c7f325320348d0e3b7c351ac21b7ae75da5e53898fc6980e10b0313"
     },
     {
       "name": "install",
       "path": "install.sh",
-      "sha256": "7e5973662f22e290040fbeabb83ee8ccfe788ae3d6e9584543a359dfb68a4136"
+      "sha256": "cae6f1de212ca6aee1a019ce5ebbf2296130f5dc45490a9a9a70d0708401256e"
     },
     {
       "name": "secure-file",

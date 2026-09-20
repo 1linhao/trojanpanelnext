@@ -23,6 +23,13 @@ type NodeTransport struct {
 	ServerName string
 }
 
+type NodeVerification struct {
+	IdentityID string
+	Generation uint64
+	ServerID   uint64
+	Challenge  string
+}
+
 func newGrpcInstance(token string, ip string, grpcPort uint, timeout time.Duration, transports ...NodeTransport) (conn *grpc.ClientConn, ctx context.Context, clo func(), err error) {
 	tokenParam := TokenValidateParam{
 		Token: token,
@@ -199,14 +206,45 @@ func GetNodeState(token string, ip string, grpcPort uint, nodeTypeId uint, port 
 
 // GetNodeServerState 查询服务器状态
 func GetNodeServerState(token string, ip string, grpcPort uint, transports ...NodeTransport) (*NodeServerStateVo, error) {
+	return getNodeServerState(token, ip, grpcPort, &NodeServerStateDto{}, transports...)
+}
+
+// VerifyNodeServerState binds a Web mTLS probe to one registered Node identity,
+// credential generation, node_server row, and this-install challenge. The
+// response must echo the same values before the caller may report success.
+func VerifyNodeServerState(token string, ip string, grpcPort uint, verification NodeVerification, transports ...NodeTransport) (*NodeServerStateVo, error) {
+	request := &NodeServerStateDto{
+		NodeIdentityId: verification.IdentityID, IdentityGeneration: verification.Generation,
+		NodeServerId: verification.ServerID, BootstrapChallenge: verification.Challenge,
+	}
+	state, err := getNodeServerState(token, ip, grpcPort, request, transports...)
+	if err != nil {
+		return nil, err
+	}
+	if err = validateNodeVerificationResponse(state, verification); err != nil {
+		return nil, err
+	}
+	return state, nil
+}
+
+func validateNodeVerificationResponse(state *NodeServerStateVo, verification NodeVerification) error {
+	if state == nil || state.GetNodeIdentityId() != verification.IdentityID ||
+		state.GetIdentityGeneration() != verification.Generation ||
+		state.GetNodeServerId() != verification.ServerID ||
+		state.GetBootstrapChallenge() != verification.Challenge {
+		return errors.New("Node verification response identity mismatch")
+	}
+	return nil
+}
+
+func getNodeServerState(token string, ip string, grpcPort uint, request *NodeServerStateDto, transports ...NodeTransport) (*NodeServerStateVo, error) {
 	conn, ctx, clo, err := newGrpcInstance(token, ip, grpcPort, 4*time.Second, transports...)
 	defer clo()
 	if err != nil {
 		return nil, err
 	}
 	client := NewApiStateServiceClient(conn)
-	nodeServerStateDto := NodeServerStateDto{}
-	send, err := client.GetNodeServerState(ctx, &nodeServerStateDto)
+	send, err := client.GetNodeServerState(ctx, request)
 	if err != nil {
 		logrus.Errorf("gRPC GetNodeServerState err ip: %s grpcPort: %d err: %v", ip, grpcPort, err)
 		return nil, errors.New(constant.GrpcError)

@@ -55,14 +55,16 @@ sudo docker exec trojan-panel /tpdata/trojan-panel/trojan-panel node-identity ro
 
 ```bash
 sudo docker exec trojan-panel /tpdata/trojan-panel/trojan-panel node-identity status --id <node-identity-id>
-sudo docker exec trojan-panel /tpdata/trojan-panel/trojan-panel node-identity verify --id <node-identity-id>
+sudo docker exec trojan-panel /tpdata/trojan-panel/trojan-panel node-identity verify \
+  --id <node-identity-id> --challenge <installer-printed-challenge>
 sudo docker exec trojan-panel /tpdata/trojan-panel/trojan-panel node-identity revoke --id <node-identity-id>
 sudo docker exec trojan-panel /tpdata/trojan-panel/trojan-panel node-identity force-evict --id <node-identity-id>
 ```
 
 `verify` 仅接受活动身份，从登记的公网 IP 和 gRPC 端口连接 Node，使用 Web 本地客户端证书并
-校验登记域名对应的 Node 服务端证书。成功的 mTLS/gRPC 状态调用会把 Node 当前身份代次标记为
-就绪；输出只含身份 ID 与代次，不含秘密。
+校验登记域名对应的 Node 服务端证书。`--challenge` 必须是当前 Node 安装器打印的 64 位小写十六
+进制随机值。成功调用要求请求和响应中的身份 ID、代次、服务器 ID 与 challenge 全部精确匹配，
+才会把本次安装标记为就绪；输出只含身份 ID 与代次，不含秘密。
 
 `revoke` 回收全部数据层凭据，但保留 `node_server` 与不可用的 Node 身份审计墓碑；`force-evict`
 还会删除活动 `node_server` 登记并明确表达故障处置意图。两者都不连接 Node 宿主，因此 Node 离线时

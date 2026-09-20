@@ -12,7 +12,8 @@ INITIAL_SYSADMIN_PASSWORD_FILE="${INITIAL_SYSADMIN_PASSWORD_FILE:-${TP_DATA}/tro
 TP_PKI_BUNDLE_DIR="${TP_PKI_BUNDLE_DIR:-${TP_DATA}/trojanpanelnext-pki}"
 INSTALLER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SECURE_FILE_HELPER="${SECURE_FILE_HELPER:-${INSTALLER_DIR}/secure-file}"
-NODE_BUNDLE_HELPER="${NODE_BUNDLE_HELPER:-${INSTALLER_DIR}/node-bundle}"
+NODE_BUNDLE_HELPER_OVERRIDE="${NODE_BUNDLE_HELPER:-}"
+NODE_BUNDLE_HELPER="${INSTALLER_DIR}/node-bundle"
 ENTRYCTL_PATH="${ENTRYCTL_PATH:-${INSTALLER_DIR}/entry/entryctl.sh}"
 ENTRY_SPEC_FILE="${ENTRY_SPEC_FILE:-}"
 EXTERNAL_MANAGED_DIR="${EXTERNAL_MANAGED_DIR:-${TP_DATA}/trojanpanelnext-external}"
@@ -49,6 +50,7 @@ GRPC_PORT="${GRPC_PORT:-8100}"
 NODE_SERVER_ID="${NODE_SERVER_ID:-0}"
 NODE_IDENTITY_ID="${NODE_IDENTITY_ID:-}"
 NODE_IDENTITY_GENERATION="${NODE_IDENTITY_GENERATION:-0}"
+NODE_BOOTSTRAP_CHALLENGE=""
 GRPC_TLS_MODE="${GRPC_TLS_MODE:-mtls}"
 GRPC_TLS_SERVER_NAME="${GRPC_TLS_SERVER_NAME:-}"
 GRPC_CLIENT_CA_PATH="${GRPC_CLIENT_CA_PATH:-${TP_DATA}/trojan-panel-core/pki/client-ca.crt}"
@@ -72,6 +74,8 @@ TP_PURGE_DATA="${TP_PURGE_DATA:-0}"
 TP_INSTALL_DEPS="${TP_INSTALL_DEPS:-1}"
 TP_HEALTH_ATTEMPTS="${TP_HEALTH_ATTEMPTS:-30}"
 TP_HEALTH_DELAY_SECONDS="${TP_HEALTH_DELAY_SECONDS:-2}"
+TP_CONTAINER_ATTEMPTS="${TP_CONTAINER_ATTEMPTS:-60}"
+TP_CONTAINER_DELAY_SECONDS="${TP_CONTAINER_DELAY_SECONDS:-2}"
 TP_OS_RELEASE_FILE="${TP_OS_RELEASE_FILE:-/etc/os-release}"
 TP_DEPLOYMENT_MODE=""
 TP_CONFIG_ROOT="${TP_CONFIG_ROOT:-}"
@@ -535,6 +539,14 @@ verify_release_assets_before_host_change() {
 }
 
 ensure_node_bundle_helper() {
+	if [[ "${INSTALLER_ASSET_VERSION}" != development && -n "${NODE_BUNDLE_HELPER_OVERRIDE}" && \
+	  "${NODE_BUNDLE_HELPER_OVERRIDE}" != "${INSTALLER_DIR}/node-bundle" ]]; then
+		echo_content red "Released installer rejects NODE_BUNDLE_HELPER overrides"
+		exit 1
+	fi
+	if [[ "${INSTALLER_ASSET_VERSION}" == development && -n "${NODE_BUNDLE_HELPER_OVERRIDE}" ]]; then
+		NODE_BUNDLE_HELPER="${NODE_BUNDLE_HELPER_OVERRIDE}"
+	fi
   if [[ -x "${NODE_BUNDLE_HELPER}" && ! -L "${NODE_BUNDLE_HELPER}" ]]; then
     return
   fi
@@ -578,6 +590,14 @@ prepare_node_bundle() {
   TP_SECURE_CONFIG_DIR="${TP_NODE_BUNDLE_DIR}/secure"
   TP_NODE_BUNDLE_ACTIVE=1
   prepare_secure_config "${TP_NODE_BUNDLE_DIR}/config-node.yaml"
+}
+
+initialize_node_bootstrap_challenge() {
+  NODE_BOOTSTRAP_CHALLENGE="$(openssl rand -hex 32)"
+  if [[ ! "${NODE_BOOTSTRAP_CHALLENGE}" =~ ^[0-9a-f]{64}$ ]]; then
+    echo_content red "Could not create a fresh Node installation challenge"
+    exit 1
+  fi
 }
 
 ensure_secure_file_helper() {
@@ -1613,6 +1633,7 @@ server_id=${NODE_SERVER_ID}
 domain=${TP_NODE_DOMAIN}
 identity_id=${NODE_IDENTITY_ID}
 identity_generation=${NODE_IDENTITY_GENERATION}
+bootstrap_challenge=${NODE_BOOTSTRAP_CHALLENGE}
 EOF
   chmod 0600 "${temporary}"
   "${SECURE_FILE_HELPER}" atomic-write \
@@ -1755,11 +1776,11 @@ wait_for_cert() {
 
 wait_for_container() {
   local name="$1"
-  for _ in $(seq 1 60); do
+  for _ in $(seq 1 "${TP_CONTAINER_ATTEMPTS}"); do
     if container_running "${name}"; then
       return
     fi
-    sleep 2
+    sleep "${TP_CONTAINER_DELAY_SECONDS}"
   done
   echo_content red "---> ${name} is not running"
   docker logs "${name}" 2>/dev/null || true
@@ -1949,7 +1970,7 @@ probe_sysadmin_credential_health() {
   return 1
 }
 
-wait_for_web_health_probe() {
+wait_for_health_probe() {
   local label="$1"
   local probe="$2"
   local attempt
@@ -1995,11 +2016,11 @@ probe_node_api_health() {
 
 verify_node_health() {
   echo_content green "---> Verify Node Agent health"
-  wait_for_web_health_probe "Node MariaDB identity" probe_node_mariadb_health
-  wait_for_web_health_probe "Node Redis identities" probe_node_redis_health
+  wait_for_health_probe "Node MariaDB identity" probe_node_mariadb_health
+  wait_for_health_probe "Node Redis identities" probe_node_redis_health
   echo_content yellow "Run this on the Web control-plane host if automatic polling has not verified the Node yet:"
-  echo_content yellow "  docker exec ${PANEL_CONTAINER} /tpdata/trojan-panel/trojan-panel node-identity verify --id ${NODE_IDENTITY_ID}"
-  wait_for_web_health_probe "Web-to-Node mTLS/gRPC and Node API" probe_node_api_health
+  echo_content yellow "  docker exec ${PANEL_CONTAINER} /tpdata/trojan-panel/trojan-panel node-identity verify --id ${NODE_IDENTITY_ID} --challenge ${NODE_BOOTSTRAP_CHALLENGE}"
+  wait_for_health_probe "Web-to-Node mTLS/gRPC and Node API" probe_node_api_health
 }
 
 print_node_success() {
@@ -2014,10 +2035,10 @@ print_node_success() {
 
 verify_web_health() {
   echo_content green "---> Verify Web control plane health"
-  wait_for_web_health_probe MariaDB probe_mariadb_health
-  wait_for_web_health_probe Redis probe_redis_health
-  wait_for_web_health_probe "Web HTTPS" probe_web_https_health
-  wait_for_web_health_probe "sysadmin container credential" probe_sysadmin_credential_health
+  wait_for_health_probe MariaDB probe_mariadb_health
+  wait_for_health_probe Redis probe_redis_health
+  wait_for_health_probe "Web HTTPS" probe_web_https_health
+  wait_for_health_probe "sysadmin container credential" probe_sysadmin_credential_health
 }
 
 print_web_success() {
@@ -2386,6 +2407,10 @@ main() {
   [[ -n "${purge_override}" ]] && TP_PURGE_DATA="${purge_override}"
   validate_config "${mode}"
   validate_entry_spec_binding "${mode}"
+
+  if [[ "${command}:${mode}" == install:node ]]; then
+    initialize_node_bootstrap_challenge
+  fi
 
   if [[ "${command}" == refresh-cert && "${mode}" != node ]]; then
     echo_content red "refresh-cert is only valid with --mode node"

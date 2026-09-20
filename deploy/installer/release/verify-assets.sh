@@ -278,7 +278,7 @@ normalized_manifest="$(awk -F '\t' '
       digest = node_value[base "/digest"]
       reference = node_value[base "/reference"]
       if (kind != image_kind[i]) reject()
-      if (name == "" || name !~ /^[A-Za-z0-9._\/-]+$/) reject()
+      if (name == "" || name !~ /^[A-Za-z0-9._:\/-]+$/) reject()
       if (digest !~ /^sha256:[0-9a-f]+$/ || length(digest) != 71) reject()
       if (reference != name "@" digest) reject()
       image_name[image_key[i]] = name

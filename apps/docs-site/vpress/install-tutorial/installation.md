@@ -49,9 +49,10 @@ sudo ./install.sh validate --mode node --bundle ./node-sg.g1.age
 sudo ./install.sh install --mode node --bundle ./node-sg.g1.age
 ```
 
-安装等待期间，在 Web 主控另一终端执行
-`node-identity verify --id <node-identity-id>`。MariaDB、Redis、Node API 和 Web→Node
-mTLS/gRPC 四项检查全部通过后安装才成功。
+安装等待期间，在 Web 主控另一终端执行安装器输出的完整命令：
+`node-identity verify --id <node-identity-id> --challenge <installer-printed-challenge>`。
+challenge 每次安装重新随机生成，旧值不能复用。MariaDB、Redis、Node API 和 Web→Node
+mTLS/gRPC 四项检查全部通过后安装才成功；Node 在数据层凭据失效后至多 10 秒退出。
 
 ## 更新容器
 

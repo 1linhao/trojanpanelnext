@@ -120,15 +120,16 @@ this from another terminal on the Web control plane:
 
 ```bash
 sudo docker exec trojan-panel /tpdata/trojan-panel/trojan-panel \
-  node-identity verify --id <node-identity-id>
+  node-identity verify --id <node-identity-id> --challenge <installer-printed-challenge>
 ```
 
-That call uses the client certificate retained by Web and verifies the Node server certificate. The
-Node `/healthz` becomes ready only after the exact current identity generation receives that call, and
-installation succeeds only after all four checks pass. The Node rechecks all three data identities
-over fresh connections every 30 seconds. After rotation or revocation, an old bundle cannot pass
-installation and an already-running old-generation Node stops. Generate and install a new bundle for
-the new generation.
+The challenge is random for this installation and must be copied from that installation's output.
+The call uses the client certificate retained by Web and verifies the Node server certificate. Node
+`/healthz` becomes ready only after the identity ID, generation, server ID, and challenge all match,
+and installation succeeds only after all four checks pass. The Node rechecks all three data identities
+over fresh connections at a fixed production cadence and exits within 10 seconds after invalidation.
+After rotation or revocation, an old bundle cannot pass installation and an already-running
+old-generation Node stops. Generate and install a new bundle for the new generation.
 
 A mode-`0600` `--config` remains available for development, removal, and certificate refresh, but use
 the encrypted `--bundle` for a production Node's initial install.

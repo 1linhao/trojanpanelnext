@@ -15,33 +15,34 @@ import (
 )
 
 var (
-	host              string
-	user              string
-	password          string
-	port              string
-	database          string
-	accountTable      string
-	redisHost         string
-	redisPort         string
-	redisUsername     string
-	redisPassword     string
-	redisAuthUsername string
-	redisAuthPassword string
-	redisDb           string
-	redisMaxIdle      string
-	redisMaxActive    string
-	redisWait         string
-	crtPath           string
-	keyPath           string
-	grpcPort          string
-	grpcTLSMode       string
-	grpcClientCA      string
-	serverPort        string
-	nodeServerID      string
-	nodeDomain        string
-	nodeIdentityID    string
-	nodeIdentityGen   string
-	version           bool
+	host                   string
+	user                   string
+	password               string
+	port                   string
+	database               string
+	accountTable           string
+	redisHost              string
+	redisPort              string
+	redisUsername          string
+	redisPassword          string
+	redisAuthUsername      string
+	redisAuthPassword      string
+	redisDb                string
+	redisMaxIdle           string
+	redisMaxActive         string
+	redisWait              string
+	crtPath                string
+	keyPath                string
+	grpcPort               string
+	grpcTLSMode            string
+	grpcClientCA           string
+	serverPort             string
+	nodeServerID           string
+	nodeDomain             string
+	nodeIdentityID         string
+	nodeIdentityGen        string
+	nodeBootstrapChallenge string
+	version                bool
 )
 
 func init() {
@@ -71,6 +72,7 @@ func init() {
 	flag.StringVar(&nodeDomain, "nodeDomain", envOr("TP_NODE_DOMAIN", "node_domain", ""), "node domain used for TLS SNI")
 	flag.StringVar(&nodeIdentityID, "nodeIdentityId", envOr("TP_NODE_IDENTITY_ID", "node_identity_id", ""), "stable Node identity id")
 	flag.StringVar(&nodeIdentityGen, "nodeIdentityGeneration", envOr("TP_NODE_IDENTITY_GENERATION", "node_identity_generation", "0"), "Node identity credential generation")
+	flag.StringVar(&nodeBootstrapChallenge, "nodeBootstrapChallenge", envOr("TP_NODE_BOOTSTRAP_CHALLENGE", "node_bootstrap_challenge", ""), "one-install Web verification challenge")
 	flag.BoolVar(&version, "version", false, "print version info")
 	flag.Usage = usage
 	isTest := strings.HasSuffix(os.Args[0], ".test")
@@ -151,8 +153,9 @@ server_id=%s
 domain=%s
 identity_id=%s
 identity_generation=%s
+bootstrap_challenge=%s
 `, host, user, password, port, database, accountTable, redisHost, redisPort, redisUsername, redisPassword, redisAuthUsername, redisAuthPassword, redisDb,
-			redisMaxIdle, redisMaxActive, redisWait, crtPath, keyPath, grpcPort, grpcTLSMode, grpcClientCA, serverPort, nodeServerID, nodeDomain, nodeIdentityID, nodeIdentityGen))
+			redisMaxIdle, redisMaxActive, redisWait, crtPath, keyPath, grpcPort, grpcTLSMode, grpcClientCA, serverPort, nodeServerID, nodeDomain, nodeIdentityID, nodeIdentityGen, nodeBootstrapChallenge))
 		if err != nil {
 			logrus.Errorf("config.ini file write err: %v", err)
 			panic(err)
@@ -228,7 +231,22 @@ func ValidateNodeIdentityConfig(config *AppConfig) error {
 	if config.NodeConfig.IdentityGeneration == 0 {
 		return errors.New("Node Agent requires a positive node_identity_generation")
 	}
+	if !isLowerHex(config.NodeConfig.BootstrapChallenge, 64) {
+		return errors.New("Node Agent requires a 64-character bootstrap_challenge")
+	}
 	return nil
+}
+
+func isLowerHex(value string, length int) bool {
+	if len(value) != length {
+		return false
+	}
+	for _, character := range value {
+		if !((character >= '0' && character <= '9') || (character >= 'a' && character <= 'f')) {
+			return false
+		}
+	}
+	return true
 }
 
 func isUUID(value string) bool {
@@ -292,6 +310,7 @@ type NodeConfig struct {
 	Domain             string `ini:"domain"`
 	IdentityID         string `ini:"identity_id"`
 	IdentityGeneration uint64 `ini:"identity_generation"`
+	BootstrapChallenge string `ini:"bootstrap_challenge"`
 }
 
 // LogConfig log

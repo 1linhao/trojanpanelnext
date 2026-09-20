@@ -122,6 +122,42 @@ func TestDecryptRejectsUnexpectedOrUnsafeArchiveEntry(t *testing.T) {
 	}
 }
 
+func TestDecryptRejectsDataAfterTarEndOfArchive(t *testing.T) {
+	root := t.TempDir()
+	valid := createTestBundle(t, root)
+	forged := filepath.Join(root, "trailing-private-key.age")
+	rewriteBundleWithTail(t, valid, forged, []byte("-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n"))
+	if _, _, err := decryptAndValidate(forged, []byte(testPassword)); err == nil {
+		t.Fatal("bundle with private-key data after tar end-of-archive was accepted")
+	}
+}
+
+func TestDecryptRevalidatesCompleteNodeConfigurationSchema(t *testing.T) {
+	tests := map[string]func([]byte) []byte{
+		"absolute client CA path": func(config []byte) []byte {
+			return bytes.ReplaceAll(config, []byte(nodeClientCAPath), []byte("/tmp/attacker/client-ca.crt"))
+		},
+		"absolute kernel runtime path": func(config []byte) []byte {
+			return bytes.ReplaceAll(config, []byte("/tpdata/trojan-panel-core/runtime"), []byte("/root/attacker-runtime"))
+		},
+		"unknown key": func(config []byte) []byte {
+			return append(config, []byte("  attacker_output_path: /root/owned\n")...)
+		},
+		"duplicate root": func(config []byte) []byte {
+			return append(config, []byte("trojanpanelnext:\n  deployment_mode: node\n")...)
+		},
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			forged := createForgedBundle(t, root, mutate)
+			if _, _, err := decryptAndValidate(forged, []byte(testPassword)); err == nil {
+				t.Fatalf("forged Node configuration %q was accepted", name)
+			}
+		})
+	}
+}
+
 func TestCreateRejectsUnknownNodeConfigKey(t *testing.T) {
 	root := t.TempDir()
 	credentialPath := writeTestCredential(t, root)
@@ -308,6 +344,10 @@ func writeTestConfig(t *testing.T, root string) string {
 }
 
 func writeEncryptedArchive(path, password string, entries map[string][]byte) error {
+	return writeEncryptedBytes(path, password, canonicalTestArchive(entries))
+}
+
+func writeEncryptedBytes(path, password string, archive []byte) error {
 	var encrypted bytes.Buffer
 	recipient, err := age.NewScryptRecipient(password)
 	if err != nil {
@@ -317,22 +357,90 @@ func writeEncryptedArchive(path, password string, entries map[string][]byte) err
 	if err != nil {
 		return err
 	}
-	tarWriter := tar.NewWriter(writer)
-	for name, contents := range entries {
-		if err = tarWriter.WriteHeader(&tar.Header{Name: name, Mode: 0600, Size: int64(len(contents)), Typeflag: tar.TypeReg}); err != nil {
-			return err
-		}
-		if _, err = tarWriter.Write(contents); err != nil {
-			return err
-		}
-	}
-	if err = tarWriter.Close(); err != nil {
+	if _, err = writer.Write(archive); err != nil {
 		return err
 	}
 	if err = writer.Close(); err != nil {
 		return err
 	}
 	return os.WriteFile(path, encrypted.Bytes(), 0600)
+}
+
+func canonicalTestArchive(entries map[string][]byte) []byte {
+	var archive bytes.Buffer
+	writer := tar.NewWriter(&archive)
+	written := make(map[string]bool)
+	ordered := append([]string(nil), bundleInventory...)
+	for _, name := range sortedKeys(entries) {
+		if !contains(ordered, name) {
+			ordered = append(ordered, name)
+		}
+	}
+	for _, name := range ordered {
+		contents, exists := entries[name]
+		if !exists || written[name] {
+			continue
+		}
+		written[name] = true
+		mode := int64(0600)
+		if name == clientCAPath {
+			mode = 0644
+		}
+		_ = writer.WriteHeader(&tar.Header{Name: name, Mode: mode, Size: int64(len(contents)), Typeflag: tar.TypeReg})
+		_, _ = writer.Write(contents)
+	}
+	_ = writer.Close()
+	return archive.Bytes()
+}
+
+func rewriteBundleWithTail(t *testing.T, source, destination string, tail []byte) {
+	t.Helper()
+	file, err := os.Open(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := age.NewScryptIdentity(testPassword)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader, err := age.Decrypt(file, identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	archive, err := io.ReadAll(reader)
+	_ = file.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	archive = append(archive, tail...)
+	if err = writeEncryptedBytes(destination, testPassword, archive); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func createForgedBundle(t *testing.T, root string, mutate func([]byte) []byte) string {
+	t.Helper()
+	valid := createTestBundle(t, root)
+	entries, manifest, err := decryptAndValidate(valid, []byte(testPassword))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries[configPath] = mutate(entries[configPath])
+	for index := range manifest.Files {
+		if manifest.Files[index].Path == configPath {
+			manifest.Files[index].SHA256 = digest(entries[configPath])
+		}
+	}
+	manifestContents, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries[manifestPath] = append(manifestContents, '\n')
+	forged := filepath.Join(root, "forged.age")
+	if err = writeEncryptedArchive(forged, testPassword, entries); err != nil {
+		t.Fatal(err)
+	}
+	return forged
 }
 
 func min(left, right int) int {

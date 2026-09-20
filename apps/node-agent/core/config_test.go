@@ -11,6 +11,7 @@ func TestValidateNodeIdentityConfigRejectsSharedIdentities(t *testing.T) {
 		},
 		NodeConfig: NodeConfig{
 			ServerID: 1, IdentityID: "11111111-2222-4333-8444-555555555555", IdentityGeneration: 7,
+			BootstrapChallenge: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		},
 	}
 	if err := ValidateNodeIdentityConfig(valid); err != nil {
@@ -31,6 +32,8 @@ func TestValidateNodeIdentityConfigRejectsSharedIdentities(t *testing.T) {
 		{"missing identity id", func(config *AppConfig) { config.NodeConfig.IdentityID = "" }},
 		{"malformed identity id", func(config *AppConfig) { config.NodeConfig.IdentityID = "not-a-uuid" }},
 		{"zero identity generation", func(config *AppConfig) { config.NodeConfig.IdentityGeneration = 0 }},
+		{"missing bootstrap challenge", func(config *AppConfig) { config.NodeConfig.BootstrapChallenge = "" }},
+		{"malformed bootstrap challenge", func(config *AppConfig) { config.NodeConfig.BootstrapChallenge = "ABC" }},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {

@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"github.com/gin-gonic/gin"
 	"os"
-	"strconv"
-	"time"
 	"trojan-panel-core/api"
 	"trojan-panel-core/app"
 	"trojan-panel-core/core"
@@ -40,16 +38,8 @@ func main() {
 }
 
 func startCredentialWatchdog() {
-	seconds := 30
-	if configured := os.Getenv("TP_NODE_CREDENTIAL_RECHECK_SECONDS"); configured != "" {
-		value, err := strconv.Atoi(configured)
-		if err != nil || value < 1 || value > 3600 {
-			panic("TP_NODE_CREDENTIAL_RECHECK_SECONDS must be between 1 and 3600")
-		}
-		seconds = value
-	}
 	go func() {
-		if err := healthcheck.Watch(context.Background(), time.Duration(seconds)*time.Second); err != nil {
+		if err := healthcheck.Watch(context.Background()); err != nil {
 			fmt.Fprintln(os.Stderr, "Node data-service identity is no longer valid; stopping")
 			os.Exit(1)
 		}

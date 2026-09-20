@@ -21,6 +21,7 @@ type marker struct {
 	NodeIdentityID     string `json:"node_identity_id"`
 	IdentityGeneration uint64 `json:"identity_generation"`
 	NodeServerID       uint   `json:"node_server_id"`
+	BootstrapChallenge string `json:"bootstrap_challenge"`
 }
 
 func markerPath() string {
@@ -47,6 +48,24 @@ func MarkVerified() error {
 	}
 	contents = append(contents, '\n')
 	return atomicfile.Write(markerPath(), contents, 0600)
+}
+
+// VerifyAndMark records readiness only when Web named the exact local Node
+// identity, credential generation, server registration, and this-install
+// challenge over the authenticated mTLS channel.
+func VerifyAndMark(identityID string, generation uint64, serverID uint64, challenge string) (marker, error) {
+	current, err := currentMarker()
+	if err != nil {
+		return marker{}, err
+	}
+	if identityID != current.NodeIdentityID || generation != current.IdentityGeneration ||
+		serverID != uint64(current.NodeServerID) || challenge != current.BootstrapChallenge {
+		return marker{}, errors.New("Web verification target does not match this Node installation")
+	}
+	if err = MarkVerified(); err != nil {
+		return marker{}, err
+	}
+	return current, nil
 }
 
 // Ready reports whether an authenticated Web-to-Node gRPC call has verified
@@ -76,11 +95,12 @@ func Ready() bool {
 
 func currentMarker() (marker, error) {
 	config := core.Config.NodeConfig
-	if config.ServerID == 0 || config.IdentityID == "" || config.IdentityGeneration == 0 {
+	if config.ServerID == 0 || config.IdentityID == "" || config.IdentityGeneration == 0 || config.BootstrapChallenge == "" {
 		return marker{}, errors.New("Node identity configuration is incomplete")
 	}
 	return marker{
 		SchemaVersion: markerSchemaVersion, NodeIdentityID: config.IdentityID,
 		IdentityGeneration: config.IdentityGeneration, NodeServerID: config.ServerID,
+		BootstrapChallenge: config.BootstrapChallenge,
 	}, nil
 }

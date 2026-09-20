@@ -80,10 +80,19 @@ message NodeStateVo {
   uint64 status = 1;
 }
 
-message NodeServerStateDto {}
+message NodeServerStateDto {
+  string nodeIdentityId = 1;
+  uint64 identityGeneration = 2;
+  uint64 nodeServerId = 3;
+  string bootstrapChallenge = 4;
+}
 
 message NodeServerStateVo {
   string version = 2;
+  string nodeIdentityId = 3;
+  uint64 identityGeneration = 4;
+  uint64 nodeServerId = 5;
+  string bootstrapChallenge = 6;
 }
 
 enum ManagedKernel {

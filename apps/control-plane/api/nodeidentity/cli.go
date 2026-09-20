@@ -140,8 +140,13 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 }
 
 func runVerify(args []string, stdout io.Writer, stderr io.Writer) int {
-	id, valid := parseIdentityID(args, "verify", stderr)
-	if !valid {
+	set := flag.NewFlagSet("node-identity verify", flag.ContinueOnError)
+	set.SetOutput(stderr)
+	var id, challenge string
+	set.StringVar(&id, "id", "", "stable Node identity id")
+	set.StringVar(&challenge, "challenge", "", "64-character challenge printed by this Node installation")
+	if err := set.Parse(args); err != nil || len(set.Args()) != 0 || !isUUID(id) || !isLowerHex(challenge, 64) {
+		fmt.Fprintln(stderr, "node identity: verify requires a UUID --id and 64-character lowercase hex --challenge")
 		return 2
 	}
 	manager, err := openLifecycle()
@@ -166,7 +171,10 @@ func runVerify(args []string, stdout io.Writer, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "node identity: registered gRPC endpoint is unavailable")
 		return 1
 	}
-	state, err := core.GetNodeServerState("", registered.PublicIP, grpcPort, core.NodeTransport{
+	state, err := core.VerifyNodeServerState("", registered.PublicIP, grpcPort, core.NodeVerification{
+		IdentityID: registered.ID, Generation: registered.Generation,
+		ServerID: registered.NodeServerID, Challenge: challenge,
+	}, core.NodeTransport{
 		Mode: "mtls", ServerName: registered.Domain,
 	})
 	if err != nil || state == nil || state.GetVersion() == "" {
@@ -175,6 +183,14 @@ func runVerify(args []string, stdout io.Writer, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stdout, "Node identity verified over Web-to-Node mTLS/gRPC: %s (generation %d)\n", registered.ID, registered.Generation)
 	return 0
+}
+
+func isLowerHex(value string, length int) bool {
+	if len(value) != length || value != strings.ToLower(value) {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil
 }
 
 func parseIdentityID(args []string, command string, stderr io.Writer) (string, bool) {
@@ -1108,5 +1124,5 @@ Usage:
   trojan-panel node-identity revoke --id <node-identity-id>
   trojan-panel node-identity force-evict --id <node-identity-id>
   trojan-panel node-identity status --id <node-identity-id>
-  trojan-panel node-identity verify --id <node-identity-id>`)
+  trojan-panel node-identity verify --id <node-identity-id> --challenge <this-install-challenge>`)
 }

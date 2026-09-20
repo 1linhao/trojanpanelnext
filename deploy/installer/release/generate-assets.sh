@@ -48,7 +48,7 @@ command -v jq >/dev/null 2>&1 || fail 'jq is required'
 command -v sha256sum >/dev/null 2>&1 || fail 'sha256sum is required'
 command -v go >/dev/null 2>&1 || fail 'Go is required to build the secure-file helper'
 
-image_pattern='^[a-zA-Z0-9._/-]+@sha256:[0-9a-f]{64}$'
+image_pattern='^[a-zA-Z0-9._:/-]+@sha256:[0-9a-f]{64}$'
 for image in "${api_image}" "${web_image}" "${node_agent_image}" "${caddy_image}" "${mariadb_image}" "${redis_image}"; do
   [[ "${image}" =~ ${image_pattern} ]] || fail "image must be pinned by digest: ${image:-<missing>}"
 done

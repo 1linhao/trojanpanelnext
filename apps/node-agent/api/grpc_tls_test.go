@@ -47,6 +47,7 @@ func TestTrustedWebMTLSStateProbeMarksBootstrapReady(t *testing.T) {
 	core.Config.GrpcConfig.ClientCAPath = caPath
 	core.Config.NodeConfig = core.NodeConfig{
 		ServerID: 42, IdentityID: "11111111-2222-4333-8444-555555555555", IdentityGeneration: 7,
+		BootstrapChallenge: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 	}
 	serverTLS, err := grpcTLSConfig()
 	if err != nil {
@@ -78,9 +79,51 @@ func TestTrustedWebMTLSStateProbeMarksBootstrapReady(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer connection.Close()
-	response, err := NewApiStateServiceClient(connection).GetNodeServerState(ctx, &NodeServerStateDto{})
+	client := NewApiStateServiceClient(connection)
+	request := &NodeServerStateDto{
+		NodeIdentityId: core.Config.NodeConfig.IdentityID, IdentityGeneration: 7, NodeServerId: 42,
+		BootstrapChallenge: core.Config.NodeConfig.BootstrapChallenge,
+	}
+	wrongIdentity := *request
+	wrongIdentity.NodeIdentityId = "99999999-2222-4333-8444-555555555555"
+	response, err := client.GetNodeServerState(ctx, &wrongIdentity)
+	if err != nil || response.Success || bootstrap.Ready() {
+		t.Fatalf("wrong Node identity was accepted: response=%v error=%v", response, err)
+	}
+	oldGeneration := *request
+	oldGeneration.IdentityGeneration = 6
+	response, err = client.GetNodeServerState(ctx, &oldGeneration)
+	if err != nil || response.Success || bootstrap.Ready() {
+		t.Fatalf("old Node identity generation was accepted: response=%v error=%v", response, err)
+	}
+	wrongServer := *request
+	wrongServer.NodeServerId = 43
+	response, err = client.GetNodeServerState(ctx, &wrongServer)
+	if err != nil || response.Success || bootstrap.Ready() {
+		t.Fatalf("wrong node_server was accepted: response=%v error=%v", response, err)
+	}
+	wrongChallenge := *request
+	wrongChallenge.BootstrapChallenge = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	response, err = client.GetNodeServerState(ctx, &wrongChallenge)
+	if err != nil || response.Success || bootstrap.Ready() {
+		t.Fatalf("stale bootstrap challenge was accepted: response=%v error=%v", response, err)
+	}
+	response, err = client.GetNodeServerState(ctx, request)
 	if err != nil || !response.Success {
 		t.Fatalf("trusted Web state probe failed: response=%v error=%v", response, err)
+	}
+	if response.GetData() == nil {
+		t.Fatal("trusted Web state probe omitted its identity response")
+	}
+	var state NodeServerStateVo
+	if err = response.GetData().UnmarshalTo(&state); err != nil {
+		t.Fatal(err)
+	}
+	if state.GetNodeIdentityId() != request.GetNodeIdentityId() ||
+		state.GetIdentityGeneration() != request.GetIdentityGeneration() ||
+		state.GetNodeServerId() != request.GetNodeServerId() ||
+		state.GetBootstrapChallenge() != request.GetBootstrapChallenge() {
+		t.Fatalf("Node state response did not echo the verified identity: %+v", &state)
 	}
 	if !bootstrap.Ready() {
 		t.Fatal("trusted Web mTLS/gRPC state probe did not mark the Node bootstrap ready")

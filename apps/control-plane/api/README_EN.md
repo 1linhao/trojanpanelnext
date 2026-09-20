@@ -65,15 +65,18 @@ credential file to converge without another generation. MariaDB locks serialize 
 
 ```bash
 sudo docker exec trojan-panel /tpdata/trojan-panel/trojan-panel node-identity status --id <node-identity-id>
-sudo docker exec trojan-panel /tpdata/trojan-panel/trojan-panel node-identity verify --id <node-identity-id>
+sudo docker exec trojan-panel /tpdata/trojan-panel/trojan-panel node-identity verify \
+  --id <node-identity-id> --challenge <installer-printed-challenge>
 sudo docker exec trojan-panel /tpdata/trojan-panel/trojan-panel node-identity revoke --id <node-identity-id>
 sudo docker exec trojan-panel /tpdata/trojan-panel/trojan-panel node-identity force-evict --id <node-identity-id>
 ```
 
 `verify` accepts only an active identity and connects to the registered public IP and gRPC port. It
 uses the client certificate retained by Web and verifies the Node server certificate against the
-registered domain. A successful mTLS/gRPC state call marks the Node's exact current identity
-generation ready; output contains only the identity ID and generation, never secrets.
+registered domain. `--challenge` must be the 64-character lowercase hexadecimal random value printed
+by the current Node installation. A successful call requires the identity ID, generation, server ID,
+and challenge to match exactly in both request and response before marking this installation ready;
+output contains only the identity ID and generation, never secrets.
 
 `revoke` removes every data-layer credential while retaining the `node_server` registration and a
 disabled Node identity audit tombstone. `force-evict` additionally removes the active `node_server`

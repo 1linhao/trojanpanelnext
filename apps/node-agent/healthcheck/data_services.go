@@ -14,8 +14,14 @@ import (
 	"trojan-panel-core/core"
 )
 
+const (
+	credentialVerificationTimeout    = 8 * time.Second
+	DefaultCredentialRecheckInterval = 2 * time.Second
+	CredentialInvalidationDeadline   = DefaultCredentialRecheckInterval + credentialVerificationTimeout
+)
+
 func Verify(mode string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), credentialVerificationTimeout)
 	defer cancel()
 	switch mode {
 	case "mariadb":
@@ -39,8 +45,8 @@ func Verify(mode string) error {
 // the dedicated data-service identities fails. It deliberately opens new
 // connections so credential rotation/revocation cannot be hidden by an
 // already-authenticated pool connection.
-func Watch(ctx context.Context, interval time.Duration) error {
-	return watch(ctx, interval, func() error { return Verify("all") })
+func Watch(ctx context.Context) error {
+	return watch(ctx, DefaultCredentialRecheckInterval, func() error { return Verify("all") })
 }
 
 func watch(ctx context.Context, interval time.Duration, verify func() error) error {

@@ -19,6 +19,7 @@ func TestNodeAPIHealthWaitsForWebMTLSVerification(t *testing.T) {
 	t.Cleanup(func() { core.Config.NodeConfig = oldNode })
 	core.Config.NodeConfig = core.NodeConfig{
 		ServerID: 42, IdentityID: "11111111-2222-4333-8444-555555555555", IdentityGeneration: 7,
+		BootstrapChallenge: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 	}
 	middleware.InitRateLimiter()
 	router := gin.New()

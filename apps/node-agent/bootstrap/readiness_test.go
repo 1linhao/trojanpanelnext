@@ -15,6 +15,7 @@ func TestReadinessIsBoundToCurrentIdentityGeneration(t *testing.T) {
 	t.Cleanup(func() { core.Config.NodeConfig = oldNode })
 	core.Config.NodeConfig = core.NodeConfig{
 		ServerID: 42, IdentityID: "11111111-2222-4333-8444-555555555555", IdentityGeneration: 7,
+		BootstrapChallenge: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 	}
 	if Ready() {
 		t.Fatal("fresh Node Agent unexpectedly ready before Web mTLS verification")
@@ -25,6 +26,11 @@ func TestReadinessIsBoundToCurrentIdentityGeneration(t *testing.T) {
 	if !Ready() {
 		t.Fatal("current identity generation did not become ready")
 	}
+	core.Config.NodeConfig.BootstrapChallenge = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	if Ready() {
+		t.Fatal("historical readiness marker satisfied a new installation challenge")
+	}
+	core.Config.NodeConfig.BootstrapChallenge = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	info, err := os.Stat(marker)
 	if err != nil {
 		t.Fatal(err)
@@ -45,6 +51,7 @@ func TestTamperedReadinessMarkerFailsClosed(t *testing.T) {
 	t.Cleanup(func() { core.Config.NodeConfig = oldNode })
 	core.Config.NodeConfig = core.NodeConfig{
 		ServerID: 42, IdentityID: "11111111-2222-4333-8444-555555555555", IdentityGeneration: 7,
+		BootstrapChallenge: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 	}
 	if err := os.WriteFile(marker, []byte(`{"identity_id":"other","generation":7}`), 0600); err != nil {
 		t.Fatal(err)

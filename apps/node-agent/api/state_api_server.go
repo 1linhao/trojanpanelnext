@@ -5,6 +5,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 	"trojan-panel-core/bootstrap"
+	"trojan-panel-core/core"
 	"trojan-panel-core/core/process"
 	"trojan-panel-core/model/constant"
 )
@@ -37,11 +38,23 @@ func (s *StateApiServer) GetNodeServerState(ctx context.Context, nodeServerState
 	if err := authRequest(ctx); err != nil {
 		return &Response{Success: false, Msg: err.Error()}, nil
 	}
-	if err := bootstrap.MarkVerified(); err != nil {
-		return &Response{Success: false, Msg: "bootstrap readiness could not be recorded"}, nil
+	verificationRequested := nodeServerStateDto.GetNodeIdentityId() != "" ||
+		nodeServerStateDto.GetIdentityGeneration() != 0 || nodeServerStateDto.GetNodeServerId() != 0 ||
+		nodeServerStateDto.GetBootstrapChallenge() != ""
+	if verificationRequested {
+		if _, err := bootstrap.VerifyAndMark(nodeServerStateDto.GetNodeIdentityId(),
+			nodeServerStateDto.GetIdentityGeneration(), nodeServerStateDto.GetNodeServerId(),
+			nodeServerStateDto.GetBootstrapChallenge()); err != nil {
+			return &Response{Success: false, Msg: "Node verification target mismatch"}, nil
+		}
 	}
+	config := core.Config.NodeConfig
 	nodeServerStateVo := &NodeServerStateVo{
-		Version: constant.TrojanPanelCoreVersion,
+		Version: constant.TrojanPanelCoreVersion, NodeIdentityId: config.IdentityID,
+		IdentityGeneration: config.IdentityGeneration, NodeServerId: uint64(config.ServerID),
+	}
+	if verificationRequested {
+		nodeServerStateVo.BootstrapChallenge = config.BootstrapChallenge
 	}
 	data, err := anypb.New(proto.Message(nodeServerStateVo))
 	if err != nil {
