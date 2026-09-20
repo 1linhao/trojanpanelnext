@@ -32,11 +32,13 @@ sudo docker exec trojan-panel /tpdata/trojan-panel/trojan-panel node-identity re
   --credential-file /tpdata/trojan-panel/config/node-identities/node-sg.g1.json
 ```
 
-凭据文件以 `0600`、不覆盖既有目标且拒绝符号链接路径的方式创建。终端和生命周期事件只记录
+凭据文件以 `0600`、同目录原子发布、不覆盖既有目标且拒绝符号链接路径的方式创建；控制面保存
+文件内容的 SHA-256 承诺，预置、修改或换代次重放都会在触碰数据服务前被拒绝。终端和生命周期事件只记录
 Node ID、代次、动作、结果与固定错误码，不输出 MariaDB/Redis 密钥。该明文文件是 Web 主控上的
 受限中间材料；加密 Node 引导包由后续交付流程生成，不应把它直接放进发布资产、日志或工单。
 
-登记会创建独立的 MariaDB 用户、Redis ACL 用户和 `node_server` 登记。重复登记只能使用当前代次
+登记会创建独立的 MariaDB 用户、两个 Redis ACL 用户和 `node_server` 登记：cache 身份只能读写
+`trojan-panel-core:*`，auth 身份只能读取共享 JWT/token 键，不能写入。重复登记只能使用当前代次
 原凭据文件收敛，不能通过新路径生成未记录的凭据。轮换必须写入一个新的文件：
 
 ```bash
@@ -45,8 +47,9 @@ sudo docker exec trojan-panel /tpdata/trojan-panel/trojan-panel node-identity ro
   --credential-file /tpdata/trojan-panel/config/node-identities/node-sg.g2.json
 ```
 
-轮换立即替换同一 MariaDB/Redis 用户的密码并提升代次。若跨数据服务执行到一半，状态保持
-`rotating`；修复依赖后以同一 ID 和同一凭据文件重跑即可收敛，不会再次提升代次。
+轮换先原子替换两个 Redis 身份，再替换 MariaDB 密码并提升代次，因此进入跨服务部分失败后旧 Redis
+密码已不可用，状态保持 `rotating`；修复依赖后以同一 ID 和内容未改变的凭据文件重跑即可收敛，
+不会再次提升代次。每个身份的生命周期命令由 MariaDB 锁串行化。
 
 ```bash
 sudo docker exec trojan-panel /tpdata/trojan-panel/trojan-panel node-identity status --id <node-identity-id>
@@ -54,8 +57,8 @@ sudo docker exec trojan-panel /tpdata/trojan-panel/trojan-panel node-identity re
 sudo docker exec trojan-panel /tpdata/trojan-panel/trojan-panel node-identity force-evict --id <node-identity-id>
 ```
 
-`revoke` 与 `force-evict` 都回收数据层凭据、移除活动 `node_server` 登记，并保留不可用的
-Node 身份审计墓碑。`force-evict` 明确表达故障处置意图；两者都不连接 Node 宿主，因此 Node 离线时
+`revoke` 回收全部数据层凭据，但保留 `node_server` 与不可用的 Node 身份审计墓碑；`force-evict`
+还会删除活动 `node_server` 登记并明确表达故障处置意图。两者都不连接 Node 宿主，因此 Node 离线时
 仍可完成，但不承诺删除失联宿主上的进程、证书或数据。重复执行同一动作会安全收敛。
 
 ## 支持

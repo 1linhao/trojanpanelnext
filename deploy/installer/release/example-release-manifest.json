@@ -21,7 +21,7 @@
     {
       "name": "install",
       "path": "install.sh",
-      "sha256": "4b1261bb12e4510e97edcc54bd6ab33556596431ab63ec0de587789b5b19a823"
+      "sha256": "37ca370ee7dc027c93218a306ab3d0c5c7e1a32f9835ea86de98da025a9f6086"
     },
     {
       "name": "secure-file",
@@ -36,7 +36,7 @@
     {
       "name": "config-node",
       "path": "config-node.yaml",
-      "sha256": "b2f2dbb5c2d7946aee89a80d4bd8d86ae2cae46caf59eefdb3b230ac931787c2"
+      "sha256": "03c724eafac9f68d5bb50dabfa7dc39d7c5b37b7102cd7b94adffa9de7653d1a"
     },
     {
       "name": "config-combined",

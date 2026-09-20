@@ -89,7 +89,7 @@ chmod 600 ./node-agent.yaml
 ```
 
 Set the Node hostname and Web control-plane address. Copy `mariadb.username`, `mariadb.password`,
-`redis.username`, `redis.password`, and `node_server_id` from the restricted credential file produced
+`redis.username`, `redis.password`, `redis_auth.username`, `redis_auth.password`, and `node_server_id` from the restricted credential file produced
 by `node-identity register|rotate`; never reuse the Web root/default-user passwords. Confirm that the
 public CA certificate is present in `pki_bundle_dir`:
 

@@ -61,7 +61,7 @@ for _ in $(seq 1 90); do
   fi
   sleep 1
 done
-docker exec -e "MYSQL_PWD=${admin_db_password}" "${mariadb_container}" \
+docker exec -i -e "MYSQL_PWD=${admin_db_password}" "${mariadb_container}" \
   mariadb -uroot -e 'SELECT 1' >/dev/null 2>&1 || fail 'MariaDB did not become ready'
 for _ in $(seq 1 30); do
   if docker exec -e "REDISCLI_AUTH=${admin_redis_password}" "${redis_container}" \
@@ -170,10 +170,16 @@ db_username="$(jq -r '.mariadb.username' "${credential_file}")"
 db_password="$(jq -r '.mariadb.password' "${credential_file}")"
 redis_username="$(jq -r '.redis.username' "${credential_file}")"
 redis_password="$(jq -r '.redis.password' "${credential_file}")"
+redis_auth_username="$(jq -r '.redis_auth.username' "${credential_file}")"
+redis_auth_password="$(jq -r '.redis_auth.password' "${credential_file}")"
 test "$(jq -r '.generation' "${credential_file}")" = 1 || fail 'initial credential generation is not 1'
+credential_commitment="$(docker exec -e "MYSQL_PWD=${admin_db_password}" "${mariadb_container}" \
+  mariadb -N -uroot trojan_panel_db -e "SELECT credential_sha256 FROM node_identity WHERE identity_id='${node_identity_id}'")"
+test "${credential_commitment}" = "$(sha256sum "${credential_file}" | awk '{print $1}')" ||
+  fail 'control plane did not bind the exact credential file contents'
 [[ "${node_identity_id}" =~ ^[0-9a-f-]{36}$ ]] || fail 'Node identity id is not stable UUID text'
 [[ "${node_server_id}" =~ ^[1-9][0-9]*$ ]] || fail 'node_server_id is invalid'
-for secret in "${db_password}" "${redis_password}" "${admin_db_password}" "${admin_redis_password}"; do
+for secret in "${db_password}" "${redis_password}" "${redis_auth_password}" "${admin_db_password}" "${admin_redis_password}"; do
   ! grep -Fq -- "${secret}" "${work}/register.out" "${work}/register.err" || fail 'register leaked a secret'
 done
 test ! -s "${work}/register.err" || fail 'register wrote unexpected stderr'
@@ -209,6 +215,31 @@ docker exec -e "REDISCLI_AUTH=${redis_password}" "${redis_container}" \
 docker exec -e "REDISCLI_AUTH=${redis_password}" "${redis_container}" \
   redis-cli --user "${redis_username}" set trojan-panel-core:node-config:443-1 ok 2>/dev/null | grep -Fxq OK ||
   fail 'Node Redis ACL identity cannot write an allowed key'
+docker exec -e "REDISCLI_AUTH=${admin_redis_password}" "${redis_container}" \
+  redis-cli set trojan-panel:jwt-key integration-jwt-key >/dev/null
+if docker exec -e "REDISCLI_AUTH=${redis_password}" "${redis_container}" \
+    redis-cli --user "${redis_username}" set trojan-panel:jwt-key attacker 2>/dev/null | grep -Fxq OK; then
+  fail 'write-capable Node cache identity can overwrite the shared JWT key'
+fi
+if docker exec -e "REDISCLI_AUTH=${redis_password}" "${redis_container}" \
+    redis-cli --user "${redis_username}" eval "return redis.call('set',KEYS[1],ARGV[1])" 1 trojan-panel:jwt-key attacker 2>/dev/null | grep -Fxq OK; then
+  fail 'Node cache identity can overwrite the shared JWT key through EVAL'
+fi
+docker exec -e "REDISCLI_AUTH=${redis_auth_password}" "${redis_container}" \
+  redis-cli --user "${redis_auth_username}" get trojan-panel:jwt-key 2>/dev/null | grep -Fxq integration-jwt-key ||
+  fail 'Node Redis auth identity cannot read the shared JWT key'
+if docker exec -e "REDISCLI_AUTH=${redis_auth_password}" "${redis_container}" \
+    redis-cli --user "${redis_auth_username}" set trojan-panel:jwt-key attacker 2>/dev/null | grep -Fxq OK; then
+  fail 'read-only Node auth identity can overwrite the shared JWT key'
+fi
+if docker exec -e "REDISCLI_AUTH=${redis_auth_password}" "${redis_container}" \
+    redis-cli --user "${redis_auth_username}" del trojan-panel:jwt-key 2>/dev/null | grep -Fxq 1; then
+  fail 'read-only Node auth identity can delete the shared JWT key'
+fi
+if docker exec -e "REDISCLI_AUTH=${redis_auth_password}" "${redis_container}" \
+    redis-cli --user "${redis_auth_username}" set trojan-panel-core:node-config:443-1 attacker 2>/dev/null | grep -Fxq OK; then
+  fail 'read-only Node auth identity can write a Node cache key'
+fi
 if docker exec -e "REDISCLI_AUTH=${redis_password}" "${redis_container}" \
     redis-cli --user "${redis_username}" set control-plane:private denied 2>/dev/null | grep -Fxq OK; then
   fail 'Node Redis ACL identity can write an unrelated key'
@@ -276,12 +307,12 @@ if (cd "${work}/runtime" && "${work}/trojan-panel" node-identity register \
 fi
 rm "${credential_file}"
 mv "${credential_backup}" "${credential_file}"
-docker exec -e "REDISCLI_AUTH=${admin_redis_password}" "${redis_container}" \
-  redis-cli set trojan-panel:jwt-key integration-jwt-key >/dev/null
 (cd "${API_DIR}/../../node-agent" && \
   TP_REDIS_ACL_INTEGRATION_ADDRESS="127.0.0.1:${redis_port}" \
   TP_REDIS_ACL_INTEGRATION_USERNAME="${redis_username}" \
   TP_REDIS_ACL_INTEGRATION_PASSWORD="${redis_password}" \
+  TP_REDIS_AUTH_INTEGRATION_USERNAME="${redis_auth_username}" \
+  TP_REDIS_AUTH_INTEGRATION_PASSWORD="${redis_auth_password}" \
   go test ./dao/redis -run '^TestNodeAgentAuthenticatesWithRedisACLIdentity$' -count=1) >/dev/null ||
   fail 'Node Agent could not consume its Redis ACL identity through the public Redis seam'
 
@@ -296,10 +327,25 @@ node_b_db_username="$(jq -r '.mariadb.username' "${node_b_credential_file}")"
 node_b_db_password="$(jq -r '.mariadb.password' "${node_b_credential_file}")"
 node_b_redis_username="$(jq -r '.redis.username' "${node_b_credential_file}")"
 node_b_redis_password="$(jq -r '.redis.password' "${node_b_credential_file}")"
+node_b_redis_auth_username="$(jq -r '.redis_auth.username' "${node_b_credential_file}")"
+node_b_redis_auth_password="$(jq -r '.redis_auth.password' "${node_b_credential_file}")"
 test "${node_b_db_username}" != "${db_username}" || fail 'two Nodes share a MariaDB identity'
 test "${node_b_redis_username}" != "${redis_username}" || fail 'two Nodes share a Redis ACL identity'
+test "${node_b_redis_auth_username}" != "${redis_auth_username}" || fail 'two Nodes share a Redis auth identity'
 
+# A pre-positioned next-generation file is untrusted even when all public
+# identity metadata is correct: only content committed by the control plane is accepted.
 rotated_credential_file="${work}/runtime/config/node-a-credentials-generation-2.json"
+jq '.generation = 2 | .mariadb.password = "attacker-db" | .redis.password = "attacker-cache" | .redis_auth.password = "attacker-auth"' \
+  "${credential_file}" >"${rotated_credential_file}"
+chmod 0600 "${rotated_credential_file}"
+if (cd "${work}/runtime" && "${work}/trojan-panel" node-identity rotate \
+  --id "${node_identity_id}" --credential-file "${rotated_credential_file}" \
+  >"${work}/rotate-preplaced.out" 2>"${work}/rotate-preplaced.err"); then
+  fail 'rotation accepted a pre-positioned uncommitted credential file'
+fi
+rm "${rotated_credential_file}"
+
 (cd "${work}/runtime" && "${work}/trojan-panel" node-identity rotate \
   --id "${node_identity_id}" \
   --credential-file "${rotated_credential_file}" \
@@ -309,11 +355,14 @@ test "$(jq -r '.generation' "${rotated_credential_file}")" = 2 || fail 'rotated 
 test "$(jq -r '.node_identity_id' "${rotated_credential_file}")" = "${node_identity_id}" || fail 'rotation changed Node identity'
 test "$(jq -r '.mariadb.username' "${rotated_credential_file}")" = "${db_username}" || fail 'rotation changed MariaDB identity'
 test "$(jq -r '.redis.username' "${rotated_credential_file}")" = "${redis_username}" || fail 'rotation changed Redis ACL identity'
+test "$(jq -r '.redis_auth.username' "${rotated_credential_file}")" = "${redis_auth_username}" || fail 'rotation changed Redis auth identity'
 rotated_db_password="$(jq -r '.mariadb.password' "${rotated_credential_file}")"
 rotated_redis_password="$(jq -r '.redis.password' "${rotated_credential_file}")"
+rotated_redis_auth_password="$(jq -r '.redis_auth.password' "${rotated_credential_file}")"
 test "${rotated_db_password}" != "${db_password}" || fail 'rotation reused the MariaDB password'
 test "${rotated_redis_password}" != "${redis_password}" || fail 'rotation reused the Redis password'
-for secret in "${rotated_db_password}" "${rotated_redis_password}" "${db_password}" "${redis_password}"; do
+test "${rotated_redis_auth_password}" != "${redis_auth_password}" || fail 'rotation reused the Redis auth password'
+for secret in "${rotated_db_password}" "${rotated_redis_password}" "${rotated_redis_auth_password}" "${db_password}" "${redis_password}" "${redis_auth_password}"; do
   ! grep -Fq -- "${secret}" "${work}/rotate.out" "${work}/rotate.err" || fail 'rotate leaked a secret'
 done
 if docker exec -e "MYSQL_PWD=${db_password}" "${mariadb_container}" \
@@ -324,12 +373,19 @@ if docker exec -e "REDISCLI_AUTH=${redis_password}" "${redis_container}" \
     redis-cli --user "${redis_username}" ping 2>/dev/null | grep -Fxq PONG; then
   fail 'old Redis credential remained valid after rotation'
 fi
+if docker exec -e "REDISCLI_AUTH=${redis_auth_password}" "${redis_container}" \
+    redis-cli --user "${redis_auth_username}" ping 2>/dev/null | grep -Fxq PONG; then
+  fail 'old Redis auth credential remained valid after rotation'
+fi
 docker exec -e "MYSQL_PWD=${rotated_db_password}" "${mariadb_container}" \
   mariadb -h127.0.0.1 "-u${db_username}" trojan_panel_db -e 'SELECT username FROM account' >/dev/null ||
   fail 'rotated MariaDB credential is invalid'
 docker exec -e "REDISCLI_AUTH=${rotated_redis_password}" "${redis_container}" \
   redis-cli --user "${redis_username}" ping 2>/dev/null | grep -Fxq PONG ||
   fail 'rotated Redis credential is invalid'
+docker exec -e "REDISCLI_AUTH=${rotated_redis_auth_password}" "${redis_container}" \
+  redis-cli --user "${redis_auth_username}" get trojan-panel:jwt-key 2>/dev/null | grep -Fxq integration-jwt-key ||
+  fail 'rotated Redis auth credential is invalid'
 docker exec -e "MYSQL_PWD=${node_b_db_password}" "${mariadb_container}" \
   mariadb -h127.0.0.1 "-u${node_b_db_username}" trojan_panel_db -e 'SELECT username FROM account' >/dev/null ||
   fail 'rotating Node A invalidated Node B MariaDB credentials'
@@ -369,6 +425,31 @@ test "$(docker exec -e "MYSQL_PWD=${admin_db_password}" "${mariadb_container}" \
   mariadb -N -uroot trojan_panel_db -e "SELECT COUNT(1) FROM node_server WHERE name='node-e'")" = 0 ||
   fail 'missing credential parent left an active control-plane registration behind'
 
+preplaced_credential_file="${work}/runtime/config/node-preplaced-credentials.json"
+printf '{"mariadb":{"password":"attacker-selected"}}\n' >"${preplaced_credential_file}"
+chmod 0600 "${preplaced_credential_file}"
+if (cd "${work}/runtime" && "${work}/trojan-panel" node-identity register \
+  --name node-preplaced --domain node-preplaced.example.com --public-ip 203.0.113.15 \
+  --credential-file "${preplaced_credential_file}" \
+  >"${work}/register-preplaced.out" 2>"${work}/register-preplaced.err"); then
+  fail 'register accepted a pre-positioned credential file'
+fi
+test "$(docker exec -e "MYSQL_PWD=${admin_db_password}" "${mariadb_container}" \
+  mariadb -N -uroot trojan_panel_db -e "SELECT COUNT(1) FROM node_identity WHERE name='node-preplaced'")" = 0 ||
+  fail 'rejected pre-positioned credential file left an identity reservation'
+test "$(docker exec -e "MYSQL_PWD=${admin_db_password}" "${mariadb_container}" \
+  mariadb -N -uroot trojan_panel_db -e "SELECT COUNT(1) FROM node_server WHERE name='node-preplaced'")" = 0 ||
+  fail 'rejected pre-positioned credential file left a node_server registration'
+
+dotdot_credential_file="${work}/runtime/config/../node-dotdot-credentials.json"
+if (cd "${work}/runtime" && "${work}/trojan-panel" node-identity register \
+  --name node-dotdot --domain node-dotdot.example.com --public-ip 203.0.113.17 \
+  --credential-file "${dotdot_credential_file}" \
+  >"${work}/register-dotdot.out" 2>"${work}/register-dotdot.err"); then
+  fail 'register accepted a credential path containing a .. component'
+fi
+test ! -e "${work}/runtime/node-dotdot-credentials.json" || fail 'register wrote through a .. credential path'
+
 (cd "${work}/runtime" && "${work}/trojan-panel" node-identity status --id "${node_identity_id}" \
   >"${work}/status-active.out" 2>"${work}/status-active.err") || fail 'status returned non-zero for active identity'
 test "$(jq -r '.status' "${work}/status-active.out")" = active || fail 'status did not report active identity'
@@ -387,20 +468,32 @@ if docker exec -e "REDISCLI_AUTH=${rotated_redis_password}" "${redis_container}"
     redis-cli --user "${redis_username}" ping 2>/dev/null | grep -Fxq PONG; then
   fail 'revoked Redis credential remained valid'
 fi
+if docker exec -e "REDISCLI_AUTH=${rotated_redis_auth_password}" "${redis_container}" \
+    redis-cli --user "${redis_auth_username}" ping 2>/dev/null | grep -Fxq PONG; then
+  fail 'revoked Redis auth credential remained valid'
+fi
 docker exec -e "MYSQL_PWD=${node_b_db_password}" "${mariadb_container}" \
   mariadb -h127.0.0.1 "-u${node_b_db_username}" trojan_panel_db -e 'SELECT 1' >/dev/null ||
   fail 'revoking Node A invalidated Node B MariaDB credentials'
 docker exec -e "REDISCLI_AUTH=${node_b_redis_password}" "${redis_container}" \
   redis-cli --user "${node_b_redis_username}" ping 2>/dev/null | grep -Fxq PONG ||
   fail 'revoking Node A invalidated Node B Redis credentials'
+docker exec -e "REDISCLI_AUTH=${node_b_redis_auth_password}" "${redis_container}" \
+  redis-cli --user "${node_b_redis_auth_username}" ping 2>/dev/null | grep -Fxq PONG ||
+  fail 'revoking Node A invalidated Node B Redis auth credentials'
 (cd "${work}/runtime" && "${work}/trojan-panel" node-identity revoke --id "${node_identity_id}" \
   >"${work}/revoke-replay.out" 2>"${work}/revoke-replay.err") || fail 'repeated revoke was not idempotent'
 (cd "${work}/runtime" && "${work}/trojan-panel" node-identity status --id "${node_identity_id}" \
   >"${work}/status-revoked.out" 2>"${work}/status-revoked.err") || fail 'status returned non-zero for revoked identity'
 test "$(jq -r '.status' "${work}/status-revoked.out")" = revoked || fail 'status did not report revoked identity'
 test "$(docker exec -e "MYSQL_PWD=${admin_db_password}" "${mariadb_container}" \
+  mariadb -N -uroot trojan_panel_db -e "SELECT COUNT(1) FROM node_server WHERE id=${node_server_id}")" = 1 ||
+  fail 'revoke removed the control-plane audit tombstone'
+(cd "${work}/runtime" && "${work}/trojan-panel" node-identity force-evict --id "${node_identity_id}" \
+  >"${work}/evict-after-revoke.out" 2>"${work}/evict-after-revoke.err") || fail 'revoke to force-evict did not converge'
+test "$(docker exec -e "MYSQL_PWD=${admin_db_password}" "${mariadb_container}" \
   mariadb -N -uroot trojan_panel_db -e "SELECT COUNT(1) FROM node_server WHERE id=${node_server_id}")" = 0 ||
-  fail 'revoke retained an active control-plane registration'
+  fail 'force-evict retained the control-plane registration after revoke'
 
 node_b_identity_id="$(jq -r '.node_identity_id' "${node_b_credential_file}")"
 node_b_server_id="$(jq -r '.node_server_id' "${node_b_credential_file}")"
@@ -429,50 +522,68 @@ node_c_credential_file="${work}/runtime/config/node-c-credentials.json"
   --credential-file "${node_c_credential_file}" \
   >"${work}/register-c.out" 2>"${work}/register-c.err") || fail 'Node C registration returned non-zero'
 node_c_identity_id="$(jq -r '.node_identity_id' "${node_c_credential_file}")"
-docker exec -e "REDISCLI_AUTH=${admin_redis_password}" "${redis_container}" \
-  redis-cli ACL SETUSER default -acl >/dev/null
+node_c_redis_username="$(jq -r '.redis.username' "${node_c_credential_file}")"
+node_c_old_redis_password="$(jq -r '.redis.password' "${node_c_credential_file}")"
+node_c_redis_auth_username="$(jq -r '.redis_auth.username' "${node_c_credential_file}")"
+node_c_old_redis_auth_password="$(jq -r '.redis_auth.password' "${node_c_credential_file}")"
+# Force a cross-service partial failure after the atomic Redis rotation by
+# removing a table required by the subsequent MariaDB grant sequence.
+docker exec -e "MYSQL_PWD=${admin_db_password}" "${mariadb_container}" \
+  mariadb -uroot trojan_panel_db -e 'DROP TABLE account'
 node_c_rotated_file="${work}/runtime/config/node-c-credentials-generation-2.json"
 if (cd "${work}/runtime" && "${work}/trojan-panel" node-identity rotate \
   --id "${node_c_identity_id}" --credential-file "${node_c_rotated_file}" \
   >"${work}/rotate-c-failed.out" 2>"${work}/rotate-c-failed.err"); then
-  fail 'rotation succeeded after the Redis ACL provisioning boundary failed'
+  fail 'rotation succeeded after the MariaDB boundary failed following Redis rotation'
 fi
 test -f "${node_c_rotated_file}" || fail 'failed rotation did not retain retry credentials'
 test "$(stat -c '%a' "${node_c_rotated_file}")" = 600 || fail 'retry credential file mode is not 0600'
 node_c_rotated_db_password="$(jq -r '.mariadb.password' "${node_c_rotated_file}")"
 node_c_rotated_redis_password="$(jq -r '.redis.password' "${node_c_rotated_file}")"
-for secret in "${node_c_rotated_db_password}" "${node_c_rotated_redis_password}"; do
+node_c_rotated_redis_auth_password="$(jq -r '.redis_auth.password' "${node_c_rotated_file}")"
+for secret in "${node_c_rotated_db_password}" "${node_c_rotated_redis_password}" "${node_c_rotated_redis_auth_password}"; do
   ! grep -Fq -- "${secret}" "${work}/rotate-c-failed.out" "${work}/rotate-c-failed.err" ||
     fail 'failed rotation leaked a retry credential'
 done
 (cd "${work}/runtime" && "${work}/trojan-panel" node-identity status --id "${node_c_identity_id}" \
   >"${work}/status-c-rotating.out" 2>"${work}/status-c-rotating.err") || fail 'status failed for interrupted rotation'
 test "$(jq -r '.status' "${work}/status-c-rotating.out")" = rotating || fail 'interrupted rotation was not recorded as rotating'
-
-docker rm -fv "${redis_container}" >/dev/null
-docker run -d --name "${redis_container}" \
-  -p 127.0.0.1::6379 "${redis_image}" \
-  redis-server --requirepass "${admin_redis_password}" >/dev/null
-recovered_redis_port="$(docker port "${redis_container}" 6379/tcp | sed -n 's/.*://p' | head -n1)"
-sed -i "s/^port=${redis_port}$/port=${recovered_redis_port}/" "${work}/runtime/config/config.ini"
-redis_port="${recovered_redis_port}"
-for _ in $(seq 1 30); do
-  if docker exec -e "REDISCLI_AUTH=${admin_redis_password}" "${redis_container}" \
-      redis-cli ping 2>/dev/null | grep -Fxq PONG; then
-    break
-  fi
-  sleep 1
-done
-for _ in $(seq 1 15); do
-  if (cd "${work}/runtime" && "${work}/trojan-panel" node-identity status --id "${node_c_identity_id}" \
-      >"${work}/status-c-restart-ready.out" 2>"${work}/status-c-restart-ready.err"); then
-    break
-  fi
-  sleep 1
-done
-(cd "${work}/runtime" && "${work}/trojan-panel" node-identity status --id "${node_c_identity_id}" \
-  >"${work}/status-c-restart-ready.out" 2>"${work}/status-c-restart-ready.err") ||
-  fail 'control-plane data services did not become reachable after Redis restart'
+if docker exec -e "REDISCLI_AUTH=${node_c_old_redis_password}" "${redis_container}" \
+    redis-cli --user "${node_c_redis_username}" ping 2>/dev/null | grep -Fxq PONG; then
+  fail 'old Redis cache password remained valid after partial rotation'
+fi
+if docker exec -e "REDISCLI_AUTH=${node_c_old_redis_auth_password}" "${redis_container}" \
+    redis-cli --user "${node_c_redis_auth_username}" ping 2>/dev/null | grep -Fxq PONG; then
+  fail 'old Redis auth password remained valid after partial rotation'
+fi
+docker exec -e "REDISCLI_AUTH=${node_c_rotated_redis_password}" "${redis_container}" \
+  redis-cli --user "${node_c_redis_username}" ping 2>/dev/null | grep -Fxq PONG ||
+  fail 'new Redis cache credential was not retained after partial rotation'
+node_c_committed_backup="${work}/runtime/config/node-c-generation-2-committed.json"
+cp "${node_c_rotated_file}" "${node_c_committed_backup}"
+jq '.redis.password = "changed-after-commit"' "${node_c_rotated_file}" >"${node_c_rotated_file}.changed"
+chmod 0600 "${node_c_rotated_file}.changed"
+mv "${node_c_rotated_file}.changed" "${node_c_rotated_file}"
+if (cd "${work}/runtime" && "${work}/trojan-panel" node-identity rotate \
+  --id "${node_c_identity_id}" --credential-file "${node_c_rotated_file}" \
+  >"${work}/rotate-c-tampered.out" 2>"${work}/rotate-c-tampered.err"); then
+  fail 'rotation retry accepted credential contents that differed from the committed generation'
+fi
+mv "${node_c_committed_backup}" "${node_c_rotated_file}"
+docker exec -i -e "MYSQL_PWD=${admin_db_password}" "${mariadb_container}" \
+  mariadb -uroot trojan_panel_db <<'SQL'
+CREATE TABLE account (
+  id bigint unsigned NOT NULL AUTO_INCREMENT,
+  username varchar(64) NOT NULL,
+  pass varchar(64) NOT NULL DEFAULT '',
+  hash varchar(64) NOT NULL DEFAULT '',
+  quota bigint NOT NULL DEFAULT -1,
+  download bigint unsigned NOT NULL DEFAULT 0,
+  upload bigint unsigned NOT NULL DEFAULT 0,
+  PRIMARY KEY (id)
+);
+INSERT INTO account (username) VALUES ('integration-user');
+SQL
 (cd "${work}/runtime" && "${work}/trojan-panel" node-identity rotate \
   --id "${node_c_identity_id}" --credential-file "${node_c_rotated_file}" \
   >"${work}/rotate-c-retry.out" 2>"${work}/rotate-c-retry.err") ||
@@ -487,12 +598,53 @@ done
 test "$(jq -r '.status' "${work}/status-c-active.out")" = active || fail 'retried rotation did not return to active'
 test "$(jq -r '.generation' "${work}/status-c-active.out")" = 2 || fail 'retried rotation advanced generation more than once'
 node_c_db_username="$(jq -r '.mariadb.username' "${node_c_rotated_file}")"
-node_c_redis_username="$(jq -r '.redis.username' "${node_c_rotated_file}")"
 docker exec -e "MYSQL_PWD=${node_c_rotated_db_password}" "${mariadb_container}" \
   mariadb -h127.0.0.1 "-u${node_c_db_username}" trojan_panel_db -e 'SELECT 1' >/dev/null ||
   fail 'recovered MariaDB credential is invalid'
 docker exec -e "REDISCLI_AUTH=${node_c_rotated_redis_password}" "${redis_container}" \
   redis-cli --user "${node_c_redis_username}" ping 2>/dev/null | grep -Fxq PONG ||
   fail 'recovered Redis credential is invalid'
+
+# Queue rotate and revoke behind the same real MariaDB lifecycle lock. Whichever
+# operation wins is serialized; revoke must be the terminal state and no ACL
+# identity may be recreated after it completes.
+node_f_credential_file="${work}/runtime/config/node-f-credentials.json"
+(cd "${work}/runtime" && "${work}/trojan-panel" node-identity register \
+  --name node-f --domain node-f.example.com --public-ip 203.0.113.16 \
+  --credential-file "${node_f_credential_file}" \
+  >"${work}/register-f.out" 2>"${work}/register-f.err") || fail 'Node F registration returned non-zero'
+node_f_identity_id="$(jq -r '.node_identity_id' "${node_f_credential_file}")"
+node_f_redis_username="$(jq -r '.redis.username' "${node_f_credential_file}")"
+node_f_redis_auth_username="$(jq -r '.redis_auth.username' "${node_f_credential_file}")"
+docker exec -e "MYSQL_PWD=${admin_db_password}" "${mariadb_container}" \
+  mariadb -uroot trojan_panel_db -e "SELECT GET_LOCK('tpn-node-identity:${node_f_identity_id}',0); DO SLEEP(4); SELECT RELEASE_LOCK('tpn-node-identity:${node_f_identity_id}')" \
+  >"${work}/lock-f.out" 2>"${work}/lock-f.err" &
+lock_holder_pid=$!
+for _ in $(seq 1 30); do
+  lock_owner="$(docker exec -e "MYSQL_PWD=${admin_db_password}" "${mariadb_container}" \
+    mariadb -N -uroot trojan_panel_db -e "SELECT COALESCE(IS_USED_LOCK('tpn-node-identity:${node_f_identity_id}'),0)")"
+  [[ "${lock_owner}" != 0 ]] && break
+  sleep 0.1
+done
+[[ "${lock_owner:-0}" != 0 ]] || fail 'test could not acquire the lifecycle serialization lock'
+node_f_rotated_file="${work}/runtime/config/node-f-credentials-generation-2.json"
+(cd "${work}/runtime" && "${work}/trojan-panel" node-identity rotate \
+  --id "${node_f_identity_id}" --credential-file "${node_f_rotated_file}" \
+  >"${work}/rotate-f.out" 2>"${work}/rotate-f.err") &
+rotate_f_pid=$!
+sleep 0.3
+(cd "${work}/runtime" && "${work}/trojan-panel" node-identity revoke --id "${node_f_identity_id}" \
+  >"${work}/revoke-f.out" 2>"${work}/revoke-f.err") &
+revoke_f_pid=$!
+wait "${lock_holder_pid}" || fail 'lifecycle lock holder failed'
+wait "${rotate_f_pid}" || true
+wait "${revoke_f_pid}" || fail 'concurrent revoke did not converge'
+(cd "${work}/runtime" && "${work}/trojan-panel" node-identity status --id "${node_f_identity_id}" \
+  >"${work}/status-f.out" 2>"${work}/status-f.err") || fail 'status failed after concurrent lifecycle operations'
+test "$(jq -r '.status' "${work}/status-f.out")" = revoked || fail 'concurrent lifecycle operations recreated a revoked identity'
+test -z "$(docker exec -e "REDISCLI_AUTH=${admin_redis_password}" "${redis_container}" redis-cli --raw ACL GETUSER "${node_f_redis_username}")" ||
+  fail 'concurrent lifecycle operations recreated the cache ACL identity'
+test -z "$(docker exec -e "REDISCLI_AUTH=${admin_redis_password}" "${redis_container}" redis-cli --raw ACL GETUSER "${node_f_redis_auth_username}")" ||
+  fail 'concurrent lifecycle operations recreated the auth ACL identity'
 
 printf 'PASS node identity CLI lifecycle, isolation, failure recovery, and Node Agent ACL contract\n'

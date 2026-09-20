@@ -40,6 +40,7 @@ MARIADB_DATABASE="${MARIADB_DATABASE:-trojan_panel_db}"
 ACCOUNT_TABLE="${ACCOUNT_TABLE:-account}"
 REDIS_PORT="${REDIS_PORT:-6378}"
 REDIS_USERNAME="${REDIS_USERNAME:-}"
+REDIS_AUTH_USERNAME="${REDIS_AUTH_USERNAME:-}"
 PANEL_PORT="${PANEL_PORT:-8081}"
 UI_PORT="${UI_PORT:-8888}"
 CORE_PORT="${CORE_PORT:-8082}"
@@ -638,6 +639,8 @@ load_config() {
     MARIADB_PASSWORD=""
     REDIS_HOST=""
     REDIS_USERNAME=""
+    REDIS_AUTH_USERNAME=""
+    REDIS_AUTH_PASSWORD=""
     REDIS_PASSWORD=""
     cfg_apply "${file}" TP_NODE_DOMAIN hostname
     cfg_apply "${file}" TP_EMAIL email
@@ -647,6 +650,8 @@ load_config() {
     cfg_apply "${file}" REDIS_HOST redis_host
     cfg_apply "${file}" REDIS_USERNAME redis_username
     cfg_apply "${file}" REDIS_PASSWORD redis_password
+    cfg_apply "${file}" REDIS_AUTH_USERNAME redis_auth_username
+    cfg_apply "${file}" REDIS_AUTH_PASSWORD redis_auth_password
     ;;
   esac
 }
@@ -774,14 +779,28 @@ validate_config() {
     require_value TP_NODE_DOMAIN
     require_value MARIADB_HOST
     require_value MARIADB_USER
-    if [[ "${MARIADB_USER}" == "root" ]]; then
+    if [[ "${MARIADB_USER,,}" == "root" ]]; then
       echo_content red "mariadb_user must be the dedicated user from the Node credential file"
       exit 1
     fi
     require_value MARIADB_PASSWORD
     require_value REDIS_HOST
     require_value REDIS_USERNAME
+    if [[ "${REDIS_USERNAME,,}" == "default" ]]; then
+      echo_content red "redis_username must be the dedicated cache user from the Node credential file"
+      exit 1
+    fi
     require_value REDIS_PASSWORD
+    require_value REDIS_AUTH_USERNAME
+    if [[ "${REDIS_AUTH_USERNAME,,}" == "default" || "${REDIS_AUTH_USERNAME}" == "${REDIS_USERNAME}" ]]; then
+      echo_content red "redis_auth_username must be a distinct dedicated read-only user"
+      exit 1
+    fi
+    require_value REDIS_AUTH_PASSWORD
+    if [[ ! "${NODE_SERVER_ID}" =~ ^[1-9][0-9]*$ ]]; then
+      echo_content red "node_server_id must be a positive integer"
+      exit 1
+    fi
     require_value CORE_IMAGE
     require_port CORE_PORT
     require_port GRPC_PORT
@@ -1478,8 +1497,10 @@ write_initial_sysadmin_password_file() {
 write_core_runtime_config() {
   local crt_path="$1"
   local key_path="$2"
+  ensure_secure_file_helper
+  local temporary="${TP_SECURE_CONFIG_DIR}/core-config.ini"
 
-  cat >"${TP_DATA}/trojan-panel-core/config/config.ini" <<EOF
+  cat >"${temporary}" <<EOF
 [mysql]
 host=${MARIADB_HOST}
 user=${MARIADB_USER}
@@ -1492,6 +1513,8 @@ host=${REDIS_HOST}
 port=${REDIS_PORT}
 username=${REDIS_USERNAME}
 password=${REDIS_PASSWORD}
+auth_username=${REDIS_AUTH_USERNAME}
+auth_password=${REDIS_AUTH_PASSWORD}
 db=0
 max_idle=2
 max_active=4
@@ -1518,7 +1541,10 @@ host=${BIND_ADDRESS}
 server_id=${NODE_SERVER_ID}
 domain=${TP_NODE_DOMAIN}
 EOF
-  chmod 600 "${TP_DATA}/trojan-panel-core/config/config.ini"
+  chmod 0600 "${temporary}"
+  "${SECURE_FILE_HELPER}" atomic-write \
+    --path "${TP_DATA}/trojan-panel-core/config/config.ini" --input "${temporary}" \
+    --mode 0600 --create-parents
 }
 
 prepare_static_web() {
@@ -1954,6 +1980,8 @@ deploy_core() {
     -e "redis_port=${REDIS_PORT}" \
     -e "REDIS_USERNAME=${REDIS_USERNAME}" \
     -e "redis_pass=${REDIS_PASSWORD}" \
+    -e "REDIS_AUTH_USERNAME=${REDIS_AUTH_USERNAME}" \
+    -e "REDIS_AUTH_PASSWORD=${REDIS_AUTH_PASSWORD}" \
     -e "crt_path=${crt_path}" \
     -e "key_path=${key_path}" \
     -e "grpc_port=${GRPC_PORT}" \

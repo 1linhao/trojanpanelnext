@@ -90,7 +90,8 @@ chmod 600 ./node-agent.yaml
 ```
 
 填写节点域名和 Web 主控地址，并把 Web 主控 `node-identity register|rotate` 产生的受限凭据文件中
-`mariadb.username`、`mariadb.password`、`redis.username`、`redis.password` 和 `node_server_id`
+`mariadb.username`、`mariadb.password`、`redis.username`、`redis.password`、
+`redis_auth.username`、`redis_auth.password` 和 `node_server_id`
 写入配置；不要复用 Web 的 root/默认用户密码。确认公开 CA 证书已放入 `pki_bundle_dir`：
 
 ```bash

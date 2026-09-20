@@ -15,7 +15,9 @@ var nodeIdentitySchema = []string{
 		generation bigint unsigned NOT NULL DEFAULT 1,
 		mariadb_username varchar(32) NOT NULL,
 		redis_username varchar(64) NOT NULL,
+		redis_auth_username varchar(64) NOT NULL,
 		credential_path varchar(1024) NOT NULL,
+		credential_sha256 char(64) NOT NULL,
 		status varchar(16) NOT NULL DEFAULT 'provisioning',
 		create_time datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		update_time datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -24,6 +26,8 @@ var nodeIdentitySchema = []string{
 		UNIQUE KEY uk_node_identity_name (name),
 		UNIQUE KEY uk_node_identity_domain (domain)
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+	`ALTER TABLE node_identity ADD COLUMN IF NOT EXISTS redis_auth_username varchar(64) NOT NULL DEFAULT '' AFTER redis_username`,
+	`ALTER TABLE node_identity ADD COLUMN IF NOT EXISTS credential_sha256 char(64) NOT NULL DEFAULT '' AFTER credential_path`,
 	`CREATE TABLE IF NOT EXISTS node_identity_event (
 		id bigint unsigned NOT NULL AUTO_INCREMENT,
 		identity_id char(36) NOT NULL,

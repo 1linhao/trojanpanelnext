@@ -50,7 +50,7 @@ func authRequest(ctx context.Context) error {
 	if myClaims.AccountVo.Deleted == 1 || !util.IsAdmin(myClaims.AccountVo.Roles) {
 		return errors.New(constant.ForbiddenError)
 	}
-	get := redis.Client.String.
+	get := redis.AuthClient.String.
 		Get(fmt.Sprintf("trojan-panel:token:%s", myClaims.AccountVo.Username))
 	result, err := get.String()
 	if err != nil || result == "" {

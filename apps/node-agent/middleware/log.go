@@ -25,6 +25,7 @@ func InitLog() {
 	logrus.AddHook(newSecretRedactionHook(
 		core.Config.MySQLConfig.Password,
 		core.Config.RedisConfig.Password,
+		core.Config.RedisConfig.AuthPassword,
 	))
 	// set logging level
 	logrus.SetLevel(logrus.WarnLevel)

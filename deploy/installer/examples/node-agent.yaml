@@ -22,8 +22,10 @@ trojanpanelnext:
   # Connection to the Web control plane's Redis instance.
   redis_host: panel.example.com
   redis_port: 6378
-  redis_username: replace-from-node-credential-file
-  redis_password: replace-from-node-credential-file
+  redis_username: replace-cache-from-node-credential-file
+  redis_password: replace-cache-from-node-credential-file
+  redis_auth_username: replace-auth-from-node-credential-file
+  redis_auth_password: replace-auth-from-node-credential-file
 
   grpc_port: 8100
   core_port: 8082

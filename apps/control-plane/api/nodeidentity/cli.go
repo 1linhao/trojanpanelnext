@@ -3,6 +3,7 @@ package nodeidentity
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
@@ -27,9 +28,38 @@ import (
 const databaseName = "trojan_panel_db"
 
 var (
-	namePattern      = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._ -]{0,63}$`)
-	domainPattern    = regexp.MustCompile(`^(?i:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+)$`)
-	redisKeyPatterns = []string{"trojan-panel-core:*", "trojan-panel:jwt-key", "trojan-panel:token:*"}
+	namePattern           = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._ -]{0,63}$`)
+	domainPattern         = regexp.MustCompile(`^(?i:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+)$`)
+	redisCacheKeyPatterns = []string{"trojan-panel-core:*"}
+	redisAuthKeyPatterns  = []string{"trojan-panel:jwt-key", "trojan-panel:token:*"}
+)
+
+type IdentityStatus string
+
+const (
+	statusProvisioning IdentityStatus = "provisioning"
+	statusActive       IdentityStatus = "active"
+	statusRotating     IdentityStatus = "rotating"
+	statusRevoking     IdentityStatus = "revoking"
+	statusRevoked      IdentityStatus = "revoked"
+	statusEvicting     IdentityStatus = "force-evicting"
+	statusEvicted      IdentityStatus = "evicted"
+)
+
+type LifecycleAction string
+
+const (
+	actionRegister   LifecycleAction = "register"
+	actionRotate     LifecycleAction = "rotate"
+	actionRevoke     LifecycleAction = "revoke"
+	actionForceEvict LifecycleAction = "force-evict"
+)
+
+type EventResult string
+
+const (
+	resultSucceeded EventResult = "succeeded"
+	resultFailed    EventResult = "failed"
 )
 
 type credentialFile struct {
@@ -42,6 +72,7 @@ type credentialFile struct {
 	Generation     uint64             `json:"generation"`
 	MariaDB        databaseCredential `json:"mariadb"`
 	Redis          redisCredential    `json:"redis"`
+	RedisAuth      redisCredential    `json:"redis_auth"`
 }
 
 type databaseCredential struct {
@@ -57,16 +88,18 @@ type redisCredential struct {
 }
 
 type identity struct {
-	ID              string
-	NodeServerID    uint64
-	Name            string
-	Domain          string
-	PublicIP        string
-	Generation      uint64
-	MariaDBUsername string
-	RedisUsername   string
-	CredentialPath  string
-	Status          string
+	ID                string
+	NodeServerID      uint64
+	Name              string
+	Domain            string
+	PublicIP          string
+	Generation        uint64
+	MariaDBUsername   string
+	RedisUsername     string
+	RedisAuthUsername string
+	CredentialPath    string
+	CredentialSHA256  string
+	Status            IdentityStatus
 }
 
 type lifecycle struct {
@@ -88,9 +121,9 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 	case "rotate":
 		return runRotate(commandArgs[1:], stdout, stderr)
 	case "revoke":
-		return runDeactivate(commandArgs[1:], false, stdout, stderr)
+		return runRevoke(commandArgs[1:], stdout, stderr)
 	case "force-evict":
-		return runDeactivate(commandArgs[1:], true, stdout, stderr)
+		return runForceEvict(commandArgs[1:], stdout, stderr)
 	case "status":
 		return runStatus(commandArgs[1:], stdout, stderr)
 	default:
@@ -144,7 +177,7 @@ func runStatus(args []string, stdout io.Writer, stderr io.Writer) int {
 		PublicIP       string `json:"public_ip"`
 		Generation     uint64 `json:"generation"`
 		Status         string `json:"status"`
-	}{registered.ID, registered.NodeServerID, registered.Name, registered.Domain, registered.PublicIP, registered.Generation, registered.Status}
+	}{registered.ID, registered.NodeServerID, registered.Name, registered.Domain, registered.PublicIP, registered.Generation, string(registered.Status)}
 	encoder := json.NewEncoder(stdout)
 	encoder.SetIndent("", "  ")
 	if err = encoder.Encode(result); err != nil {
@@ -154,11 +187,16 @@ func runStatus(args []string, stdout io.Writer, stderr io.Writer) int {
 	return 0
 }
 
-func runDeactivate(args []string, evict bool, stdout io.Writer, stderr io.Writer) int {
-	command := "revoke"
-	if evict {
-		command = "force-evict"
-	}
+func runRevoke(args []string, stdout io.Writer, stderr io.Writer) int {
+	return runRemoval(args, actionRevoke, stdout, stderr)
+}
+
+func runForceEvict(args []string, stdout io.Writer, stderr io.Writer) int {
+	return runRemoval(args, actionForceEvict, stdout, stderr)
+}
+
+func runRemoval(args []string, action LifecycleAction, stdout io.Writer, stderr io.Writer) int {
+	command := string(action)
 	id, valid := parseIdentityID(args, command, stderr)
 	if !valid {
 		return 2
@@ -171,7 +209,12 @@ func runDeactivate(args []string, evict bool, stdout io.Writer, stderr io.Writer
 	defer manager.close()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	deactivated, err := manager.deactivate(ctx, id, evict)
+	var deactivated identity
+	if action == actionRevoke {
+		deactivated, err = manager.revoke(ctx, id)
+	} else {
+		deactivated, err = manager.forceEvict(ctx, id)
+	}
 	if err != nil {
 		fmt.Fprintf(stderr, "node identity: %s failed; retry the same command\n", command)
 		return 1
@@ -308,6 +351,36 @@ func (manager *lifecycle) close() {
 	_ = manager.db.Close()
 }
 
+func (manager *lifecycle) withLifecycleLock(ctx context.Context, name string) (func(), error) {
+	connection, err := manager.db.Conn(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var acquired sql.NullInt64
+	if err = connection.QueryRowContext(ctx, "SELECT GET_LOCK(?, 10)", name).Scan(&acquired); err != nil || !acquired.Valid || acquired.Int64 != 1 {
+		_ = connection.Close()
+		if err != nil {
+			return nil, err
+		}
+		return nil, errors.New("timed out waiting for the Node identity lifecycle lock")
+	}
+	return func() {
+		releaseContext, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_, _ = connection.ExecContext(releaseContext, "SELECT RELEASE_LOCK(?)", name)
+		_ = connection.Close()
+	}, nil
+}
+
+func identityLockName(id string) string {
+	return "tpn-node-identity:" + id
+}
+
+func registrationLockName(name, domain string) string {
+	digest := sha256.Sum256([]byte(name + "\x00" + domain))
+	return "tpn-node-register:" + hex.EncodeToString(digest[:20])
+}
+
 func (manager *lifecycle) register(ctx context.Context, name, domain, publicIP, path string) (identity, error) {
 	if err := validateCredentialPath(path); err != nil {
 		return identity{}, err
@@ -315,59 +388,121 @@ func (manager *lifecycle) register(ctx context.Context, name, domain, publicIP, 
 	if err := manager.ensureSchema(ctx); err != nil {
 		return identity{}, err
 	}
-	registered, err := manager.reserveIdentity(ctx, name, domain, publicIP, filepath.Clean(path))
+	release, err := manager.withLifecycleLock(ctx, registrationLockName(name, domain))
 	if err != nil {
 		return identity{}, err
 	}
-	credentials, err := credentialsForIdentity(path, registered, registered.Status == "provisioning")
+	defer release()
+	registered, created, err := manager.reserveIdentity(ctx, name, domain, publicIP, filepath.Clean(path))
 	if err != nil {
 		return identity{}, err
 	}
-	if registered.Status == "active" {
+	identityRelease, err := manager.withLifecycleLock(ctx, identityLockName(registered.ID))
+	if err != nil {
+		return identity{}, err
+	}
+	defer identityRelease()
+	registered, err = manager.identityByID(ctx, registered.ID)
+	if err != nil {
+		return identity{}, err
+	}
+	credentials, digest, err := credentialsForIdentity(path, registered, created)
+	if err != nil {
+		if created {
+			_ = manager.rollbackReservation(ctx, registered)
+		}
+		return identity{}, err
+	}
+	if registered.CredentialSHA256 == "" {
+		result, updateErr := manager.db.ExecContext(ctx, `UPDATE node_identity SET credential_sha256=? WHERE identity_id=? AND generation=? AND status='provisioning' AND credential_sha256=''`, digest, registered.ID, registered.Generation)
+		if updateErr != nil {
+			return identity{}, updateErr
+		}
+		rows, rowsErr := result.RowsAffected()
+		if rowsErr != nil || rows != 1 {
+			return identity{}, errors.New("credential commitment changed during registration")
+		}
+		registered.CredentialSHA256 = digest
+	}
+	if registered.Status == statusActive {
 		if err = manager.verifyCredentials(ctx, credentials); err != nil {
-			manager.recordEvent(ctx, registered.ID, registered.Generation, "register", "failed", "credential_replay_failed")
+			manager.recordEvent(ctx, registered.ID, registered.Generation, actionRegister, resultFailed, "credential_replay_failed")
 			return identity{}, err
 		}
-		manager.recordEvent(ctx, registered.ID, registered.Generation, "register", "succeeded", "")
+		manager.recordEvent(ctx, registered.ID, registered.Generation, actionRegister, resultSucceeded, "")
 		return registered, nil
 	}
 	if err = manager.provisionMariaDB(ctx, registered.MariaDBUsername, credentials.MariaDB.Password); err != nil {
-		manager.recordEvent(ctx, registered.ID, registered.Generation, "register", "failed", "mariadb_provision_failed")
+		manager.recordEvent(ctx, registered.ID, registered.Generation, actionRegister, resultFailed, "mariadb_provision_failed")
 		return identity{}, err
 	}
-	if err = manager.provisionRedis(registered.RedisUsername, credentials.Redis.Password); err != nil {
-		manager.recordEvent(ctx, registered.ID, registered.Generation, "register", "failed", "redis_provision_failed")
+	if err = manager.provisionRedis(credentials); err != nil {
+		manager.recordEvent(ctx, registered.ID, registered.Generation, actionRegister, resultFailed, "redis_provision_failed")
 		return identity{}, err
 	}
-	if err = manager.verifyCredentials(ctx, credentials); err != nil {
-		manager.recordEvent(ctx, registered.ID, registered.Generation, "register", "failed", "credential_verification_failed")
+	if err := manager.verifyCredentials(ctx, credentials); err != nil {
+		manager.recordEvent(ctx, registered.ID, registered.Generation, actionRegister, resultFailed, "credential_verification_failed")
 		return identity{}, err
 	}
-	if _, err = manager.db.ExecContext(ctx, `UPDATE node_identity SET status='active', update_time=CURRENT_TIMESTAMP WHERE identity_id=? AND generation=?`, registered.ID, registered.Generation); err != nil {
+	result, err := manager.db.ExecContext(ctx, `UPDATE node_identity SET status='active', update_time=CURRENT_TIMESTAMP WHERE identity_id=? AND generation=? AND status='provisioning'`, registered.ID, registered.Generation)
+	if err != nil {
 		return identity{}, err
 	}
-	manager.recordEvent(ctx, registered.ID, registered.Generation, "register", "succeeded", "")
-	registered.Status = "active"
+	if rows, rowsErr := result.RowsAffected(); rowsErr != nil || rows != 1 {
+		return identity{}, errors.New("Node identity state changed while registration completed")
+	}
+	manager.recordEvent(ctx, registered.ID, registered.Generation, actionRegister, resultSucceeded, "")
+	registered.Status = statusActive
 	return registered, nil
+}
+
+func (manager *lifecycle) rollbackReservation(ctx context.Context, registered identity) error {
+	tx, err := manager.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `DELETE FROM node_identity WHERE identity_id=? AND generation=1 AND status='provisioning' AND credential_sha256=''`, registered.ID)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil || rows != 1 {
+		return errors.New("Node identity reservation changed before rollback")
+	}
+	if _, err = tx.ExecContext(ctx, "DELETE FROM node_server WHERE id=?", registered.NodeServerID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (manager *lifecycle) rotate(ctx context.Context, id, path string) (identity, error) {
 	if err := manager.ensureSchema(ctx); err != nil {
 		return identity{}, err
 	}
+	release, err := manager.withLifecycleLock(ctx, identityLockName(id))
+	if err != nil {
+		return identity{}, err
+	}
+	defer release()
 	registered, err := manager.identityByID(ctx, id)
 	if err != nil {
 		return identity{}, err
 	}
 	switch registered.Status {
-	case "active":
-		registered.Generation++
-		if _, err = credentialsForIdentity(path, registered, true); err != nil {
+	case statusActive:
+		if err = manager.preflightRedis(); err != nil {
 			return identity{}, err
 		}
+		registered.Generation++
+		registered.CredentialSHA256 = ""
+		credentials, digest, credentialErr := credentialsForIdentity(path, registered, true)
+		if credentialErr != nil {
+			return identity{}, credentialErr
+		}
 		result, updateErr := manager.db.ExecContext(ctx, `UPDATE node_identity
-			SET generation=?,credential_path=?,status='rotating',update_time=CURRENT_TIMESTAMP
-			WHERE identity_id=? AND generation=? AND status='active'`, registered.Generation, filepath.Clean(path), registered.ID, registered.Generation-1)
+			SET generation=?,credential_path=?,credential_sha256=?,status='rotating',update_time=CURRENT_TIMESTAMP
+			WHERE identity_id=? AND generation=? AND status='active'`, registered.Generation, filepath.Clean(path), digest, registered.ID, registered.Generation-1)
 		if updateErr != nil {
 			return identity{}, updateErr
 		}
@@ -375,210 +510,276 @@ func (manager *lifecycle) rotate(ctx context.Context, id, path string) (identity
 		if rowsErr != nil || rows != 1 {
 			return identity{}, errors.New("Node identity changed during rotation")
 		}
-		registered.Status = "rotating"
+		registered.Status = statusRotating
 		registered.CredentialPath = filepath.Clean(path)
-	case "rotating":
-		if filepath.Clean(path) != registered.CredentialPath {
-			return identity{}, errors.New("an interrupted rotation must reuse its credential file")
+		registered.CredentialSHA256 = digest
+		if err = manager.completeRotation(ctx, registered, credentials); err != nil {
+			return identity{}, err
 		}
-		if _, statErr := os.Stat(path); statErr != nil {
+		return registered, nil
+	case statusRotating:
+		if filepath.Clean(path) != registered.CredentialPath {
 			return identity{}, errors.New("an interrupted rotation must reuse its credential file")
 		}
 	default:
 		return identity{}, errors.New("only an active Node identity can be rotated")
 	}
-	credentials, err := credentialsForIdentity(path, registered, registered.Status == "rotating")
+	credentials, _, err := credentialsForIdentity(path, registered, false)
 	if err != nil {
 		return identity{}, err
 	}
-	if err = manager.provisionMariaDB(ctx, registered.MariaDBUsername, credentials.MariaDB.Password); err != nil {
-		manager.recordEvent(ctx, registered.ID, registered.Generation, "rotate", "failed", "mariadb_rotation_failed")
+	if err = manager.completeRotation(ctx, registered, credentials); err != nil {
 		return identity{}, err
 	}
-	if err = manager.provisionRedis(registered.RedisUsername, credentials.Redis.Password); err != nil {
-		manager.recordEvent(ctx, registered.ID, registered.Generation, "rotate", "failed", "redis_rotation_failed")
-		return identity{}, err
+	return registered, nil
+}
+
+func (manager *lifecycle) completeRotation(ctx context.Context, registered identity, credentials credentialFile) error {
+	// Redis is rotated atomically first. If a later MariaDB or verification step
+	// fails, the old Redis passwords are already unusable and the committed
+	// credential file can be retried at the same generation.
+	if err := manager.provisionRedis(credentials); err != nil {
+		manager.recordEvent(ctx, registered.ID, registered.Generation, actionRotate, resultFailed, "redis_rotation_failed")
+		return err
 	}
-	if err = manager.verifyCredentials(ctx, credentials); err != nil {
-		manager.recordEvent(ctx, registered.ID, registered.Generation, "rotate", "failed", "credential_verification_failed")
-		return identity{}, err
+	if err := manager.provisionMariaDB(ctx, registered.MariaDBUsername, credentials.MariaDB.Password); err != nil {
+		manager.recordEvent(ctx, registered.ID, registered.Generation, actionRotate, resultFailed, "mariadb_rotation_failed")
+		return err
+	}
+	if err := manager.verifyCredentials(ctx, credentials); err != nil {
+		manager.recordEvent(ctx, registered.ID, registered.Generation, actionRotate, resultFailed, "credential_verification_failed")
+		return err
 	}
 	result, err := manager.db.ExecContext(ctx, `UPDATE node_identity SET status='active',update_time=CURRENT_TIMESTAMP
 		WHERE identity_id=? AND generation=? AND status='rotating'`, registered.ID, registered.Generation)
 	if err != nil {
-		return identity{}, err
+		return err
 	}
 	rows, err := result.RowsAffected()
 	if err != nil || rows != 1 {
-		return identity{}, errors.New("Node identity rotation state changed")
+		return errors.New("Node identity rotation state changed")
 	}
-	manager.recordEvent(ctx, registered.ID, registered.Generation, "rotate", "succeeded", "")
-	registered.Status = "active"
-	return registered, nil
+	manager.recordEvent(ctx, registered.ID, registered.Generation, actionRotate, resultSucceeded, "")
+	return nil
 }
 
-func (manager *lifecycle) deactivate(ctx context.Context, id string, evict bool) (identity, error) {
+func (manager *lifecycle) revoke(ctx context.Context, id string) (identity, error) {
+	return manager.removeIdentity(ctx, id, actionRevoke)
+}
+
+func (manager *lifecycle) forceEvict(ctx context.Context, id string) (identity, error) {
+	return manager.removeIdentity(ctx, id, actionForceEvict)
+}
+
+func (manager *lifecycle) removeIdentity(ctx context.Context, id string, action LifecycleAction) (identity, error) {
 	if err := manager.ensureSchema(ctx); err != nil {
 		return identity{}, err
 	}
+	release, err := manager.withLifecycleLock(ctx, identityLockName(id))
+	if err != nil {
+		return identity{}, err
+	}
+	defer release()
 	registered, err := manager.identityByID(ctx, id)
 	if err != nil {
 		return identity{}, err
 	}
-	targetStatus := "revoked"
-	inProgressStatus := "revoking"
-	action := "revoke"
-	if evict {
-		targetStatus = "evicted"
-		inProgressStatus = "force-evicting"
-		action = "force-evict"
+	targetStatus, inProgressStatus, err := removalTransition(registered.Status, action)
+	if err != nil {
+		return identity{}, err
 	}
 	if registered.Status == targetStatus {
 		return registered, nil
 	}
-	if registered.Status == "evicted" {
-		return identity{}, errors.New("an evicted Node identity cannot be changed")
-	}
-	if registered.Status == "revoked" && !evict {
-		return registered, nil
-	}
 	if registered.Status != inProgressStatus {
-		if _, err = manager.db.ExecContext(ctx, `UPDATE node_identity SET status=?,update_time=CURRENT_TIMESTAMP WHERE identity_id=?`, inProgressStatus, id); err != nil {
-			return identity{}, err
+		result, updateErr := manager.db.ExecContext(ctx, `UPDATE node_identity SET status=?,update_time=CURRENT_TIMESTAMP WHERE identity_id=? AND status=?`, inProgressStatus, id, registered.Status)
+		if updateErr != nil {
+			return identity{}, updateErr
+		}
+		if rows, rowsErr := result.RowsAffected(); rowsErr != nil || rows != 1 {
+			return identity{}, errors.New("Node identity state changed during removal")
 		}
 		registered.Status = inProgressStatus
 	}
-	account := fmt.Sprintf("`%s`@'%%'", registered.MariaDBUsername)
-	if _, err = manager.db.ExecContext(ctx, "DROP USER IF EXISTS "+account); err != nil {
-		manager.recordEvent(ctx, registered.ID, registered.Generation, action, "failed", "mariadb_revocation_failed")
+	if err = manager.revokeCredentials(ctx, registered, action); err != nil {
 		return identity{}, err
 	}
-	if _, err = manager.redis.Do("ACL", "DELUSER", registered.RedisUsername); err != nil {
-		manager.recordEvent(ctx, registered.ID, registered.Generation, action, "failed", "redis_revocation_failed")
-		return identity{}, err
-	}
-	if _, err = manager.db.ExecContext(ctx, "DELETE FROM node_server WHERE id=?", registered.NodeServerID); err != nil {
-		errorCode := "registration_revocation_failed"
-		if evict {
-			errorCode = "registration_eviction_failed"
+	if action == actionForceEvict {
+		if _, err = manager.db.ExecContext(ctx, "DELETE FROM node_server WHERE id=?", registered.NodeServerID); err != nil {
+			manager.recordEvent(ctx, registered.ID, registered.Generation, action, resultFailed, "registration_eviction_failed")
+			return identity{}, err
 		}
-		manager.recordEvent(ctx, registered.ID, registered.Generation, action, "failed", errorCode)
+	}
+	result, err := manager.db.ExecContext(ctx, `UPDATE node_identity SET status=?,update_time=CURRENT_TIMESTAMP WHERE identity_id=? AND status=?`, targetStatus, id, inProgressStatus)
+	if err != nil {
 		return identity{}, err
 	}
-	if _, err = manager.db.ExecContext(ctx, `UPDATE node_identity SET status=?,update_time=CURRENT_TIMESTAMP WHERE identity_id=?`, targetStatus, id); err != nil {
-		return identity{}, err
+	if rows, rowsErr := result.RowsAffected(); rowsErr != nil || rows != 1 {
+		return identity{}, errors.New("Node identity state changed while removal completed")
 	}
-	manager.recordEvent(ctx, registered.ID, registered.Generation, action, "succeeded", "")
+	manager.recordEvent(ctx, registered.ID, registered.Generation, action, resultSucceeded, "")
 	registered.Status = targetStatus
 	return registered, nil
 }
 
+func removalTransition(status IdentityStatus, action LifecycleAction) (IdentityStatus, IdentityStatus, error) {
+	if status == statusEvicted {
+		if action == actionForceEvict {
+			return statusEvicted, statusEvicting, nil
+		}
+		return "", "", errors.New("an evicted Node identity cannot be changed")
+	}
+	if action == actionRevoke {
+		if status == statusRevoked {
+			return statusRevoked, statusRevoking, nil
+		}
+		if status != statusActive && status != statusRotating && status != statusRevoking {
+			return "", "", errors.New("Node identity cannot be revoked from its current state")
+		}
+		return statusRevoked, statusRevoking, nil
+	}
+	if status != statusActive && status != statusRotating && status != statusRevoked && status != statusRevoking && status != statusEvicting {
+		return "", "", errors.New("Node identity cannot be force-evicted from its current state")
+	}
+	return statusEvicted, statusEvicting, nil
+}
+
+func (manager *lifecycle) revokeCredentials(ctx context.Context, registered identity, action LifecycleAction) error {
+	account := fmt.Sprintf("`%s`@'%%'", registered.MariaDBUsername)
+	if _, err := manager.db.ExecContext(ctx, "DROP USER IF EXISTS "+account); err != nil {
+		manager.recordEvent(ctx, registered.ID, registered.Generation, action, resultFailed, "mariadb_revocation_failed")
+		return err
+	}
+	if err := manager.deleteRedisUsers(registered.RedisUsername, registered.RedisAuthUsername); err != nil {
+		manager.recordEvent(ctx, registered.ID, registered.Generation, action, resultFailed, "redis_revocation_failed")
+		return err
+	}
+	return nil
+}
+
 func (manager *lifecycle) identityByID(ctx context.Context, id string) (identity, error) {
 	var registered identity
-	err := manager.db.QueryRowContext(ctx, `SELECT identity_id,node_server_id,name,domain,public_ip,generation,mariadb_username,redis_username,credential_path,status
-		FROM node_identity WHERE identity_id=?`, id).Scan(
-		&registered.ID, &registered.NodeServerID, &registered.Name, &registered.Domain, &registered.PublicIP,
-		&registered.Generation, &registered.MariaDBUsername, &registered.RedisUsername, &registered.CredentialPath, &registered.Status,
-	)
+	err := scanIdentity(manager.db.QueryRowContext(ctx, identitySelect+` WHERE identity_id=?`, id), &registered)
 	return registered, err
+}
+
+const identitySelect = `SELECT identity_id,node_server_id,name,domain,public_ip,generation,mariadb_username,redis_username,redis_auth_username,credential_path,credential_sha256,status FROM node_identity`
+
+type rowScanner interface {
+	Scan(...interface{}) error
+}
+
+func scanIdentity(row rowScanner, registered *identity) error {
+	return row.Scan(
+		&registered.ID, &registered.NodeServerID, &registered.Name, &registered.Domain, &registered.PublicIP,
+		&registered.Generation, &registered.MariaDBUsername, &registered.RedisUsername, &registered.RedisAuthUsername,
+		&registered.CredentialPath, &registered.CredentialSHA256, &registered.Status,
+	)
 }
 
 func (manager *lifecycle) ensureSchema(ctx context.Context) error {
 	return dao.EnsureNodeIdentitySchema(ctx, manager.db)
 }
 
-func (manager *lifecycle) reserveIdentity(ctx context.Context, name, domain, publicIP, credentialPath string) (identity, error) {
+func (manager *lifecycle) reserveIdentity(ctx context.Context, name, domain, publicIP, credentialPath string) (identity, bool, error) {
 	var existing identity
-	err := manager.db.QueryRowContext(ctx, `SELECT identity_id,node_server_id,name,domain,public_ip,generation,mariadb_username,redis_username,credential_path,status
-		FROM node_identity WHERE name=? OR domain=?`, name, domain).Scan(
-		&existing.ID, &existing.NodeServerID, &existing.Name, &existing.Domain, &existing.PublicIP,
-		&existing.Generation, &existing.MariaDBUsername, &existing.RedisUsername, &existing.CredentialPath, &existing.Status,
-	)
+	err := scanIdentity(manager.db.QueryRowContext(ctx, identitySelect+` WHERE name=? OR domain=?`, name, domain), &existing)
 	if err == nil {
 		if existing.Name != name || existing.Domain != domain || existing.PublicIP != publicIP ||
 			existing.CredentialPath != credentialPath ||
-			(existing.Status != "provisioning" && existing.Status != "active") {
-			return identity{}, errors.New("Node identity conflicts with an existing registration")
+			(existing.Status != statusProvisioning && existing.Status != statusActive) {
+			return identity{}, false, errors.New("Node identity conflicts with an existing registration")
 		}
-		return existing, nil
+		return existing, false, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
-		return identity{}, err
+		return identity{}, false, err
 	}
 
 	id, err := randomUUID()
 	if err != nil {
-		return identity{}, err
+		return identity{}, false, err
 	}
 	compactID := strings.ReplaceAll(id, "-", "")
 	created := identity{
-		ID:              id,
-		Name:            name,
-		Domain:          domain,
-		PublicIP:        publicIP,
-		Generation:      1,
-		MariaDBUsername: "tpn_" + compactID[:20],
-		RedisUsername:   "tpn-" + compactID[:20],
-		CredentialPath:  credentialPath,
-		Status:          "provisioning",
+		ID:                id,
+		Name:              name,
+		Domain:            domain,
+		PublicIP:          publicIP,
+		Generation:        1,
+		MariaDBUsername:   "tpn_" + compactID[:20],
+		RedisUsername:     "tpn-" + compactID[:20],
+		RedisAuthUsername: "tpn-auth-" + compactID[:20],
+		CredentialPath:    credentialPath,
+		Status:            statusProvisioning,
 	}
 	tx, err := manager.db.BeginTx(ctx, nil)
 	if err != nil {
-		return identity{}, err
+		return identity{}, false, err
 	}
 	defer tx.Rollback()
 	result, err := tx.ExecContext(ctx, `INSERT INTO node_server
 		(ip,name,grpc_port,grpc_tls_mode,grpc_tls_server_name,traffic_period,traffic_limit_mode,traffic_total_limit,traffic_upload_limit,traffic_download_limit)
 		VALUES (?,?,8100,'mtls',?,'none','combined',0,0,0)`, publicIP, name, domain)
 	if err != nil {
-		return identity{}, err
+		return identity{}, false, err
 	}
 	nodeServerID, err := result.LastInsertId()
 	if err != nil {
-		return identity{}, err
+		return identity{}, false, err
 	}
 	created.NodeServerID = uint64(nodeServerID)
 	_, err = tx.ExecContext(ctx, `INSERT INTO node_identity
-		(identity_id,node_server_id,name,domain,public_ip,generation,mariadb_username,redis_username,credential_path,status)
-		VALUES (?,?,?,?,?,1,?,?,?,'provisioning')`, created.ID, created.NodeServerID, name, domain, publicIP, created.MariaDBUsername, created.RedisUsername, credentialPath)
+		(identity_id,node_server_id,name,domain,public_ip,generation,mariadb_username,redis_username,redis_auth_username,credential_path,credential_sha256,status)
+		VALUES (?,?,?,?,?,1,?,?,?,?,?,'provisioning')`, created.ID, created.NodeServerID, name, domain, publicIP, created.MariaDBUsername, created.RedisUsername, created.RedisAuthUsername, credentialPath, "")
 	if err != nil {
-		return identity{}, err
+		return identity{}, false, err
 	}
 	if err = tx.Commit(); err != nil {
-		return identity{}, err
+		return identity{}, false, err
 	}
-	return created, nil
+	return created, true, nil
 }
 
-func credentialsForIdentity(path string, registered identity, allowCreate bool) (credentialFile, error) {
+func credentialsForIdentity(path string, registered identity, allowCreate bool) (credentialFile, string, error) {
 	if contents, err := readCredentialFile(path); err == nil {
+		digest := credentialDigest(contents)
+		if registered.CredentialSHA256 == "" || digest != registered.CredentialSHA256 {
+			return credentialFile{}, "", errors.New("credential file does not match its control-plane commitment")
+		}
 		var existing credentialFile
 		if json.Unmarshal(contents, &existing) != nil || existing.NodeIdentityID != registered.ID ||
-			existing.SchemaVersion != 1 || existing.NodeServerID != registered.NodeServerID ||
+			existing.SchemaVersion != 2 || existing.NodeServerID != registered.NodeServerID ||
 			existing.NodeName != registered.Name || existing.NodeDomain != registered.Domain ||
 			existing.PublicIP != registered.PublicIP || existing.Generation != registered.Generation ||
 			existing.MariaDB.Database != databaseName || existing.MariaDB.Username != registered.MariaDBUsername ||
 			existing.MariaDB.Password == "" || existing.Redis.Username != registered.RedisUsername ||
-			existing.Redis.Password == "" || !equalStrings(existing.Redis.KeyPatterns, redisKeyPatterns) {
-			return credentialFile{}, errors.New("existing credential file does not match the reserved Node identity")
+			existing.Redis.Password == "" || !equalStrings(existing.Redis.KeyPatterns, redisCacheKeyPatterns) ||
+			existing.RedisAuth.Username != registered.RedisAuthUsername || existing.RedisAuth.Password == "" ||
+			!equalStrings(existing.RedisAuth.KeyPatterns, redisAuthKeyPatterns) {
+			return credentialFile{}, "", errors.New("existing credential file does not match the reserved Node identity")
 		}
-		return existing, nil
+		return existing, digest, nil
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return credentialFile{}, err
+		return credentialFile{}, "", err
 	}
 	if !allowCreate {
-		return credentialFile{}, errors.New("the current credential file is required for an idempotent replay")
+		return credentialFile{}, "", errors.New("the committed credential file is required for an idempotent replay")
 	}
 	dbPassword, err := randomSecret()
 	if err != nil {
-		return credentialFile{}, err
+		return credentialFile{}, "", err
 	}
 	redisPassword, err := randomSecret()
 	if err != nil {
-		return credentialFile{}, err
+		return credentialFile{}, "", err
+	}
+	redisAuthPassword, err := randomSecret()
+	if err != nil {
+		return credentialFile{}, "", err
 	}
 	created := credentialFile{
-		SchemaVersion:  1,
+		SchemaVersion:  2,
 		NodeIdentityID: registered.ID,
 		NodeServerID:   registered.NodeServerID,
 		NodeName:       registered.Name,
@@ -589,13 +790,22 @@ func credentialsForIdentity(path string, registered identity, allowCreate bool) 
 		Redis: redisCredential{
 			Username:    registered.RedisUsername,
 			Password:    redisPassword,
-			KeyPatterns: append([]string(nil), redisKeyPatterns...),
+			KeyPatterns: append([]string(nil), redisCacheKeyPatterns...),
+		},
+		RedisAuth: redisCredential{
+			Username:    registered.RedisAuthUsername,
+			Password:    redisAuthPassword,
+			KeyPatterns: append([]string(nil), redisAuthKeyPatterns...),
 		},
 	}
-	if err = writeCredentialFile(path, created); err != nil {
-		return credentialFile{}, err
+	contents, err := marshalCredentialFile(created)
+	if err != nil {
+		return credentialFile{}, "", err
 	}
-	return created, nil
+	if err = createCredentialFile(path, contents); err != nil {
+		return credentialFile{}, "", err
+	}
+	return created, credentialDigest(contents), nil
 }
 
 func equalStrings(left, right []string) bool {
@@ -610,12 +820,17 @@ func equalStrings(left, right []string) bool {
 	return true
 }
 
-func writeCredentialFile(path string, credentials credentialFile) error {
+func marshalCredentialFile(credentials credentialFile) ([]byte, error) {
 	contents, err := json.MarshalIndent(credentials, "", "  ")
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return createCredentialFile(path, append(contents, '\n'))
+	return append(contents, '\n'), nil
+}
+
+func credentialDigest(contents []byte) string {
+	digest := sha256.Sum256(contents)
+	return hex.EncodeToString(digest[:])
 }
 
 func (manager *lifecycle) provisionMariaDB(ctx context.Context, username, password string) error {
@@ -633,19 +848,67 @@ func (manager *lifecycle) provisionMariaDB(ctx context.Context, username, passwo
 	}
 	for _, statement := range statements {
 		if _, err := manager.db.ExecContext(ctx, statement); err != nil {
+			var databaseError *mysql.MySQLError
+			if strings.HasPrefix(statement, "REVOKE ALL PRIVILEGES") && errors.As(err, &databaseError) && databaseError.Number == 1141 {
+				continue
+			}
 			return err
 		}
 	}
 	return nil
 }
 
-func (manager *lifecycle) provisionRedis(username, password string) error {
-	_, err := manager.redis.Do("ACL", "SETUSER", username,
-		"reset", "on", ">"+password,
-		"~trojan-panel-core:*", "~trojan-panel:jwt-key", "~trojan-panel:token:*",
-		"+ping", "+get", "+set", "+del", "+eval", "+evalsha", "+pttl",
-	)
+func (manager *lifecycle) preflightRedis() error {
+	_, err := redigo.String(manager.redis.Do("ACL", "WHOAMI"))
 	return err
+}
+
+func (manager *lifecycle) provisionRedis(credentials credentialFile) error {
+	if err := manager.redis.Send("MULTI"); err != nil {
+		return err
+	}
+	if err := manager.redis.Send("ACL", "SETUSER", credentials.Redis.Username,
+		"reset", "on", ">"+credentials.Redis.Password,
+		"~trojan-panel-core:*", "+ping", "+get", "+set", "+del", "+eval", "+evalsha", "+pttl"); err != nil {
+		return err
+	}
+	if err := manager.redis.Send("ACL", "SETUSER", credentials.RedisAuth.Username,
+		"reset", "on", ">"+credentials.RedisAuth.Password,
+		"~trojan-panel:jwt-key", "~trojan-panel:token:*", "+ping", "+get"); err != nil {
+		return err
+	}
+	replies, err := redigo.Values(manager.redis.Do("EXEC"))
+	if err != nil {
+		return err
+	}
+	return redisTransactionErrors(replies)
+}
+
+func (manager *lifecycle) deleteRedisUsers(usernames ...string) error {
+	if err := manager.redis.Send("MULTI"); err != nil {
+		return err
+	}
+	args := redigo.Args{}.Add("DELUSER")
+	for _, username := range usernames {
+		args = args.Add(username)
+	}
+	if err := manager.redis.Send("ACL", args...); err != nil {
+		return err
+	}
+	replies, err := redigo.Values(manager.redis.Do("EXEC"))
+	if err != nil {
+		return err
+	}
+	return redisTransactionErrors(replies)
+}
+
+func redisTransactionErrors(replies []interface{}) error {
+	for _, reply := range replies {
+		if transactionError, ok := reply.(redigo.Error); ok {
+			return transactionError
+		}
+	}
+	return nil
 }
 
 func (manager *lifecycle) verifyCredentials(ctx context.Context, credentials credentialFile) error {
@@ -665,21 +928,32 @@ func (manager *lifecycle) verifyCredentials(ctx context.Context, credentials cre
 		return err
 	}
 	redisAddress := fmt.Sprintf("%s:%d", core.Config.RedisConfig.Host, core.Config.RedisConfig.Port)
-	conn, err := redigo.Dial("tcp", redisAddress,
+	cacheConn, err := redigo.Dial("tcp", redisAddress,
 		redigo.DialUsername(credentials.Redis.Username), redigo.DialPassword(credentials.Redis.Password),
 		redigo.DialDatabase(core.Config.RedisConfig.Db), redigo.DialConnectTimeout(3*time.Second))
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
-	reply, err := redigo.String(conn.Do("PING"))
+	defer cacheConn.Close()
+	reply, err := redigo.String(cacheConn.Do("PING"))
 	if err != nil || reply != "PONG" {
-		return errors.New("Redis credential verification failed")
+		return errors.New("Redis cache credential verification failed")
+	}
+	authConn, err := redigo.Dial("tcp", redisAddress,
+		redigo.DialUsername(credentials.RedisAuth.Username), redigo.DialPassword(credentials.RedisAuth.Password),
+		redigo.DialDatabase(core.Config.RedisConfig.Db), redigo.DialConnectTimeout(3*time.Second))
+	if err != nil {
+		return err
+	}
+	defer authConn.Close()
+	reply, err = redigo.String(authConn.Do("PING"))
+	if err != nil || reply != "PONG" {
+		return errors.New("Redis auth credential verification failed")
 	}
 	return nil
 }
 
-func (manager *lifecycle) recordEvent(ctx context.Context, id string, generation uint64, action, result, errorCode string) {
+func (manager *lifecycle) recordEvent(ctx context.Context, id string, generation uint64, action LifecycleAction, result EventResult, errorCode string) {
 	_, _ = manager.db.ExecContext(ctx, `INSERT INTO node_identity_event
 		(identity_id,generation,action,result,error_code) VALUES (?,?,?,?,?)`, id, generation, action, result, errorCode)
 }

@@ -32,7 +32,7 @@ func ParseToken(tokenString string) (*MyClaims, error) {
 }
 
 func GetJWTKey() ([]byte, error) {
-	get := redis.Client.String.
+	get := redis.AuthClient.String.
 		Get("trojan-panel:jwt-key")
 	reply, err := get.Bytes()
 	if err != nil && err != redisgo.ErrNil {
