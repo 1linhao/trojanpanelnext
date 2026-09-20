@@ -1926,6 +1926,8 @@ deploy_core() {
   local domain="$1"
   local client_ca_sha256
   client_ca_sha256="$(sha256sum "${GRPC_CLIENT_CA_PATH}" | awk '{print $1}')"
+  local runtime_config="${TP_DATA}/trojan-panel-core/config/config.ini"
+  local node_config_sha256
   local cert_data="${TP_DATA}/custom/node-caddy/data"
   local crt_path="${cert_data}/caddy/certificates/acme-v02.api.letsencrypt.org-directory/${domain}/${domain}.crt"
   local key_path="${cert_data}/caddy/certificates/acme-v02.api.letsencrypt.org-directory/${domain}/${domain}.key"
@@ -1935,9 +1937,11 @@ deploy_core() {
   fi
 
   write_core_runtime_config "${crt_path}" "${key_path}"
+  node_config_sha256="$(sha256sum "${runtime_config}" | awk '{print $1}')"
   remove_container_if_force "${CORE_CONTAINER}"
   recreate_container_if_env_changed "${CORE_CONTAINER}" TP_TLS_MODE "${TLS_MODE}" acme
   recreate_container_if_env_changed "${CORE_CONTAINER}" TP_CLIENT_CA_SHA256 "${client_ca_sha256}" ""
+  recreate_container_if_env_changed "${CORE_CONTAINER}" TP_NODE_CONFIG_SHA256 "${node_config_sha256}" ""
   if container_running "${CORE_CONTAINER}"; then
     echo_content skyBlue "---> Trojan Panel Core already running"
     if [[ "${TLS_MODE}" == "external" ]]; then
@@ -1961,6 +1965,7 @@ deploy_core() {
     -v "${TP_DATA}/trojan-panel-core/bin/hysteria2/config/:${TP_DATA}/trojan-panel-core/bin/hysteria2/config/" \
     -v "${TP_DATA}/trojan-panel-core/logs/:${TP_DATA}/trojan-panel-core/logs/" \
     -v "${TP_DATA}/trojan-panel-core/config/:${TP_DATA}/trojan-panel-core/config/" \
+    -v "${runtime_config}:${runtime_config}:ro" \
     -v "${TP_DATA}/trojan-panel-core/pki/:${TP_DATA}/trojan-panel-core/pki/:ro" \
     -v "${KERNEL_RUNTIME_PATH}:${TP_DATA}/trojan-panel-core/runtime/" \
     -v "${cert_data}:${cert_data}" \
@@ -1973,15 +1978,12 @@ deploy_core() {
     -e "mariadb_ip=${MARIADB_HOST}" \
     -e "mariadb_port=${MARIADB_PORT}" \
     -e "mariadb_user=${MARIADB_USER}" \
-    -e "mariadb_pas=${MARIADB_PASSWORD}" \
     -e "database=${MARIADB_DATABASE}" \
     -e "account_table=${ACCOUNT_TABLE}" \
     -e "redis_host=${REDIS_HOST}" \
     -e "redis_port=${REDIS_PORT}" \
     -e "REDIS_USERNAME=${REDIS_USERNAME}" \
-    -e "redis_pass=${REDIS_PASSWORD}" \
     -e "REDIS_AUTH_USERNAME=${REDIS_AUTH_USERNAME}" \
-    -e "REDIS_AUTH_PASSWORD=${REDIS_AUTH_PASSWORD}" \
     -e "crt_path=${crt_path}" \
     -e "key_path=${key_path}" \
     -e "grpc_port=${GRPC_PORT}" \
@@ -1989,6 +1991,7 @@ deploy_core() {
     -e "grpc_tls_mode=${GRPC_TLS_MODE}" \
     -e "grpc_client_ca_path=${GRPC_CLIENT_CA_PATH}" \
     -e "TP_CLIENT_CA_SHA256=${client_ca_sha256}" \
+    -e "TP_NODE_CONFIG_SHA256=${node_config_sha256}" \
     -e "TP_KERNEL_RUNTIME=${TP_DATA}/trojan-panel-core/runtime" \
     -e "TP_EXTERNAL_DIR=${EXTERNAL_ROUTES_DIR}" \
     -e "TP_TLS_MODE=${TLS_MODE}" \

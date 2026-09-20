@@ -94,7 +94,9 @@ jobs:
           cache: true
           cache-dependency-path: apps/node-agent/go.sum
       - name: Test
-        run: go test ./...
+        run: |
+          go test ./...
+          bash testing/node_agent_config_cli_test.sh
       - name: Build
         run: CGO_ENABLED=0 go build -trimpath -o /tmp/trojanpanelnext-node-agent .
 
@@ -121,6 +123,7 @@ jobs:
       - name: Test installer CLI contract
         run: |
           bash deploy/installer/tests/installer_cli_test.sh
+          bash deploy/installer/tests/node_runtime_container_test.sh
           bash deploy/installer/tests/entry_controller_test.sh
           bash deploy/installer/tests/dependency_preflight_test.sh
           bash deploy/installer/tests/secure_file_test.sh

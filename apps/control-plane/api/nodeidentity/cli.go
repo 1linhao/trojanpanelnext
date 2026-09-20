@@ -2,8 +2,10 @@ package nodeidentity
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
@@ -28,10 +30,11 @@ import (
 const databaseName = "trojan_panel_db"
 
 var (
-	namePattern           = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._ -]{0,63}$`)
-	domainPattern         = regexp.MustCompile(`^(?i:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+)$`)
-	redisCacheKeyPatterns = []string{"trojan-panel-core:*"}
-	redisAuthKeyPatterns  = []string{"trojan-panel:jwt-key", "trojan-panel:token:*"}
+	namePattern                = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._ -]{0,63}$`)
+	domainPattern              = regexp.MustCompile(`^(?i:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+)$`)
+	redisCacheKeyPatterns      = []string{"trojan-panel-core:*"}
+	redisAuthKeyPatterns       = []string{"trojan-panel:jwt-key", "trojan-panel:token:*"}
+	errUntrustedCredentialFile = errors.New("credential file does not match the committed lifecycle intent")
 )
 
 type IdentityStatus string
@@ -98,14 +101,16 @@ type identity struct {
 	RedisUsername     string
 	RedisAuthUsername string
 	CredentialPath    string
+	CredentialNonce   string
 	CredentialSHA256  string
 	Status            IdentityStatus
 }
 
 type lifecycle struct {
-	db          *sql.DB
-	redis       redigo.Conn
-	mysqlConfig mysql.Config
+	db            *sql.DB
+	redis         redigo.Conn
+	mysqlConfig   mysql.Config
+	credentialKey [sha256.Size]byte
 }
 
 func Run(args []string, stdout io.Writer, stderr io.Writer) int {
@@ -343,7 +348,8 @@ func openLifecycle() (*lifecycle, error) {
 		_ = db.Close()
 		return nil, err
 	}
-	return &lifecycle{db: db, redis: redisConn, mysqlConfig: mysqlConfig}, nil
+	credentialKey := sha256.Sum256([]byte("trojanpanelnext-node-credential-v1\x00" + mysqlConfig.Passwd + "\x00" + core.Config.RedisConfig.Password))
+	return &lifecycle{db: db, redis: redisConn, mysqlConfig: mysqlConfig, credentialKey: credentialKey}, nil
 }
 
 func (manager *lifecycle) close() {
@@ -406,9 +412,10 @@ func (manager *lifecycle) register(ctx context.Context, name, domain, publicIP, 
 	if err != nil {
 		return identity{}, err
 	}
-	credentials, digest, err := credentialsForIdentity(path, registered, created)
+	crashAt("register_after_reservation")
+	credentials, digest, err := manager.credentialsForIdentity(path, registered, registered.Status == statusProvisioning, "register")
 	if err != nil {
-		if created {
+		if created && errors.Is(err, errUntrustedCredentialFile) {
 			_ = manager.rollbackReservation(ctx, registered)
 		}
 		return identity{}, err
@@ -423,6 +430,7 @@ func (manager *lifecycle) register(ctx context.Context, name, domain, publicIP, 
 			return identity{}, errors.New("credential commitment changed during registration")
 		}
 		registered.CredentialSHA256 = digest
+		crashAt("register_after_digest_commit")
 	}
 	if registered.Status == statusActive {
 		if err = manager.verifyCredentials(ctx, credentials); err != nil {
@@ -477,6 +485,9 @@ func (manager *lifecycle) rollbackReservation(ctx context.Context, registered id
 }
 
 func (manager *lifecycle) rotate(ctx context.Context, id, path string) (identity, error) {
+	if err := validateCredentialPath(path); err != nil {
+		return identity{}, err
+	}
 	if err := manager.ensureSchema(ctx); err != nil {
 		return identity{}, err
 	}
@@ -494,15 +505,19 @@ func (manager *lifecycle) rotate(ctx context.Context, id, path string) (identity
 		if err = manager.preflightRedis(); err != nil {
 			return identity{}, err
 		}
-		registered.Generation++
-		registered.CredentialSHA256 = ""
-		credentials, digest, credentialErr := credentialsForIdentity(path, registered, true)
-		if credentialErr != nil {
-			return identity{}, credentialErr
+		if err = requireCredentialTargetAbsent(path); err != nil {
+			return identity{}, err
 		}
+		nonce, nonceErr := randomNonce()
+		if nonceErr != nil {
+			return identity{}, nonceErr
+		}
+		registered.Generation++
+		registered.CredentialNonce = nonce
+		registered.CredentialSHA256 = ""
 		result, updateErr := manager.db.ExecContext(ctx, `UPDATE node_identity
-			SET generation=?,credential_path=?,credential_sha256=?,status='rotating',update_time=CURRENT_TIMESTAMP
-			WHERE identity_id=? AND generation=? AND status='active'`, registered.Generation, filepath.Clean(path), digest, registered.ID, registered.Generation-1)
+			SET generation=?,credential_path=?,credential_nonce=?,credential_sha256='',status='rotating',update_time=CURRENT_TIMESTAMP
+			WHERE identity_id=? AND generation=? AND status='active'`, registered.Generation, filepath.Clean(path), nonce, registered.ID, registered.Generation-1)
 		if updateErr != nil {
 			return identity{}, updateErr
 		}
@@ -512,11 +527,7 @@ func (manager *lifecycle) rotate(ctx context.Context, id, path string) (identity
 		}
 		registered.Status = statusRotating
 		registered.CredentialPath = filepath.Clean(path)
-		registered.CredentialSHA256 = digest
-		if err = manager.completeRotation(ctx, registered, credentials); err != nil {
-			return identity{}, err
-		}
-		return registered, nil
+		crashAt("rotate_after_reservation")
 	case statusRotating:
 		if filepath.Clean(path) != registered.CredentialPath {
 			return identity{}, errors.New("an interrupted rotation must reuse its credential file")
@@ -524,9 +535,20 @@ func (manager *lifecycle) rotate(ctx context.Context, id, path string) (identity
 	default:
 		return identity{}, errors.New("only an active Node identity can be rotated")
 	}
-	credentials, _, err := credentialsForIdentity(path, registered, false)
+	credentials, digest, err := manager.credentialsForIdentity(path, registered, true, "rotate")
 	if err != nil {
 		return identity{}, err
+	}
+	if registered.CredentialSHA256 == "" {
+		result, updateErr := manager.db.ExecContext(ctx, `UPDATE node_identity SET credential_sha256=? WHERE identity_id=? AND generation=? AND status='rotating' AND credential_sha256=''`, digest, registered.ID, registered.Generation)
+		if updateErr != nil {
+			return identity{}, updateErr
+		}
+		if rows, rowsErr := result.RowsAffected(); rowsErr != nil || rows != 1 {
+			return identity{}, errors.New("credential commitment changed during rotation")
+		}
+		registered.CredentialSHA256 = digest
+		crashAt("rotate_after_digest_commit")
 	}
 	if err = manager.completeRotation(ctx, registered, credentials); err != nil {
 		return identity{}, err
@@ -663,7 +685,7 @@ func (manager *lifecycle) identityByID(ctx context.Context, id string) (identity
 	return registered, err
 }
 
-const identitySelect = `SELECT identity_id,node_server_id,name,domain,public_ip,generation,mariadb_username,redis_username,redis_auth_username,credential_path,credential_sha256,status FROM node_identity`
+const identitySelect = `SELECT identity_id,node_server_id,name,domain,public_ip,generation,mariadb_username,redis_username,redis_auth_username,credential_path,credential_nonce,credential_sha256,status FROM node_identity`
 
 type rowScanner interface {
 	Scan(...interface{}) error
@@ -673,7 +695,7 @@ func scanIdentity(row rowScanner, registered *identity) error {
 	return row.Scan(
 		&registered.ID, &registered.NodeServerID, &registered.Name, &registered.Domain, &registered.PublicIP,
 		&registered.Generation, &registered.MariaDBUsername, &registered.RedisUsername, &registered.RedisAuthUsername,
-		&registered.CredentialPath, &registered.CredentialSHA256, &registered.Status,
+		&registered.CredentialPath, &registered.CredentialNonce, &registered.CredentialSHA256, &registered.Status,
 	)
 }
 
@@ -701,6 +723,10 @@ func (manager *lifecycle) reserveIdentity(ctx context.Context, name, domain, pub
 		return identity{}, false, err
 	}
 	compactID := strings.ReplaceAll(id, "-", "")
+	nonce, err := randomNonce()
+	if err != nil {
+		return identity{}, false, err
+	}
 	created := identity{
 		ID:                id,
 		Name:              name,
@@ -711,6 +737,7 @@ func (manager *lifecycle) reserveIdentity(ctx context.Context, name, domain, pub
 		RedisUsername:     "tpn-" + compactID[:20],
 		RedisAuthUsername: "tpn-auth-" + compactID[:20],
 		CredentialPath:    credentialPath,
+		CredentialNonce:   nonce,
 		Status:            statusProvisioning,
 	}
 	tx, err := manager.db.BeginTx(ctx, nil)
@@ -730,8 +757,8 @@ func (manager *lifecycle) reserveIdentity(ctx context.Context, name, domain, pub
 	}
 	created.NodeServerID = uint64(nodeServerID)
 	_, err = tx.ExecContext(ctx, `INSERT INTO node_identity
-		(identity_id,node_server_id,name,domain,public_ip,generation,mariadb_username,redis_username,redis_auth_username,credential_path,credential_sha256,status)
-		VALUES (?,?,?,?,?,1,?,?,?,?,?,'provisioning')`, created.ID, created.NodeServerID, name, domain, publicIP, created.MariaDBUsername, created.RedisUsername, created.RedisAuthUsername, credentialPath, "")
+		(identity_id,node_server_id,name,domain,public_ip,generation,mariadb_username,redis_username,redis_auth_username,credential_path,credential_nonce,credential_sha256,status)
+		VALUES (?,?,?,?,?,1,?,?,?,?,?,?,'provisioning')`, created.ID, created.NodeServerID, name, domain, publicIP, created.MariaDBUsername, created.RedisUsername, created.RedisAuthUsername, credentialPath, nonce, "")
 	if err != nil {
 		return identity{}, false, err
 	}
@@ -741,11 +768,37 @@ func (manager *lifecycle) reserveIdentity(ctx context.Context, name, domain, pub
 	return created, true, nil
 }
 
-func credentialsForIdentity(path string, registered identity, allowCreate bool) (credentialFile, string, error) {
+func requireCredentialTargetAbsent(path string) error {
+	if _, err := readCredentialFile(path); err == nil {
+		return fmt.Errorf("%w: credential output already exists", errUntrustedCredentialFile)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+func (manager *lifecycle) credentialsForIdentity(path string, registered identity, allowCreate bool, action string) (credentialFile, string, error) {
 	if contents, err := readCredentialFile(path); err == nil {
 		digest := credentialDigest(contents)
-		if registered.CredentialSHA256 == "" || digest != registered.CredentialSHA256 {
-			return credentialFile{}, "", errors.New("credential file does not match its control-plane commitment")
+		if registered.CredentialSHA256 == "" {
+			if registered.CredentialNonce == "" {
+				return credentialFile{}, "", errUntrustedCredentialFile
+			}
+			expected, expectedErr := manager.expectedCredentials(registered)
+			if expectedErr != nil {
+				return credentialFile{}, "", expectedErr
+			}
+			expectedContents, expectedErr := marshalCredentialFile(expected)
+			if expectedErr != nil {
+				return credentialFile{}, "", expectedErr
+			}
+			if subtle.ConstantTimeCompare(contents, expectedContents) != 1 {
+				return credentialFile{}, "", errUntrustedCredentialFile
+			}
+			return expected, digest, nil
+		}
+		if digest != registered.CredentialSHA256 {
+			return credentialFile{}, "", errUntrustedCredentialFile
 		}
 		var existing credentialFile
 		if json.Unmarshal(contents, &existing) != nil || existing.NodeIdentityID != registered.ID ||
@@ -757,7 +810,7 @@ func credentialsForIdentity(path string, registered identity, allowCreate bool) 
 			existing.Redis.Password == "" || !equalStrings(existing.Redis.KeyPatterns, redisCacheKeyPatterns) ||
 			existing.RedisAuth.Username != registered.RedisAuthUsername || existing.RedisAuth.Password == "" ||
 			!equalStrings(existing.RedisAuth.KeyPatterns, redisAuthKeyPatterns) {
-			return credentialFile{}, "", errors.New("existing credential file does not match the reserved Node identity")
+			return credentialFile{}, "", errUntrustedCredentialFile
 		}
 		return existing, digest, nil
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -766,37 +819,9 @@ func credentialsForIdentity(path string, registered identity, allowCreate bool) 
 	if !allowCreate {
 		return credentialFile{}, "", errors.New("the committed credential file is required for an idempotent replay")
 	}
-	dbPassword, err := randomSecret()
+	created, err := manager.expectedCredentials(registered)
 	if err != nil {
 		return credentialFile{}, "", err
-	}
-	redisPassword, err := randomSecret()
-	if err != nil {
-		return credentialFile{}, "", err
-	}
-	redisAuthPassword, err := randomSecret()
-	if err != nil {
-		return credentialFile{}, "", err
-	}
-	created := credentialFile{
-		SchemaVersion:  2,
-		NodeIdentityID: registered.ID,
-		NodeServerID:   registered.NodeServerID,
-		NodeName:       registered.Name,
-		NodeDomain:     registered.Domain,
-		PublicIP:       registered.PublicIP,
-		Generation:     registered.Generation,
-		MariaDB:        databaseCredential{Database: databaseName, Username: registered.MariaDBUsername, Password: dbPassword},
-		Redis: redisCredential{
-			Username:    registered.RedisUsername,
-			Password:    redisPassword,
-			KeyPatterns: append([]string(nil), redisCacheKeyPatterns...),
-		},
-		RedisAuth: redisCredential{
-			Username:    registered.RedisAuthUsername,
-			Password:    redisAuthPassword,
-			KeyPatterns: append([]string(nil), redisAuthKeyPatterns...),
-		},
 	}
 	contents, err := marshalCredentialFile(created)
 	if err != nil {
@@ -805,7 +830,44 @@ func credentialsForIdentity(path string, registered identity, allowCreate bool) 
 	if err = createCredentialFile(path, contents); err != nil {
 		return credentialFile{}, "", err
 	}
+	crashAt(action + "_after_credential_file")
 	return created, credentialDigest(contents), nil
+}
+
+func (manager *lifecycle) expectedCredentials(registered identity) (credentialFile, error) {
+	if registered.CredentialNonce == "" {
+		return credentialFile{}, errors.New("credential lifecycle intent is missing")
+	}
+	return credentialFile{
+		SchemaVersion:  2,
+		NodeIdentityID: registered.ID,
+		NodeServerID:   registered.NodeServerID,
+		NodeName:       registered.Name,
+		NodeDomain:     registered.Domain,
+		PublicIP:       registered.PublicIP,
+		Generation:     registered.Generation,
+		MariaDB: databaseCredential{
+			Database: databaseName,
+			Username: registered.MariaDBUsername,
+			Password: manager.credentialSecret(registered, "mariadb"),
+		},
+		Redis: redisCredential{
+			Username:    registered.RedisUsername,
+			Password:    manager.credentialSecret(registered, "redis-cache"),
+			KeyPatterns: append([]string(nil), redisCacheKeyPatterns...),
+		},
+		RedisAuth: redisCredential{
+			Username:    registered.RedisAuthUsername,
+			Password:    manager.credentialSecret(registered, "redis-auth"),
+			KeyPatterns: append([]string(nil), redisAuthKeyPatterns...),
+		},
+	}, nil
+}
+
+func (manager *lifecycle) credentialSecret(registered identity, purpose string) string {
+	mac := hmac.New(sha256.New, manager.credentialKey[:])
+	_, _ = fmt.Fprintf(mac, "node-credential-v1\x00%s\x00%d\x00%s\x00%s", registered.ID, registered.Generation, registered.CredentialNonce, purpose)
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
 func equalStrings(left, right []string) bool {
@@ -975,6 +1037,10 @@ func randomSecret() (string, error) {
 		return "", err
 	}
 	return base64.RawURLEncoding.EncodeToString(value), nil
+}
+
+func randomNonce() (string, error) {
+	return randomSecret()
 }
 
 func isUUID(value string) bool {

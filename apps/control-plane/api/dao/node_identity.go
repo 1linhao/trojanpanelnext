@@ -17,6 +17,7 @@ var nodeIdentitySchema = []string{
 		redis_username varchar(64) NOT NULL,
 		redis_auth_username varchar(64) NOT NULL,
 		credential_path varchar(1024) NOT NULL,
+		credential_nonce char(43) NOT NULL,
 		credential_sha256 char(64) NOT NULL,
 		status varchar(16) NOT NULL DEFAULT 'provisioning',
 		create_time datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -27,6 +28,7 @@ var nodeIdentitySchema = []string{
 		UNIQUE KEY uk_node_identity_domain (domain)
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 	`ALTER TABLE node_identity ADD COLUMN IF NOT EXISTS redis_auth_username varchar(64) NOT NULL DEFAULT '' AFTER redis_username`,
+	`ALTER TABLE node_identity ADD COLUMN IF NOT EXISTS credential_nonce char(43) NOT NULL DEFAULT '' AFTER credential_path`,
 	`ALTER TABLE node_identity ADD COLUMN IF NOT EXISTS credential_sha256 char(64) NOT NULL DEFAULT '' AFTER credential_path`,
 	`CREATE TABLE IF NOT EXISTS node_identity_event (
 		id bigint unsigned NOT NULL AUTO_INCREMENT,

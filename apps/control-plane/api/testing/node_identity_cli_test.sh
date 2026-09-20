@@ -27,6 +27,10 @@ cleanup() {
 trap cleanup EXIT
 
 (cd "${API_DIR}" && CGO_ENABLED=0 go build -trimpath -o "${work}/trojan-panel" .)
+(cd "${API_DIR}" && CGO_ENABLED=0 go build -trimpath -tags nodeidentitycrashtest -o "${work}/trojan-panel-crash-test" .)
+if strings "${work}/trojan-panel" | grep -Fq 'TP_NODE_IDENTITY_TEST_CRASH_AT'; then
+  fail 'production API binary contains the Node identity crash-test hook'
+fi
 
 mkdir -p "${work}/runtime"
 if ! (cd "${work}/runtime" && "${work}/trojan-panel" node-identity --help >"${work}/help.out" 2>"${work}/help.err"); then
@@ -148,6 +152,97 @@ printf '%s\n' \
   >"${work}/runtime/config/config.ini"
 chmod 0600 "${work}/runtime/config/config.ini"
 
+db_scalar() {
+  docker exec -e "MYSQL_PWD=${admin_db_password}" "${mariadb_container}" \
+    mariadb -N -uroot trojan_panel_db -e "$1"
+}
+
+assert_crashed_registration_has_no_data_identity() {
+  local name="$1"
+  local mariadb_username redis_username redis_auth_username
+  mariadb_username="$(db_scalar "SELECT mariadb_username FROM node_identity WHERE name='${name}'")"
+  redis_username="$(db_scalar "SELECT redis_username FROM node_identity WHERE name='${name}'")"
+  redis_auth_username="$(db_scalar "SELECT redis_auth_username FROM node_identity WHERE name='${name}'")"
+  test "$(docker exec -e "MYSQL_PWD=${admin_db_password}" "${mariadb_container}" \
+    mariadb -N -uroot mysql -e "SELECT COUNT(1) FROM user WHERE User='${mariadb_username}'")" = 0 ||
+    fail "${name} crash left an orphan MariaDB identity"
+  test -z "$(docker exec -e "REDISCLI_AUTH=${admin_redis_password}" "${redis_container}" \
+    redis-cli --raw ACL GETUSER "${redis_username}")" || fail "${name} crash left an orphan cache Redis identity"
+  test -z "$(docker exec -e "REDISCLI_AUTH=${admin_redis_password}" "${redis_container}" \
+    redis-cli --raw ACL GETUSER "${redis_auth_username}")" || fail "${name} crash left an orphan auth Redis identity"
+}
+
+# The crash injector exists only in the tagged test binary. Each invocation
+# exercises the public CLI in a separate process, then retries the exact user
+# command and proves that the reservation, generated file, and digest commit
+# are all recoverable without regenerating credentials or provisioning users
+# ahead of the durable commitment.
+crash_reservation_file="${work}/runtime/config/node-crash-reservation.json"
+set +e
+(cd "${work}/runtime" && TP_NODE_IDENTITY_TEST_CRASH_AT=register_after_reservation \
+  "${work}/trojan-panel-crash-test" node-identity register \
+  --name node-crash-reservation --domain node-crash-reservation.example.com --public-ip 203.0.113.20 \
+  --credential-file "${crash_reservation_file}" >"${work}/crash-reservation.out" 2>"${work}/crash-reservation.err")
+crash_status=$?
+set -e
+test "${crash_status}" = 86 || fail 'reservation crash hook did not terminate at the public CLI boundary'
+test ! -e "${crash_reservation_file}" || fail 'reservation crash published a credential file too early'
+test "$(db_scalar "SELECT status FROM node_identity WHERE name='node-crash-reservation'")" = provisioning ||
+  fail 'reservation crash did not leave a recoverable provisioning intent'
+assert_crashed_registration_has_no_data_identity node-crash-reservation
+(cd "${work}/runtime" && "${work}/trojan-panel-crash-test" node-identity register \
+  --name node-crash-reservation --domain node-crash-reservation.example.com --public-ip 203.0.113.20 \
+  --credential-file "${crash_reservation_file}" >"${work}/recover-reservation.out" 2>"${work}/recover-reservation.err") ||
+  fail 'registration did not recover after the reservation crash point'
+test "$(db_scalar "SELECT status FROM node_identity WHERE name='node-crash-reservation'")" = active ||
+  fail 'reservation crash recovery did not activate the identity'
+
+crash_file_file="${work}/runtime/config/node-crash-file.json"
+set +e
+(cd "${work}/runtime" && TP_NODE_IDENTITY_TEST_CRASH_AT=register_after_credential_file \
+  "${work}/trojan-panel-crash-test" node-identity register \
+  --name node-crash-file --domain node-crash-file.example.com --public-ip 203.0.113.21 \
+  --credential-file "${crash_file_file}" >"${work}/crash-file.out" 2>"${work}/crash-file.err")
+crash_status=$?
+set -e
+test "${crash_status}" = 86 || fail 'credential-file crash hook did not terminate at the public CLI boundary'
+test -f "${crash_file_file}" || fail 'credential-file crash point did not publish the intended file'
+test "$(stat -c '%a' "${crash_file_file}")" = 600 || fail 'crash-recovery credential file is not 0600'
+test -z "$(db_scalar "SELECT credential_sha256 FROM node_identity WHERE name='node-crash-file'")" ||
+  fail 'credential-file crash point committed the digest too early'
+assert_crashed_registration_has_no_data_identity node-crash-file
+cp "${crash_file_file}" "${work}/crash-file.original"
+(cd "${work}/runtime" && "${work}/trojan-panel-crash-test" node-identity register \
+  --name node-crash-file --domain node-crash-file.example.com --public-ip 203.0.113.21 \
+  --credential-file "${crash_file_file}" >"${work}/recover-file.out" 2>"${work}/recover-file.err") ||
+  fail 'registration did not recover after credential-file publication'
+cmp "${work}/crash-file.original" "${crash_file_file}" ||
+  fail 'credential-file crash recovery regenerated the committed intent'
+test "$(db_scalar "SELECT status FROM node_identity WHERE name='node-crash-file'")" = active ||
+  fail 'credential-file crash recovery did not activate the identity'
+
+crash_digest_file="${work}/runtime/config/node-crash-digest.json"
+set +e
+(cd "${work}/runtime" && TP_NODE_IDENTITY_TEST_CRASH_AT=register_after_digest_commit \
+  "${work}/trojan-panel-crash-test" node-identity register \
+  --name node-crash-digest --domain node-crash-digest.example.com --public-ip 203.0.113.22 \
+  --credential-file "${crash_digest_file}" >"${work}/crash-digest.out" 2>"${work}/crash-digest.err")
+crash_status=$?
+set -e
+test "${crash_status}" = 86 || fail 'digest-commit crash hook did not terminate at the public CLI boundary'
+test "$(db_scalar "SELECT credential_sha256 FROM node_identity WHERE name='node-crash-digest'")" = \
+  "$(sha256sum "${crash_digest_file}" | awk '{print $1}')" || fail 'digest crash point was not durably committed'
+assert_crashed_registration_has_no_data_identity node-crash-digest
+cp "${crash_digest_file}" "${work}/crash-digest.original"
+(cd "${work}/runtime" && "${work}/trojan-panel-crash-test" node-identity register \
+  --name node-crash-digest --domain node-crash-digest.example.com --public-ip 203.0.113.22 \
+  --credential-file "${crash_digest_file}" >"${work}/recover-digest.out" 2>"${work}/recover-digest.err") ||
+  fail 'registration did not recover after the credential digest commit'
+cmp "${work}/crash-digest.original" "${crash_digest_file}" ||
+  fail 'digest-commit crash recovery changed credential contents'
+test "$(db_scalar "SELECT status FROM node_identity WHERE name='node-crash-digest'")" = active ||
+  fail 'digest-commit crash recovery did not activate the identity'
+
 credential_file="${work}/runtime/config/node-a-credentials.json"
 (cd "${work}/runtime" && "${work}/trojan-panel" node-identity register \
   --name node-a \
@@ -261,6 +356,11 @@ docker exec -e "MYSQL_PWD=${db_password}" "${mariadb_container}" \
 docker exec -e "REDISCLI_AUTH=${redis_password}" "${redis_container}" \
   redis-cli --user "${redis_username}" ping 2>/dev/null | grep -Fxq PONG ||
   fail 'rejected re-registration changed the active Redis credential'
+# A row created before the recoverable-intent migration has no nonce. Its
+# committed active credential must remain replayable, and the next rotate will
+# establish a nonce for the new generation.
+docker exec -e "MYSQL_PWD=${admin_db_password}" "${mariadb_container}" \
+  mariadb -uroot trojan_panel_db -e "UPDATE node_identity SET credential_nonce='' WHERE identity_id='${node_identity_id}'"
 (cd "${work}/runtime" && "${work}/trojan-panel" node-identity register \
   --name node-a --domain node-a.example.com --public-ip 203.0.113.10 \
   --credential-file "${credential_file}" \
@@ -356,6 +456,8 @@ test "$(jq -r '.node_identity_id' "${rotated_credential_file}")" = "${node_ident
 test "$(jq -r '.mariadb.username' "${rotated_credential_file}")" = "${db_username}" || fail 'rotation changed MariaDB identity'
 test "$(jq -r '.redis.username' "${rotated_credential_file}")" = "${redis_username}" || fail 'rotation changed Redis ACL identity'
 test "$(jq -r '.redis_auth.username' "${rotated_credential_file}")" = "${redis_auth_username}" || fail 'rotation changed Redis auth identity'
+test -n "$(db_scalar "SELECT credential_nonce FROM node_identity WHERE identity_id='${node_identity_id}'")" ||
+  fail 'rotation did not migrate the identity to a recoverable credential intent'
 rotated_db_password="$(jq -r '.mariadb.password' "${rotated_credential_file}")"
 rotated_redis_password="$(jq -r '.redis.password' "${rotated_credential_file}")"
 rotated_redis_auth_password="$(jq -r '.redis_auth.password' "${rotated_credential_file}")"

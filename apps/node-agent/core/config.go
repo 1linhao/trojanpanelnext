@@ -195,11 +195,20 @@ func ValidateNodeIdentityConfig(config *AppConfig) error {
 	if strings.TrimSpace(config.MySQLConfig.User) == "" || strings.EqualFold(config.MySQLConfig.User, "root") {
 		return errors.New("Node Agent requires a non-root MariaDB identity")
 	}
+	if strings.TrimSpace(config.MySQLConfig.Password) == "" {
+		return errors.New("Node Agent requires a non-empty MariaDB password")
+	}
 	if strings.TrimSpace(config.RedisConfig.Username) == "" || strings.EqualFold(config.RedisConfig.Username, "default") {
 		return errors.New("Node Agent requires a non-default Redis cache identity")
 	}
+	if strings.TrimSpace(config.RedisConfig.Password) == "" {
+		return errors.New("Node Agent requires a non-empty Redis cache password")
+	}
 	if strings.TrimSpace(config.RedisConfig.AuthUsername) == "" || strings.EqualFold(config.RedisConfig.AuthUsername, "default") {
 		return errors.New("Node Agent requires a non-default Redis auth identity")
+	}
+	if strings.TrimSpace(config.RedisConfig.AuthPassword) == "" {
+		return errors.New("Node Agent requires a non-empty Redis auth password")
 	}
 	if config.RedisConfig.Username == config.RedisConfig.AuthUsername {
 		return errors.New("Node Agent Redis cache and auth identities must be distinct")
