@@ -429,13 +429,21 @@ func TestCreateRejectsUnknownCredentialField(t *testing.T) {
 
 func TestCreateRejectsInvalidCredentialSemantics(t *testing.T) {
 	cases := map[string]func(*credentialFile){
-		"identity UUID": func(credential *credentialFile) { credential.NodeIdentityID = "not-a-uuid" },
-		"server ID":     func(credential *credentialFile) { credential.NodeServerID = 0 },
-		"node name":     func(credential *credentialFile) { credential.NodeName = "node name" },
-		"domain":        func(credential *credentialFile) { credential.NodeDomain = "bad domain" },
-		"public IP":     func(credential *credentialFile) { credential.PublicIP = "not-an-ip" },
-		"generation":    func(credential *credentialFile) { credential.Generation = 0 },
-		"redis keys":    func(credential *credentialFile) { credential.Redis.KeyPatterns = []string{""} },
+		"identity UUID":      func(credential *credentialFile) { credential.NodeIdentityID = "not-a-uuid" },
+		"server ID":          func(credential *credentialFile) { credential.NodeServerID = 0 },
+		"node name":          func(credential *credentialFile) { credential.NodeName = "node name" },
+		"domain":             func(credential *credentialFile) { credential.NodeDomain = "bad domain" },
+		"public IP":          func(credential *credentialFile) { credential.PublicIP = "not-an-ip" },
+		"loopback public IP": func(credential *credentialFile) { credential.PublicIP = "127.0.0.1" },
+		"private public IP":  func(credential *credentialFile) { credential.PublicIP = "10.0.0.1" },
+		"generation":         func(credential *credentialFile) { credential.Generation = 0 },
+		"redis keys":         func(credential *credentialFile) { credential.Redis.KeyPatterns = []string{""} },
+		"redis cache ACL": func(credential *credentialFile) {
+			credential.Redis.KeyPatterns = []string{"trojan-panel-core:*", "trojan-panel:jwt-key"}
+		},
+		"redis auth ACL": func(credential *credentialFile) {
+			credential.RedisAuth.KeyPatterns = []string{"trojan-panel:jwt-key"}
+		},
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {

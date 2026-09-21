@@ -39,8 +39,10 @@ const (
 var bundleInventory = []string{configPath, manifestPath, clientCAPath}
 
 var (
-	imageReferencePattern = regexp.MustCompile(`^[a-zA-Z0-9._:/-]+@sha256:[0-9a-f]{64}$`)
-	uuidPattern           = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+	imageReferencePattern     = regexp.MustCompile(`^[a-zA-Z0-9._:/-]+@sha256:[0-9a-f]{64}$`)
+	uuidPattern               = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+	nodeRedisCacheKeyPatterns = []string{"trojan-panel-core:*"}
+	nodeRedisAuthKeyPatterns  = []string{"trojan-panel:jwt-key", "trojan-panel:token:*"}
 )
 
 type createOptions struct {
@@ -629,15 +631,17 @@ func extractBundle(path, outputDir string, password []byte) (err error) {
 }
 
 func validateCredential(credential credentialFile) error {
+	publicIP := net.ParseIP(credential.PublicIP)
 	if credential.SchemaVersion != 2 || !uuidPattern.MatchString(credential.NodeIdentityID) || credential.NodeServerID == 0 ||
-		!validNodeName(credential.NodeName) || !validHostname(credential.NodeDomain) || net.ParseIP(credential.PublicIP) == nil || credential.Generation == 0 ||
+		!validNodeName(credential.NodeName) || !validHostname(credential.NodeDomain) || publicIP == nil ||
+		!publicIP.IsGlobalUnicast() || publicIP.IsPrivate() || publicIP.IsLoopback() || credential.Generation == 0 ||
 		credential.MariaDB.Database != "trojan_panel_db" || credential.MariaDB.Username == "" || credential.MariaDB.Password == "" ||
 		strings.EqualFold(credential.MariaDB.Username, "root") || credential.Redis.Username == "" ||
 		credential.Redis.Password == "" || strings.EqualFold(credential.Redis.Username, "default") ||
 		credential.RedisAuth.Username == "" || credential.RedisAuth.Password == "" ||
 		strings.EqualFold(credential.RedisAuth.Username, "default") || credential.RedisAuth.Username == credential.Redis.Username ||
-		len(credential.Redis.KeyPatterns) == 0 || len(credential.RedisAuth.KeyPatterns) == 0 ||
-		!allNonEmpty(credential.Redis.KeyPatterns) || !allNonEmpty(credential.RedisAuth.KeyPatterns) {
+		!exactKeyPatterns(credential.Redis.KeyPatterns, nodeRedisCacheKeyPatterns) ||
+		!exactKeyPatterns(credential.RedisAuth.KeyPatterns, nodeRedisAuthKeyPatterns) {
 		return errors.New("Node credential file is incomplete or does not contain dedicated identities")
 	}
 	return nil
@@ -664,9 +668,22 @@ func validHostname(value string) bool {
 	return true
 }
 
-func allNonEmpty(values []string) bool {
+func exactKeyPatterns(values, expected []string) bool {
+	if len(values) != len(expected) {
+		return false
+	}
+	seen := make(map[string]struct{}, len(values))
 	for _, value := range values {
 		if strings.TrimSpace(value) == "" {
+			return false
+		}
+		if _, duplicate := seen[value]; duplicate {
+			return false
+		}
+		seen[value] = struct{}{}
+	}
+	for _, value := range expected {
+		if _, present := seen[value]; !present {
 			return false
 		}
 	}

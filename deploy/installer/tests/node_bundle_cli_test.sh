@@ -60,6 +60,29 @@ TP_NODE_BUNDLE_PASSWORD="${password}" "${work}/node-bundle" create \
   --output "${work}/node.age" >/dev/null
 test "$(stat -c '%a' "${work}/node.age")" = 600
 grep -a -q -- '-> scrypt ' "${work}/node.age"
+
+assert_create_rejects_credential() {
+  local label="$1"
+  local replacement="$2"
+  local invalid_credential="${work}/credential-${label}.json"
+  local invalid_output="${work}/node-${label}.age"
+  cp "${work}/credential.json" "${invalid_credential}"
+  sed -i "${replacement}" "${invalid_credential}"
+  if TP_NODE_BUNDLE_PASSWORD="${password}" "${work}/node-bundle" create \
+    --credential-file "${invalid_credential}" \
+    --node-config "${work}/config-node.yaml" \
+    --client-ca "${work}/client-ca.crt" \
+    --output "${invalid_output}" >/dev/null 2>&1; then
+    fail "node-bundle create accepted invalid ${label} credential"
+  fi
+  test ! -e "${invalid_output}" || fail "node-bundle create left an output bundle for invalid ${label} credential"
+}
+
+assert_create_rejects_credential loopback-ip 's#203\.0\.113\.42#127.0.0.1#'
+assert_create_rejects_credential private-ip 's#203\.0\.113\.42#192.168.1.10#'
+assert_create_rejects_credential cache-acl 's#trojan-panel-core:\*#trojan-panel:wrong:\*#'
+assert_create_rejects_credential auth-acl 's#trojan-panel:token:\*#trojan-panel:wrong:\*#'
+
 TP_NODE_BUNDLE_PASSWORD="${password}" "${work}/node-bundle" inspect \
   --bundle "${work}/node.age" | grep -q '"generation": 7'
 assert_fails env TP_NODE_BUNDLE_PASSWORD='wrong password value' \
