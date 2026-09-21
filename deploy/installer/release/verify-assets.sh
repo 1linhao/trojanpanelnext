@@ -8,10 +8,12 @@ fail() {
 
 assets_dir=""
 config=""
+assets_only=0
 while (($#)); do
   case "$1" in
   --assets-dir) [[ $# -ge 2 ]] || fail '--assets-dir requires a value'; assets_dir="$2"; shift 2 ;;
   --config) [[ $# -ge 2 ]] || fail '--config requires a value'; config="$2"; shift 2 ;;
+  --assets-only) assets_only=1; shift ;;
   *) fail "unknown argument: $1" ;;
   esac
 done
@@ -42,7 +44,11 @@ path_has_symlink_component() {
 
 [[ -n "${assets_dir}" && -d "${assets_dir}" ]] || fail 'asset directory not found'
 path_has_symlink_component "${assets_dir}" && fail 'asset directory contains a symlink component'
-[[ -n "${config}" && -f "${config}" ]] || fail 'configuration file not found'
+if [[ "${assets_only}" == 0 ]]; then
+  [[ -n "${config}" && -f "${config}" ]] || fail 'configuration file not found'
+elif [[ -n "${config}" ]]; then
+  fail '--assets-only and --config are mutually exclusive'
+fi
 command -v awk >/dev/null 2>&1 || fail 'awk is required'
 command -v grep >/dev/null 2>&1 || fail 'grep is required'
 command -v od >/dev/null 2>&1 || fail 'od is required'
@@ -58,6 +64,7 @@ EXPECTED_RELEASE_ASSET_PATHS=(
   verify-assets.sh
   install.sh
   secure-file
+  node-bundle
   config-web.yaml
   config-node.yaml
   config-combined.yaml
@@ -237,7 +244,7 @@ normalized_manifest="$(awk -F '\t' '
     if (node_value["/release_version"] == "") reject()
     if (length(node_value["/source_commit"]) != 40 || node_value["/source_commit"] !~ /^[0-9a-f]+$/) reject()
 
-    for (i = 0; i < 12; i++) {
+    for (i = 0; i < 13; i++) {
       base = "/assets/" i
       expect(base, "O")
       expect(base "/name", "S")
@@ -271,7 +278,7 @@ normalized_manifest="$(awk -F '\t' '
       digest = node_value[base "/digest"]
       reference = node_value[base "/reference"]
       if (kind != image_kind[i]) reject()
-      if (name == "" || name !~ /^[A-Za-z0-9._\/-]+$/) reject()
+      if (name == "" || name !~ /^[A-Za-z0-9._:\/-]+$/) reject()
       if (digest !~ /^sha256:[0-9a-f]+$/ || length(digest) != 71) reject()
       if (reference != name "@" digest) reject()
       image_name[image_key[i]] = name
@@ -300,7 +307,7 @@ normalized_manifest="$(awk -F '\t' '
     if (invalid) exit 2
 
     print "VERSION\t" node_value["/release_version"]
-    for (i = 0; i < 12; i++) print "ASSET\t" asset_path[i] "\t" asset_digest[i]
+    for (i = 0; i < 13; i++) print "ASSET\t" asset_path[i] "\t" asset_digest[i]
     for (i = 0; i < 6; i++) print "IMAGE\t" image_key[i] "\t" image_reference[image_key[i]]
   }
 ' <<<"${manifest_records}")" || fail 'manifest structure is invalid'
@@ -338,6 +345,11 @@ while IFS=$'\t' read -r record path expected; do
   actual="$(sha256sum "${assets_dir}/${path}" | awk '{print $1}')"
   [[ "${actual}" == "${expected}" ]] || fail "asset digest mismatch: ${path}"
 done <<<"${normalized_manifest}"
+
+if [[ "${assets_only}" == 1 ]]; then
+  printf 'Release assets are valid (version %s)\n' "${manifest_version}"
+  exit 0
+fi
 
 grep -qx 'trojanpanelnext:' "${config}" || fail 'configuration must contain one trojanpanelnext root'
 config_count() {

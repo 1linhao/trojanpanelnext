@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
@@ -13,8 +14,121 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+	"trojan-panel-core/bootstrap"
 	"trojan-panel-core/core"
 )
+
+func TestTrustedWebMTLSStateProbeMarksBootstrapReady(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("TP_NODE_BOOTSTRAP_MARKER", filepath.Join(dir, "bootstrap-ready.json"))
+	caCert, caKey, caPEM := createTestCA(t, "controller-ca")
+	serverCert, serverKey := issueTestCertificate(t, caCert, caKey, "node.test", []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth})
+	clientCert, clientKey := issueTestCertificate(t, caCert, caKey, "controller", []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth})
+	serverCertPath, serverKeyPath := writeTestPair(t, dir, "server", serverCert, serverKey)
+	caPath := filepath.Join(dir, "client-ca.crt")
+	if err := os.WriteFile(caPath, caPEM, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	oldCert := core.Config.CertConfig
+	oldGRPC := core.Config.GrpcConfig
+	oldNode := core.Config.NodeConfig
+	t.Cleanup(func() {
+		core.Config.CertConfig = oldCert
+		core.Config.GrpcConfig = oldGRPC
+		core.Config.NodeConfig = oldNode
+	})
+	core.Config.CertConfig.CrtPath = serverCertPath
+	core.Config.CertConfig.KeyPath = serverKeyPath
+	core.Config.GrpcConfig.TLSMode = "mtls"
+	core.Config.GrpcConfig.ClientCAPath = caPath
+	core.Config.NodeConfig = core.NodeConfig{
+		ServerID: 42, IdentityID: "11111111-2222-4333-8444-555555555555", IdentityGeneration: 7,
+		BootstrapChallenge: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	}
+	serverTLS, err := grpcTLSConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := grpc.NewServer(grpc.Creds(credentials.NewTLS(serverTLS)))
+	RegisterApiStateServiceServer(server, new(StateApiServer))
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(func() {
+		server.Stop()
+		_ = listener.Close()
+	})
+
+	roots := x509.NewCertPool()
+	roots.AppendCertsFromPEM(caPEM)
+	clientTLS := &tls.Config{
+		MinVersion: tls.VersionTLS12, ServerName: "node.test", RootCAs: roots,
+		Certificates: []tls.Certificate{{Certificate: [][]byte{clientCert.Raw}, PrivateKey: clientKey}},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	connection, err := grpc.DialContext(ctx, listener.Addr().String(),
+		grpc.WithTransportCredentials(credentials.NewTLS(clientTLS)), grpc.WithBlock())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.Close()
+	client := NewApiStateServiceClient(connection)
+	request := &NodeServerStateDto{
+		NodeIdentityId: core.Config.NodeConfig.IdentityID, IdentityGeneration: 7, NodeServerId: 42,
+		BootstrapChallenge: core.Config.NodeConfig.BootstrapChallenge,
+	}
+	wrongIdentity := *request
+	wrongIdentity.NodeIdentityId = "99999999-2222-4333-8444-555555555555"
+	response, err := client.GetNodeServerState(ctx, &wrongIdentity)
+	if err != nil || response.Success || bootstrap.Ready() {
+		t.Fatalf("wrong Node identity was accepted: response=%v error=%v", response, err)
+	}
+	oldGeneration := *request
+	oldGeneration.IdentityGeneration = 6
+	response, err = client.GetNodeServerState(ctx, &oldGeneration)
+	if err != nil || response.Success || bootstrap.Ready() {
+		t.Fatalf("old Node identity generation was accepted: response=%v error=%v", response, err)
+	}
+	wrongServer := *request
+	wrongServer.NodeServerId = 43
+	response, err = client.GetNodeServerState(ctx, &wrongServer)
+	if err != nil || response.Success || bootstrap.Ready() {
+		t.Fatalf("wrong node_server was accepted: response=%v error=%v", response, err)
+	}
+	wrongChallenge := *request
+	wrongChallenge.BootstrapChallenge = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	response, err = client.GetNodeServerState(ctx, &wrongChallenge)
+	if err != nil || response.Success || bootstrap.Ready() {
+		t.Fatalf("stale bootstrap challenge was accepted: response=%v error=%v", response, err)
+	}
+	response, err = client.GetNodeServerState(ctx, request)
+	if err != nil || !response.Success {
+		t.Fatalf("trusted Web state probe failed: response=%v error=%v", response, err)
+	}
+	if response.GetData() == nil {
+		t.Fatal("trusted Web state probe omitted its identity response")
+	}
+	var state NodeServerStateVo
+	if err = response.GetData().UnmarshalTo(&state); err != nil {
+		t.Fatal(err)
+	}
+	if state.GetNodeIdentityId() != request.GetNodeIdentityId() ||
+		state.GetIdentityGeneration() != request.GetIdentityGeneration() ||
+		state.GetNodeServerId() != request.GetNodeServerId() ||
+		state.GetBootstrapChallenge() != request.GetBootstrapChallenge() {
+		t.Fatalf("Node state response did not echo the verified identity: %+v", &state)
+	}
+	if !bootstrap.Ready() {
+		t.Fatal("trusted Web mTLS/gRPC state probe did not mark the Node bootstrap ready")
+	}
+}
 
 func TestGRPCMTLSAcceptsOnlyTrustedClientAndServerName(t *testing.T) {
 	dir := t.TempDir()

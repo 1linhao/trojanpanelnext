@@ -82,6 +82,44 @@ generate "${bundle}"
 release_validate_output="$("${bundle}/install.sh" validate --mode web --config "${bundle}/config-web.yaml")"
 grep -q 'valid for web deployment mode' <<<"${release_validate_output}"
 
+# A released installer must execute only helper binaries covered by the verified
+# Release asset set. Helper overrides remain development-only seams.
+cat >"${work}/node-credential.json" <<'JSON'
+{"schema_version":2,"node_identity_id":"11111111-2222-4333-8444-555555555555","node_server_id":42,"node_name":"node-sg","node_domain":"node.example.com","public_ip":"203.0.113.42","generation":1,"mariadb":{"database":"trojan_panel_db","username":"tpn_example","password":"db-secret"},"redis":{"username":"tpn-cache-example","password":"cache-secret","key_patterns":["trojan-panel-core:*"]},"redis_auth":{"username":"tpn-auth-example","password":"auth-secret","key_patterns":["trojan-panel:jwt-key","trojan-panel:token:*"]}}
+JSON
+chmod 0600 "${work}/node-credential.json"
+cp "${bundle}/config-node.yaml" "${work}/node-config.yaml"
+chmod 0600 "${work}/node-config.yaml"
+openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=control-plane-ca \
+  -addext basicConstraints=critical,CA:TRUE \
+  -keyout "${work}/discarded-ca.key" -out "${work}/client-ca.crt" >/dev/null 2>&1
+release_bundle_password='release bundle helper trust password'
+TP_NODE_BUNDLE_PASSWORD="${release_bundle_password}" "${bundle}/node-bundle" create \
+  --credential-file "${work}/node-credential.json" --node-config "${work}/node-config.yaml" \
+  --client-ca "${work}/client-ca.crt" --output "${work}/node.age" >/dev/null
+malicious_helper="${work}/malicious-node-bundle"
+helper_sentinel="${work}/malicious-helper-ran"
+cat >"${malicious_helper}" <<'EOF'
+#!/usr/bin/env bash
+printf ran >"${TP_HELPER_SENTINEL}"
+exit 91
+EOF
+chmod 0755 "${malicious_helper}"
+assert_fails env TP_HELPER_SENTINEL="${helper_sentinel}" NODE_BUNDLE_HELPER="${malicious_helper}" \
+  TP_NODE_BUNDLE_PASSWORD="${release_bundle_password}" \
+  "${bundle}/install.sh" validate --mode node --bundle "${work}/node.age" >/dev/null
+test ! -e "${helper_sentinel}" || fail 'release installer executed an environment-overridden node-bundle helper'
+
+entry_helper_sentinel="${work}/malicious-entryctl-ran"
+assert_fails env TP_HELPER_SENTINEL="${entry_helper_sentinel}" ENTRYCTL_PATH="${malicious_helper}" \
+  "${bundle}/install.sh" validate --mode web --config "${bundle}/config-web.yaml" >/dev/null
+test ! -e "${entry_helper_sentinel}" || fail 'release installer accepted an environment-overridden EntryController helper'
+
+secure_helper_sentinel="${work}/malicious-secure-file-ran"
+assert_fails env TP_HELPER_SENTINEL="${secure_helper_sentinel}" SECURE_FILE_HELPER="${malicious_helper}" \
+  "${bundle}/install.sh" validate --mode web --config "${bundle}/config-web.yaml" >/dev/null
+test ! -e "${secure_helper_sentinel}" || fail 'release installer executed an environment-overridden secure-file helper'
+
 tag_only_config="${work}/tag-only-config.yaml"
 cp "${bundle}/config-web.yaml" "${tag_only_config}"
 sed -i 's#^  api_image:.*#  api_image: ghcr.io/1linhao/trojanpanelnext-api:latest#' \
@@ -127,6 +165,7 @@ test -x "${bundle}/bootstrap.sh"
 test -f "${bundle}/release-contract.sh"
 test -x "${bundle}/install.sh"
 test -x "${bundle}/secure-file"
+test -x "${bundle}/node-bundle"
 test -x "${bundle}/entry/entryctl.sh"
 test -f "${bundle}/entry/controller.sh"
 test -f "${bundle}/entry/adapters/external.sh"
@@ -139,6 +178,7 @@ tar -C "${work}/extracted" -xzf "${archive}"
 test -x "${work}/extracted/bootstrap.sh"
 test -x "${work}/extracted/install.sh"
 test -x "${work}/extracted/secure-file"
+test -x "${work}/extracted/node-bundle"
 test -x "${work}/extracted/verify-assets.sh"
 test -f "${work}/extracted/release-contract.sh"
 test -x "${work}/extracted/entry/entryctl.sh"
@@ -156,7 +196,7 @@ for config in "${bundle}"/config-*.yaml; do
   grep -q '^  node_agent_image:' "${config}"
   ! grep -Eq '^  (purpose|panel_image|ui_image|core_image):' "${config}"
 done
-jq -e '.release_version == "1.2.3" and (.assets | length == 12)' \
+jq -e '.release_version == "1.2.3" and (.assets | length == 13)' \
   "${bundle}/release-manifest.json" >/dev/null
 EXPECTED_RELEASE_ASSET_PATHS=(
   bootstrap.sh
@@ -164,6 +204,7 @@ EXPECTED_RELEASE_ASSET_PATHS=(
   verify-assets.sh
   install.sh
   secure-file
+  node-bundle
   config-web.yaml
   config-node.yaml
   config-combined.yaml
@@ -190,10 +231,10 @@ example_bundle="${work}/example-bundle"
   --redis-image "redis@$(repeated_digest 6)" >/dev/null
 normalized_example_manifest="${work}/normalized-example-release-manifest.json"
 awk '
-  /"name": "secure-file"/ { secure_file = 1 }
-  secure_file && /"sha256":/ {
+  /"name": "(secure-file|node-bundle)"/ { generated_binary = 1 }
+  generated_binary && /"sha256":/ {
     sub(/"sha256": "[^"]+"/, "\"sha256\": \"0000000000000000000000000000000000000000000000000000000000000000\"")
-    secure_file = 0
+    generated_binary = 0
   }
   { print }
 ' "${example_bundle}/release-manifest.json" >"${normalized_example_manifest}"

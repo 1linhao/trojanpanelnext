@@ -131,10 +131,66 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 		return runForceEvict(commandArgs[1:], stdout, stderr)
 	case "status":
 		return runStatus(commandArgs[1:], stdout, stderr)
+	case "verify":
+		return runVerify(commandArgs[1:], stdout, stderr)
 	default:
 		fmt.Fprintln(stderr, "node identity: unsupported command")
 		return 2
 	}
+}
+
+func runVerify(args []string, stdout io.Writer, stderr io.Writer) int {
+	set := flag.NewFlagSet("node-identity verify", flag.ContinueOnError)
+	set.SetOutput(stderr)
+	var id, challenge string
+	set.StringVar(&id, "id", "", "stable Node identity id")
+	set.StringVar(&challenge, "challenge", "", "64-character challenge printed by this Node installation")
+	if err := set.Parse(args); err != nil || len(set.Args()) != 0 || !isUUID(id) || !isLowerHex(challenge, 64) {
+		fmt.Fprintln(stderr, "node identity: verify requires a UUID --id and 64-character lowercase hex --challenge")
+		return 2
+	}
+	manager, err := openLifecycle()
+	if err != nil {
+		fmt.Fprintln(stderr, "node identity: control-plane data services are unavailable")
+		return 1
+	}
+	defer manager.close()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err = manager.ensureSchema(ctx); err != nil {
+		fmt.Fprintln(stderr, "node identity: verification is unavailable")
+		return 1
+	}
+	registered, err := manager.identityByID(ctx, id)
+	if err != nil || registered.Status != statusActive {
+		fmt.Fprintln(stderr, "node identity: only an active identity can be verified")
+		return 1
+	}
+	var grpcPort uint
+	if err = manager.db.QueryRowContext(ctx, "SELECT grpc_port FROM node_server WHERE id=?", registered.NodeServerID).Scan(&grpcPort); err != nil || grpcPort == 0 {
+		fmt.Fprintln(stderr, "node identity: registered gRPC endpoint is unavailable")
+		return 1
+	}
+	state, err := core.VerifyNodeServerState("", registered.PublicIP, grpcPort, core.NodeVerification{
+		IdentityID: registered.ID, Generation: registered.Generation,
+		ServerID: registered.NodeServerID, Challenge: challenge,
+	}, core.NodeTransport{
+		Mode: "mtls", ServerName: registered.Domain,
+	})
+	if err != nil || state == nil || state.GetVersion() == "" {
+		fmt.Fprintln(stderr, "node identity: Web-to-Node mTLS/gRPC verification failed")
+		return 1
+	}
+	fmt.Fprintf(stdout, "Node identity verified over Web-to-Node mTLS/gRPC: %s (generation %d)\n", registered.ID, registered.Generation)
+	return 0
+}
+
+func isLowerHex(value string, length int) bool {
+	if len(value) != length || value != strings.ToLower(value) {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil
 }
 
 func parseIdentityID(args []string, command string, stderr io.Writer) (string, bool) {
@@ -1067,5 +1123,6 @@ Usage:
   trojan-panel node-identity rotate --id <node-identity-id> --credential-file <0600-file>
   trojan-panel node-identity revoke --id <node-identity-id>
   trojan-panel node-identity force-evict --id <node-identity-id>
-  trojan-panel node-identity status --id <node-identity-id>`)
+  trojan-panel node-identity status --id <node-identity-id>
+  trojan-panel node-identity verify --id <node-identity-id> --challenge <this-install-challenge>`)
 }

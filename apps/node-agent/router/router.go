@@ -8,6 +8,7 @@ import (
 
 func Router(router *gin.Engine) {
 	router.Use(middleware.RateLimiterHandler(), middleware.LogHandler())
+	router.GET("/healthz", api.BootstrapHealth)
 	auth := router.Group("/api/auth")
 	{
 		// Hysteria2 api

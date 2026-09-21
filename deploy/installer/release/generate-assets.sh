@@ -48,7 +48,7 @@ command -v jq >/dev/null 2>&1 || fail 'jq is required'
 command -v sha256sum >/dev/null 2>&1 || fail 'sha256sum is required'
 command -v go >/dev/null 2>&1 || fail 'Go is required to build the secure-file helper'
 
-image_pattern='^[a-zA-Z0-9._/-]+@sha256:[0-9a-f]{64}$'
+image_pattern='^[a-zA-Z0-9._:/-]+@sha256:[0-9a-f]{64}$'
 for image in "${api_image}" "${web_image}" "${node_agent_image}" "${caddy_image}" "${mariadb_image}" "${redis_image}"; do
   [[ "${image}" =~ ${image_pattern} ]] || fail "image must be pinned by digest: ${image:-<missing>}"
 done
@@ -61,6 +61,9 @@ install -m 0755 "${installer_source}" "${output}/install.sh"
 (cd "${INSTALLER_DIR}/securefile" && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
   go build -trimpath -ldflags '-s -w -buildid=' -o "${output}/secure-file" .)
 chmod 0755 "${output}/secure-file"
+(cd "${INSTALLER_DIR}/nodebundle" && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+  go build -trimpath -ldflags '-s -w -buildid=' -o "${output}/node-bundle" .)
+chmod 0755 "${output}/node-bundle"
 install -m 0755 "${INSTALLER_DIR}/entry/entryctl.sh" "${output}/entry/entryctl.sh"
 install -m 0644 "${INSTALLER_DIR}/entry/controller.sh" "${output}/entry/controller.sh"
 install -m 0644 "${INSTALLER_DIR}/entry/adapters/external.sh" "${output}/entry/adapters/external.sh"

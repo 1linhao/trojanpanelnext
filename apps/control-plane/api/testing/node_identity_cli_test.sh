@@ -13,24 +13,84 @@ if ! docker info >/dev/null 2>&1; then
 fi
 
 API_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+INSTALLER_DIR="$(cd "${API_DIR}/../../../deploy/installer" && pwd)"
 work="$(mktemp -d)"
+bundle_tmpfs_root="$(mktemp -d /dev/shm/tp-node-identity-bundles.XXXXXX)"
 suffix="${RANDOM}-$$"
 mariadb_container="tp-node-identity-mariadb-${suffix}"
 redis_container="tp-node-identity-redis-${suffix}"
+node_container="tp-node-bootstrap-agent-${suffix}"
+registry_container="tp-node-bootstrap-registry-${suffix}"
 mariadb_image='mariadb@sha256:07e06f2e7ae9dfc63707a83130a62e00167c827f08fcac7a9aa33f4b6dc34e0e'
 redis_image='redis@sha256:a93c14584715ec5bd9d2648d58c3b27f89416242bee0bc9e5fb2edc1a4cbec1d'
+registry_image='registry@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373'
 
 cleanup() {
-  docker rm -fv "${mariadb_container}" "${redis_container}" >/dev/null 2>&1 || true
+  docker rm -fv "${node_container}" "${mariadb_container}" "${redis_container}" "${registry_container}" >/dev/null 2>&1 || true
+  if [[ "${created_tpdata:-0}" == 1 ]]; then
+    sudo -n rm -rf -- /tpdata
+  fi
+  sudo -n find "${bundle_tmpfs_root}" -depth -delete >/dev/null 2>&1 || true
   rm -rf -- "${work}"
 }
 trap cleanup EXIT
 
+if sudo -n test -e /tpdata; then
+  fail 'formal Release install integration requires an unused /tpdata on the ephemeral test host'
+fi
+created_tpdata=1
+
 (cd "${API_DIR}" && CGO_ENABLED=0 go build -trimpath -o "${work}/trojan-panel" .)
 (cd "${API_DIR}" && CGO_ENABLED=0 go build -trimpath -tags nodeidentitycrashtest -o "${work}/trojan-panel-crash-test" .)
+(cd "${INSTALLER_DIR}/nodebundle" && CGO_ENABLED=0 go build -trimpath -o "${work}/node-bundle" .)
+(cd "${API_DIR}/../../node-agent" && CGO_ENABLED=0 go build -trimpath -o "${work}/trojan-panel-core" .)
 if strings "${work}/trojan-panel" | grep -Fq 'TP_NODE_IDENTITY_TEST_CRASH_AT'; then
   fail 'production API binary contains the Node identity crash-test hook'
 fi
+
+debian_image='debian@sha256:f37a335e82bca302e955fa39f9dfe28f1be618f016f8a2b56318e5a5111afc26'
+docker run -d --name "${registry_container}" -p 127.0.0.1::5000 "${registry_image}" >/dev/null
+registry_port="$(docker inspect --format '{{(index (index .NetworkSettings.Ports "5000/tcp") 0).HostPort}}' "${registry_container}")"
+for _ in $(seq 1 30); do
+  curl -fsS "http://127.0.0.1:${registry_port}/v2/" >/dev/null 2>&1 && break
+  sleep 0.2
+done
+curl -fsS "http://127.0.0.1:${registry_port}/v2/" >/dev/null || fail 'local image registry did not become ready'
+mkdir -p "${work}/node-image"
+cp "${work}/trojan-panel-core" "${work}/node-image/trojan-panel-core"
+cat >"${work}/node-image/Dockerfile" <<EOF
+FROM ${debian_image}
+WORKDIR /tpdata/trojan-panel-core
+COPY trojan-panel-core /tpdata/trojan-panel-core/trojan-panel-core
+RUN chmod 0755 /tpdata/trojan-panel-core/trojan-panel-core \
+ && mkdir -p bin/xray bin/naiveproxy bin/hysteria2 \
+ && printf '#!/bin/sh\nexit 0\n' >bin/xray/xray \
+ && cp bin/xray/xray bin/naiveproxy/naiveproxy \
+ && cp bin/xray/xray bin/hysteria2/hysteria2 \
+ && chmod 0755 bin/xray/xray bin/naiveproxy/naiveproxy bin/hysteria2/hysteria2
+ENTRYPOINT ["/tpdata/trojan-panel-core/trojan-panel-core"]
+EOF
+node_image_name="127.0.0.1:${registry_port}/trojanpanelnext-node-agent"
+node_image_tag="${node_image_name}:issue6"
+docker build -q -t "${node_image_tag}" "${work}/node-image" >/dev/null || fail 'local Node Agent image build failed'
+if ! docker push "${node_image_tag}" >"${work}/node-image-push.out" 2>&1; then
+  cat "${work}/node-image-push.out" >&2
+  fail 'local Node Agent image push failed'
+fi
+node_image_digest="$(awk '/digest: sha256:/ {print $3}' "${work}/node-image-push.out" | tail -n 1)"
+[[ "${node_image_digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || fail 'local Node Agent registry did not report a digest'
+node_image_ref="${node_image_name}@${node_image_digest}"
+docker pull "${node_image_ref}" >/dev/null || fail 'digest-pinned local Node Agent image pull failed'
+release_assets="${work}/release-assets"
+"${INSTALLER_DIR}/release/generate-assets.sh" \
+  --version 1.2.3 --source-commit 0123456789abcdef0123456789abcdef01234567 \
+  --output "${release_assets}" \
+  --api-image example.invalid/tpn-api@sha256:1111111111111111111111111111111111111111111111111111111111111111 \
+  --web-image example.invalid/tpn-web@sha256:2222222222222222222222222222222222222222222222222222222222222222 \
+  --node-agent-image "${node_image_ref}" \
+  --caddy-image caddy@sha256:4444444444444444444444444444444444444444444444444444444444444444 \
+  --mariadb-image "${mariadb_image}" --redis-image "${redis_image}" >/dev/null ||
+  fail 'formal Release asset generation failed'
 
 mkdir -p "${work}/runtime"
 if ! (cd "${work}/runtime" && "${work}/trojan-panel" node-identity --help >"${work}/help.out" 2>"${work}/help.err"); then
@@ -281,6 +341,318 @@ test ! -s "${work}/register.err" || fail 'register wrote unexpected stderr'
 grep -Fq "Node identity registered: ${node_identity_id}" "${work}/register.out" ||
   fail 'register did not report the stable Node identity'
 
+# Seal the exact generation-one data identities and public client CA into the
+# product bundle format before rotating them. Later failures therefore prove
+# that a previously valid encrypted bundle cannot be installed after rotation.
+cp "${release_assets}/config-node.yaml" "${work}/node-a.yaml"
+sed -i \
+  -e 's/hostname: node.example.com/hostname: node-a.example.com/' \
+  -e 's/grpc_tls_server_name: node.example.com/grpc_tls_server_name: node-a.example.com/' \
+  -e 's/mariadb_host: panel.example.com/mariadb_host: 127.0.0.1/' \
+  -e "s/mariadb_port: 9507/mariadb_port: ${mariadb_port}/" \
+  -e 's/redis_host: panel.example.com/redis_host: 127.0.0.1/' \
+  -e "s/redis_port: 6378/redis_port: ${redis_port}/" \
+  "${work}/node-a.yaml"
+chmod 0600 "${work}/node-a.yaml"
+openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=control-plane-ca \
+  -addext basicConstraints=critical,CA:TRUE \
+  -keyout "${work}/discarded-control-ca.key" -out "${work}/client-ca.crt" >/dev/null 2>&1
+bundle_password='node-a integration bundle password'
+TP_NODE_BUNDLE_PASSWORD="${bundle_password}" "${work}/node-bundle" create \
+  --credential-file "${credential_file}" --node-config "${work}/node-a.yaml" \
+  --client-ca "${work}/client-ca.crt" --output "${work}/node-a.g1.age" >/dev/null ||
+  fail 'generation-one Node bootstrap bundle creation failed'
+if TP_NODE_BUNDLE_PASSWORD='incorrect integration password' "${work}/node-bundle" inspect \
+  --bundle "${work}/node-a.g1.age" >/dev/null 2>&1; then
+  fail 'generation-one Node bootstrap bundle accepted an incorrect password'
+fi
+mkdir -m 0700 "${work}/node-a-g1"
+TP_NODE_BUNDLE_PASSWORD="${bundle_password}" "${work}/node-bundle" extract \
+  --bundle "${work}/node-a.g1.age" --directory "${work}/node-a-g1" ||
+  fail 'generation-one Node bootstrap bundle extraction failed'
+for bundled_value in "${db_username}" "${db_password}" "${redis_username}" "${redis_password}" \
+  "${redis_auth_username}" "${redis_auth_password}"; do
+  grep -Fq -- "${bundled_value}" "${work}/node-a-g1/config-node.yaml" ||
+    fail 'generation-one bundle did not carry its dedicated Node identity'
+done
+mapfile -t node_a_g1_inventory < <(cd "${work}/node-a-g1" && find . -type f -printf '%P\n' | sort)
+test "${node_a_g1_inventory[*]}" = 'config-node.yaml manifest.json pki/client-ca.crt' ||
+  fail 'generation-one bundle contained an unsafe inventory'
+
+# Run the shipped Web and Node binaries in separate containers. The Node API
+# stays unavailable until the Web container reaches the state RPC with its
+# client certificate; the successful RPC records the exact identity generation.
+mkdir -p "${work}/node-runtime/config" "${work}/node-runtime/pki" \
+  "${work}/node-runtime/cert" "${work}/node-runtime/runtime" \
+  "${work}/node-runtime/logs" "${work}/node-runtime/config/sqlite" \
+  "${work}/node-runtime/bin/xray/config" "${work}/node-runtime/bin/naiveproxy/config" \
+  "${work}/node-runtime/bin/hysteria2/config" "${work}/node-runtime/external" \
+  "${work}/web-runtime/config" "${work}/web-runtime/pki"
+cp "${work}/trojan-panel-core" "${work}/node-runtime/trojan-panel-core"
+cp "${work}/trojan-panel" "${work}/web-runtime/trojan-panel"
+for kernel_binary in bin/xray/xray bin/naiveproxy/naiveproxy bin/hysteria2/hysteria2; do
+  printf '#!/bin/sh\nexit 0\n' >"${work}/node-runtime/${kernel_binary}"
+  chmod 0755 "${work}/node-runtime/${kernel_binary}"
+done
+cp "${work}/client-ca.crt" "${work}/node-runtime/pki/client-ca.crt"
+openssl req -newkey rsa:2048 -nodes -subj /CN=trojanpanelnext-control-plane \
+  -keyout "${work}/web-runtime/pki/client.key" -out "${work}/client.csr" >/dev/null 2>&1
+printf '%s\n' 'basicConstraints=CA:FALSE' 'keyUsage=digitalSignature,keyEncipherment' \
+  'extendedKeyUsage=clientAuth' >"${work}/client.ext"
+openssl x509 -req -days 1 -sha256 -in "${work}/client.csr" \
+  -CA "${work}/client-ca.crt" -CAkey "${work}/discarded-control-ca.key" -CAcreateserial \
+  -extfile "${work}/client.ext" -out "${work}/web-runtime/pki/client.crt" >/dev/null 2>&1
+openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=node-server-ca \
+  -addext basicConstraints=critical,CA:TRUE \
+  -keyout "${work}/server-ca.key" -out "${work}/web-runtime/pki/server-ca.crt" >/dev/null 2>&1
+openssl req -newkey rsa:2048 -nodes -subj /CN=node-a.example.com \
+  -keyout "${work}/node-runtime/cert/server.key" -out "${work}/server.csr" >/dev/null 2>&1
+printf '%s\n' 'basicConstraints=CA:FALSE' 'keyUsage=digitalSignature,keyEncipherment' \
+  'extendedKeyUsage=serverAuth' 'subjectAltName=DNS:node-a.example.com' >"${work}/server.ext"
+openssl x509 -req -days 1 -sha256 -in "${work}/server.csr" \
+  -CA "${work}/web-runtime/pki/server-ca.crt" -CAkey "${work}/server-ca.key" -CAcreateserial \
+  -extfile "${work}/server.ext" -out "${work}/node-runtime/cert/server.crt" >/dev/null 2>&1
+chmod 0600 "${work}/web-runtime/pki/client.key" "${work}/node-runtime/cert/server.key"
+
+cp "${release_assets}/config-node.yaml" "${work}/release-node.yaml"
+sed -i \
+  -e 's/hostname: node.example.com/hostname: node-a.example.com/' \
+  -e 's/grpc_tls_server_name: node.example.com/grpc_tls_server_name: node-a.example.com/' \
+  -e 's/mariadb_host: panel.example.com/mariadb_host: 127.0.0.1/' \
+  -e "s/mariadb_port: 9507/mariadb_port: ${mariadb_port}/" \
+  -e 's/redis_host: panel.example.com/redis_host: 127.0.0.1/' \
+  -e "s/redis_port: 6378/redis_port: ${redis_port}/" \
+  "${work}/release-node.yaml"
+cat >>"${work}/release-node.yaml" <<EOF
+  tls_mode: external
+  tls_cert_dir: ${work}/node-runtime/cert
+  tls_cert_file: server.crt
+  tls_key_file: server.key
+  bind_address: 127.0.0.1
+  managed_cert_dir: /tpdata/trojan-panel-core/cert
+  external_managed_dir: /tpdata/trojanpanelnext-external
+  external_routes_dir: /tpdata/trojan-panel-core/external
+EOF
+chmod 0600 "${work}/release-node.yaml"
+TP_NODE_BUNDLE_PASSWORD="${bundle_password}" "${release_assets}/node-bundle" create \
+  --credential-file "${credential_file}" --node-config "${work}/release-node.yaml" \
+  --client-ca "${work}/client-ca.crt" --output "${work}/release-node.g1.age" >/dev/null ||
+  fail 'formal Release Node bootstrap bundle creation failed'
+
+write_node_runtime_config() {
+  local mariadb_password_value="$1"
+  local redis_password_value="$2"
+  local redis_auth_password_value="$3"
+  local generation_value="$4"
+  local challenge_value="$5"
+  cat >"${work}/node-runtime/config/config.ini" <<EOF
+[mysql]
+host=127.0.0.1
+user=${db_username}
+password=${mariadb_password_value}
+port=${mariadb_port}
+database=trojan_panel_db
+account_table=account
+[redis]
+host=127.0.0.1
+port=${redis_port}
+username=${redis_username}
+password=${redis_password_value}
+auth_username=${redis_auth_username}
+auth_password=${redis_auth_password_value}
+db=0
+max_idle=2
+max_active=4
+wait=true
+[cert]
+crt_path=/tpdata/trojan-panel-core/cert/server.crt
+key_path=/tpdata/trojan-panel-core/cert/server.key
+[log]
+filename=/tpdata/trojan-panel-core/logs/core.log
+max_size=1
+max_backups=1
+max_age=1
+compress=false
+[grpc]
+port=8100
+tls_mode=mtls
+client_ca_path=/tpdata/trojan-panel-core/pki/client-ca.crt
+[server]
+port=18082
+[node]
+server_id=${node_server_id}
+domain=node-a.example.com
+identity_id=${node_identity_id}
+identity_generation=${generation_value}
+bootstrap_challenge=${challenge_value}
+EOF
+  chmod 0600 "${work}/node-runtime/config/config.ini"
+}
+write_node_runtime_config "${db_password}" "${redis_password}" "${redis_auth_password}" 1 \
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+cat >"${work}/web-runtime/config/config.ini" <<EOF
+[mysql]
+host=127.0.0.1
+user=root
+password=${admin_db_password}
+port=${mariadb_port}
+[redis]
+host=127.0.0.1
+port=${redis_port}
+password=${admin_redis_password}
+db=0
+max_idle=2
+max_active=4
+wait=true
+[grpc]
+client_cert_path=/work/pki/client.crt
+client_key_path=/work/pki/client.key
+server_ca_path=/work/pki/server-ca.crt
+EOF
+chmod 0600 "${work}/web-runtime/config/config.ini"
+docker exec -e "MYSQL_PWD=${admin_db_password}" "${mariadb_container}" \
+  mariadb -uroot trojan_panel_db -e "UPDATE node_identity SET public_ip='127.0.0.1' WHERE identity_id='${node_identity_id}'; UPDATE node_server SET ip='127.0.0.1' WHERE id=${node_server_id}" >/dev/null
+
+mkdir -p "${work}/installer-tools"
+curl -fsSL https://github.com/mikefarah/yq/releases/download/v4.53.6/yq_linux_amd64 \
+  -o "${work}/installer-tools/yq"
+printf '%s  %s\n' c5f056448f973ae7d39b5401949648a78f2dc1947d6a8eb65be60d5c504b9385 \
+  "${work}/installer-tools/yq" | sha256sum -c - >/dev/null
+chmod 0755 "${work}/installer-tools/yq"
+printf '#!/bin/sh\nexit 0\n' >"${work}/installer-tools/age"
+chmod 0755 "${work}/installer-tools/age"
+printf 'ID=debian\nVERSION_ID="12"\n' >"${work}/debian-os-release"
+test -z "$(find "${bundle_tmpfs_root}" -mindepth 1 -maxdepth 1 -print -quit)" ||
+  fail 'isolated Node bundle tmpfs root was not empty before installation'
+sudo -n env \
+  PATH="${work}/installer-tools:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+  TP_INSTALL_DEPS=0 TP_NODE_BUNDLE_PASSWORD="${bundle_password}" \
+  TP_OS_RELEASE_FILE="${work}/debian-os-release" \
+  TP_NODE_BUNDLE_TMP_ROOT="${bundle_tmpfs_root}" \
+  TP_HEALTH_ATTEMPTS=90 TP_HEALTH_DELAY_SECONDS=1 CORE_CONTAINER="${node_container}" \
+  "${release_assets}/install.sh" install --mode node --bundle "${work}/release-node.g1.age" \
+  >"${work}/release-install.out" 2>"${work}/release-install.err" &
+release_install_pid=$!
+install_challenge=""
+for _ in $(seq 1 120); do
+  install_challenge="$(grep -Eo -- '--challenge [0-9a-f]{64}' "${work}/release-install.out" 2>/dev/null | tail -n 1 | awk '{print $2}' || true)"
+  [[ -n "${install_challenge}" ]] && break
+  sleep 0.25
+done
+if [[ ! "${install_challenge}" =~ ^[0-9a-f]{64}$ ]]; then
+  set +e
+  wait "${release_install_pid}"
+  set -e
+  cat "${work}/release-install.out" >&2
+  cat "${work}/release-install.err" >&2
+  fail 'formal Release install did not emit this-install challenge'
+fi
+test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8082/healthz || true)" = 503 ||
+  fail 'formal Release Node API did not wait for current Web verification'
+wrong_challenge=ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+[[ "${wrong_challenge}" != "${install_challenge}" ]] || wrong_challenge=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+if docker run --rm --network host --user "$(id -u):$(id -g)" -v "${work}/web-runtime:/work" -w /work "${debian_image}" \
+  ./trojan-panel node-identity verify --id "${node_identity_id}" \
+  --challenge "${wrong_challenge}" \
+  >"${work}/verify-wrong-challenge.out" 2>"${work}/verify-wrong-challenge.err"; then
+  fail 'Web mTLS verification accepted a stale installation challenge'
+fi
+test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8082/healthz || true)" = 503 ||
+  fail 'wrong installation challenge reused historical readiness'
+docker run --rm --network host --user "$(id -u):$(id -g)" -v "${work}/web-runtime:/work" -w /work "${debian_image}" \
+  ./trojan-panel node-identity verify --id "${node_identity_id}" \
+  --challenge "${install_challenge}" >"${work}/verify.out" ||
+  fail 'Web container could not verify Node over mTLS/gRPC'
+grep -Fq 'verified over Web-to-Node mTLS/gRPC' "${work}/verify.out" ||
+  fail 'Web verification did not report the mTLS/gRPC contract'
+set +e
+wait "${release_install_pid}"
+release_install_status=$?
+set -e
+if [[ "${release_install_status}" != 0 ]]; then
+  cat "${work}/release-install.out" >&2
+  cat "${work}/release-install.err" >&2
+  fail 'formal Release install --mode node --bundle returned non-zero'
+fi
+for label in 'Node MariaDB identity' 'Node Redis identities' 'Web-to-Node mTLS/gRPC and Node API'; do
+  grep -Fq -- "Health check passed: ${label}" "${work}/release-install.out" ||
+    fail "formal Release install omitted health gate: ${label}"
+done
+test -z "$(find "${bundle_tmpfs_root}" -mindepth 1 -maxdepth 1 -print -quit)" ||
+  fail 'formal Release install left decrypted bundle plaintext in its isolated tmpfs root'
+test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8082/healthz || true)" = 200 ||
+  fail 'Node API did not become healthy after formal Release installation'
+test "$(sudo -n jq -r '.identity_generation' /tpdata/trojan-panel-core/runtime/bootstrap-verified.json)" = 1 ||
+  fail 'Node readiness marker did not bind generation one'
+test "$(sudo -n jq -r '.bootstrap_challenge' /tpdata/trojan-panel-core/runtime/bootstrap-verified.json)" = "${install_challenge}" ||
+  fail 'Node readiness marker did not bind this formal installation challenge'
+test ! -e /tpdata/trojan-panel-core/pki/client.key || fail 'Web mTLS client private key leaked to Node'
+test ! -e /tpdata/trojan-panel-core/pki/client-ca.key || fail 'Web client CA private key leaked to Node'
+
+assert_formal_release_bundle_install_fails() {
+  local bundle_path="$1"
+  local label="$2"
+  test -z "$(find "${bundle_tmpfs_root}" -mindepth 1 -maxdepth 1 -print -quit)" ||
+    fail "${label} started with plaintext in its isolated tmpfs root"
+  if sudo -n env \
+    PATH="${work}/installer-tools:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+    TP_INSTALL_DEPS=0 TP_NODE_BUNDLE_PASSWORD="${bundle_password}" \
+    TP_OS_RELEASE_FILE="${work}/debian-os-release" \
+    TP_NODE_BUNDLE_TMP_ROOT="${bundle_tmpfs_root}" \
+    TP_HEALTH_ATTEMPTS=3 TP_HEALTH_DELAY_SECONDS=1 \
+    TP_CONTAINER_ATTEMPTS=5 TP_CONTAINER_DELAY_SECONDS=1 CORE_CONTAINER="${node_container}" \
+    "${release_assets}/install.sh" install --mode node --bundle "${bundle_path}" \
+    >"${work}/${label}.out" 2>"${work}/${label}.err"; then
+    fail "formal Release accepted ${label}"
+  fi
+  docker rm -fv "${node_container}" >/dev/null 2>&1 || true
+  test -z "$(find "${bundle_tmpfs_root}" -mindepth 1 -maxdepth 1 -print -quit)" ||
+    fail "${label} left decrypted bundle plaintext in its isolated tmpfs root"
+}
+
+assert_restart_always_fails_closed_after_invalidation() {
+  local label="$1"
+  local http_port="$2"
+  local grpc_port="$3"
+  local invalidation_started="$4"
+  local initial_restart_count="$5"
+  local restart_count first_restart_count="" node_http_status startup_failures
+
+  test "$(docker inspect --format '{{.HostConfig.RestartPolicy.Name}}' "${node_container}")" = always ||
+    fail "${label} did not retain the production restart=always policy"
+  for _ in $(seq 1 60); do
+    restart_count="$(docker inspect --format '{{.RestartCount}}' "${node_container}" 2>/dev/null || true)"
+    if [[ "${restart_count:-0}" -gt "${initial_restart_count}" ]]; then
+      first_restart_count="${restart_count}"
+      break
+    fi
+    sleep 0.25
+  done
+  test -n "${first_restart_count}" || fail "${label} did not restart after credential invalidation"
+  test "$(( $(date +%s) - invalidation_started ))" -le 10 ||
+    fail "${label} exceeded the production credential invalidation deadline before restarting"
+
+  local observation_deadline=$(( $(date +%s) + 12 ))
+  while [[ "$(date +%s)" -lt "${observation_deadline}" ]]; do
+    node_http_status="$(curl --connect-timeout 1 -s -o /dev/null -w '%{http_code}' \
+      "http://127.0.0.1:${http_port}/healthz" || true)"
+    test "${node_http_status:-000}" = 000 ||
+      fail "${label} exposed its HTTP API during the production restart loop"
+    if timeout 1 bash -c "exec 3<>/dev/tcp/127.0.0.1/${grpc_port}" >/dev/null 2>&1; then
+      fail "${label} exposed gRPC during the production restart loop"
+    fi
+    sleep 0.25
+  done
+  restart_count="$(docker inspect --format '{{.RestartCount}}' "${node_container}")"
+  test "${restart_count}" -gt "${first_restart_count}" ||
+    fail "${label} did not continue restarting under the production policy"
+  startup_failures="$(docker logs "${node_container}" 2>&1 | grep -Fc 'Node data-service startup health check failed' || true)"
+  test "${startup_failures}" -ge 2 ||
+    fail "${label} restarts did not fail at the startup data-service gate"
+}
+docker exec -e "MYSQL_PWD=${admin_db_password}" "${mariadb_container}" \
+  mariadb -uroot trojan_panel_db -e "UPDATE node_identity SET public_ip='203.0.113.10' WHERE identity_id='${node_identity_id}'; UPDATE node_server SET ip='203.0.113.10' WHERE id=${node_server_id}" >/dev/null
+
 docker exec -e "MYSQL_PWD=${db_password}" "${mariadb_container}" \
   mariadb -h127.0.0.1 "-u${db_username}" trojan_panel_db \
   -e 'SELECT username FROM account' >/dev/null || fail 'Node MariaDB identity cannot read accounts'
@@ -446,6 +818,8 @@ if (cd "${work}/runtime" && "${work}/trojan-panel" node-identity rotate \
 fi
 rm "${rotated_credential_file}"
 
+rotation_restart_count="$(docker inspect --format '{{.RestartCount}}' "${node_container}")"
+rotation_started="$(date +%s)"
 (cd "${work}/runtime" && "${work}/trojan-panel" node-identity rotate \
   --id "${node_identity_id}" \
   --credential-file "${rotated_credential_file}" \
@@ -467,17 +841,37 @@ test "${rotated_redis_auth_password}" != "${redis_auth_password}" || fail 'rotat
 for secret in "${rotated_db_password}" "${rotated_redis_password}" "${rotated_redis_auth_password}" "${db_password}" "${redis_password}" "${redis_auth_password}"; do
   ! grep -Fq -- "${secret}" "${work}/rotate.out" "${work}/rotate.err" || fail 'rotate leaked a secret'
 done
+
+assert_restart_always_fails_closed_after_invalidation \
+  'rotated generation-one Node' 8082 8100 "${rotation_started}" "${rotation_restart_count}"
+docker update --restart=no "${node_container}" >/dev/null
+docker rm -fv "${node_container}" >/dev/null
+assert_formal_release_bundle_install_fails "${work}/release-node.g1.age" 'generation-one bundle after rotation'
+
+# A fresh Node process using the now-old decrypted generation-one bundle must
+# fail its mandatory startup data-service probes and never expose the API.
+docker run -d --name "${node_container}" --network host --user "$(id -u):$(id -g)" \
+  -e TP_KERNEL_RUNTIME=/tpdata/trojan-panel-core/runtime \
+  -v "${work}/node-runtime:/tpdata/trojan-panel-core" \
+  -w /tpdata/trojan-panel-core "${debian_image}" ./trojan-panel-core >/dev/null
+for _ in $(seq 1 30); do
+  running="$(docker inspect --format '{{.State.Running}}' "${node_container}" 2>/dev/null || true)"
+  [[ "${running}" == false ]] && break
+  sleep 0.2
+done
+test "${running:-}" = false || fail 'old encrypted bundle started a Node Agent after credential rotation'
+docker rm -fv "${node_container}" >/dev/null
 if docker exec -e "MYSQL_PWD=${db_password}" "${mariadb_container}" \
     mariadb -h127.0.0.1 "-u${db_username}" trojan_panel_db -e 'SELECT 1' >/dev/null 2>&1; then
-  fail 'old MariaDB credential remained valid after rotation'
+  fail 'old encrypted bundle MariaDB credential remained valid after rotation'
 fi
 if docker exec -e "REDISCLI_AUTH=${redis_password}" "${redis_container}" \
     redis-cli --user "${redis_username}" ping 2>/dev/null | grep -Fxq PONG; then
-  fail 'old Redis credential remained valid after rotation'
+  fail 'old encrypted bundle Redis credential remained valid after rotation'
 fi
 if docker exec -e "REDISCLI_AUTH=${redis_auth_password}" "${redis_container}" \
     redis-cli --user "${redis_auth_username}" ping 2>/dev/null | grep -Fxq PONG; then
-  fail 'old Redis auth credential remained valid after rotation'
+  fail 'old encrypted bundle Redis auth credential remained valid after rotation'
 fi
 docker exec -e "MYSQL_PWD=${rotated_db_password}" "${mariadb_container}" \
   mariadb -h127.0.0.1 "-u${db_username}" trojan_panel_db -e 'SELECT username FROM account' >/dev/null ||
@@ -560,19 +954,63 @@ for secret in "${rotated_db_password}" "${rotated_redis_password}"; do
   ! grep -Fq -- "${secret}" "${work}/status-active.out" "${work}/status-active.err" || fail 'status leaked a secret'
 done
 
+TP_NODE_BUNDLE_PASSWORD="${bundle_password}" "${work}/node-bundle" create \
+  --credential-file "${rotated_credential_file}" --node-config "${work}/node-a.yaml" \
+  --client-ca "${work}/client-ca.crt" --output "${work}/node-a.g2.age" >/dev/null ||
+  fail 'generation-two Node bootstrap bundle creation failed'
+TP_NODE_BUNDLE_PASSWORD="${bundle_password}" "${work}/node-bundle" inspect \
+  --bundle "${work}/node-a.g2.age" | grep -q '"generation": 2' ||
+  fail 'generation-two bundle did not bind the rotated identity generation'
+TP_NODE_BUNDLE_PASSWORD="${bundle_password}" "${release_assets}/node-bundle" create \
+  --credential-file "${rotated_credential_file}" --node-config "${work}/release-node.yaml" \
+  --client-ca "${work}/client-ca.crt" --output "${work}/release-node.g2.age" >/dev/null ||
+  fail 'formal Release generation-two bundle creation failed'
+
+write_node_runtime_config "${rotated_db_password}" "${rotated_redis_password}" \
+  "${rotated_redis_auth_password}" 2 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+docker exec -e "MYSQL_PWD=${admin_db_password}" "${mariadb_container}" \
+  mariadb -uroot trojan_panel_db -e "UPDATE node_identity SET public_ip='127.0.0.1' WHERE identity_id='${node_identity_id}'; UPDATE node_server SET ip='127.0.0.1' WHERE id=${node_server_id}" >/dev/null
+docker run -d --name "${node_container}" --restart always --network host --user "$(id -u):$(id -g)" \
+  -e TP_KERNEL_RUNTIME=/tpdata/trojan-panel-core/runtime \
+  -v "${work}/node-runtime:/tpdata/trojan-panel-core" \
+  -w /tpdata/trojan-panel-core "${debian_image}" ./trojan-panel-core >/dev/null
+for _ in $(seq 1 40); do
+  node_http_status="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18082/healthz || true)"
+  [[ "${node_http_status}" == 503 ]] && break
+  sleep 0.25
+done
+test "${node_http_status:-}" = 503 || fail 'generation-two Node did not require a fresh Web challenge'
+docker run --rm --network host --user "$(id -u):$(id -g)" -v "${work}/web-runtime:/work" -w /work "${debian_image}" \
+  ./trojan-panel node-identity verify --id "${node_identity_id}" \
+  --challenge bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb >/dev/null ||
+  fail 'Web could not verify the running generation-two Node'
+for _ in $(seq 1 20); do
+  node_http_status="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18082/healthz || true)"
+  [[ "${node_http_status}" == 200 ]] && break
+  sleep 0.25
+done
+test "${node_http_status:-}" = 200 || fail 'generation-two Node did not become ready for its fresh challenge'
+
+revoke_restart_count="$(docker inspect --format '{{.RestartCount}}' "${node_container}")"
+revoke_started="$(date +%s)"
 (cd "${work}/runtime" && "${work}/trojan-panel" node-identity revoke --id "${node_identity_id}" \
   >"${work}/revoke.out" 2>"${work}/revoke.err") || fail 'revoke returned non-zero'
+assert_restart_always_fails_closed_after_invalidation \
+  'revoked generation-two Node' 18082 8100 "${revoke_started}" "${revoke_restart_count}"
+docker update --restart=no "${node_container}" >/dev/null
+docker rm -fv "${node_container}" >/dev/null
+assert_formal_release_bundle_install_fails "${work}/release-node.g2.age" 'generation-two bundle after revoke'
 if docker exec -e "MYSQL_PWD=${rotated_db_password}" "${mariadb_container}" \
     mariadb -h127.0.0.1 "-u${db_username}" trojan_panel_db -e 'SELECT 1' >/dev/null 2>&1; then
-  fail 'revoked MariaDB credential remained valid'
+  fail 'revoked encrypted bundle MariaDB credential remained valid'
 fi
 if docker exec -e "REDISCLI_AUTH=${rotated_redis_password}" "${redis_container}" \
     redis-cli --user "${redis_username}" ping 2>/dev/null | grep -Fxq PONG; then
-  fail 'revoked Redis credential remained valid'
+  fail 'revoked encrypted bundle Redis credential remained valid'
 fi
 if docker exec -e "REDISCLI_AUTH=${rotated_redis_auth_password}" "${redis_container}" \
     redis-cli --user "${redis_auth_username}" ping 2>/dev/null | grep -Fxq PONG; then
-  fail 'revoked Redis auth credential remained valid'
+  fail 'revoked encrypted bundle Redis auth credential remained valid'
 fi
 docker exec -e "MYSQL_PWD=${node_b_db_password}" "${mariadb_container}" \
   mariadb -h127.0.0.1 "-u${node_b_db_username}" trojan_panel_db -e 'SELECT 1' >/dev/null ||

@@ -41,8 +41,10 @@ an existing target, and rejects symlinked paths. The control plane stores a SHA-
 exact contents, so pre-positioned, modified, or cross-generation replays are rejected before a data
 service is touched. Terminal output and lifecycle events contain only the Node ID, generation, action,
 result, and fixed error codes—never MariaDB or Redis secrets. This plaintext file is restricted staging
-material on the Web control plane. A later delivery step creates the encrypted Node bootstrap bundle;
-do not put this file in release assets, logs, or issues.
+material on the Web control plane. Use the Release's `node-bundle` to package it with the Node
+configuration and public client CA in an `age` scrypt encrypted bootstrap bundle; see the
+[installer documentation](../../../deploy/installer/README_EN.md). Never place the plaintext
+credential file in release assets, logs, or issues.
 
 Registration creates a dedicated MariaDB user, two Redis ACL users, and a `node_server` registration.
 The cache identity can read and write only `trojan-panel-core:*`; the auth identity can only read shared
@@ -63,9 +65,18 @@ credential file to converge without another generation. MariaDB locks serialize 
 
 ```bash
 sudo docker exec trojan-panel /tpdata/trojan-panel/trojan-panel node-identity status --id <node-identity-id>
+sudo docker exec trojan-panel /tpdata/trojan-panel/trojan-panel node-identity verify \
+  --id <node-identity-id> --challenge <installer-printed-challenge>
 sudo docker exec trojan-panel /tpdata/trojan-panel/trojan-panel node-identity revoke --id <node-identity-id>
 sudo docker exec trojan-panel /tpdata/trojan-panel/trojan-panel node-identity force-evict --id <node-identity-id>
 ```
+
+`verify` accepts only an active identity and connects to the registered public IP and gRPC port. It
+uses the client certificate retained by Web and verifies the Node server certificate against the
+registered domain. `--challenge` must be the 64-character lowercase hexadecimal random value printed
+by the current Node installation. A successful call requires the identity ID, generation, server ID,
+and challenge to match exactly in both request and response before marking this installation ready;
+output contains only the identity ID and generation, never secrets.
 
 `revoke` removes every data-layer credential while retaining the `node_server` registration and a
 disabled Node identity audit tombstone. `force-evict` additionally removes the active `node_server`

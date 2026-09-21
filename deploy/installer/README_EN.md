@@ -11,7 +11,8 @@ The installer deploys a server non-interactively with one script, one YAML file,
 | `web` | Web control plane | API, Web UI, MariaDB, Redis, and Caddy |
 | `node` | Node Agent | Node Agent, proxy runtimes, certificates, and camouflage site |
 
-Install the Web control plane first. A Node Agent uses the MariaDB and Redis credentials generated in the Web configuration.
+Install the Web control plane first. Every Node Agent uses dedicated MariaDB and Redis identities
+issued by the Web control plane; it never reuses the Web root or default users.
 
 ## External TLS mode
 
@@ -78,26 +79,60 @@ credential. The credential probe exposes no HTTP path, starts no Redis client or
 issue a session, update login time, or increment login failures. Any failed probe returns non-zero with a secret-free diagnostic.
 Replaying the same configuration reuses all three stored credentials.
 
-Before installing a Node Agent, transfer `/tpdata/trojanpanelnext-pki/client-ca.crt` from the Web control plane to the same path on the Node through a trusted file-transfer or secret-management channel. Copy only the public CA certificate; never copy `client-ca.key`, `client.key`, or `client.crt`.
-The installer records the CA digest in the Core container environment. It recreates Core when adopting a legacy unmarked container or when the CA changes, so the new trust root takes effect immediately; unchanged replays do not restart Core.
-
 ## Install a Node Agent
 
-```bash
-cp examples/node-agent.yaml ./node-agent.yaml
-chmod 600 ./node-agent.yaml
-```
-
-Set the Node hostname and Web control-plane address. Copy `mariadb.username`, `mariadb.password`,
-`redis.username`, `redis.password`, `redis_auth.username`, `redis_auth.password`, and `node_server_id` from the restricted credential file produced
-by `node-identity register|rotate`; never reuse the Web root/default-user passwords. Confirm that the
-public CA certificate is present in `pki_bundle_dir`:
+After registering the Node on the Web control plane, use `node-bundle` from the same Release to create
+an encrypted bootstrap bundle. Copy the Node template to a mode-`0600` working file and set the Node
+domain, Web MariaDB/Redis addresses, and images. The identity ID, generation, and three dedicated
+credentials are injected from the file produced by `node-identity register|rotate`:
 
 ```bash
-./install.sh validate --mode node --config ./node-agent.yaml
-sudo ./install.sh install --mode node --config ./node-agent.yaml
-sudo ./install.sh refresh-cert --mode node --config ./node-agent.yaml
+cp ./config-node.yaml ./node-sg.yaml
+chmod 600 ./node-sg.yaml
+./node-bundle create \
+  --credential-file /tpdata/trojan-panel/config/node-identities/node-sg.g1.json \
+  --node-config ./node-sg.yaml \
+  --client-ca /tpdata/trojanpanelnext-pki/client-ca.crt \
+  --output ./node-sg.g1.age
 ```
+
+The password is read interactively and confirmed by default. Automation may set
+`TP_NODE_BUNDLE_PASSWORD`, but there is no password command-line option. The fixed inventory is only
+`config-node.yaml`, `manifest.json`, and `pki/client-ca.crt`. The public CA is parsed and validated;
+the bundle contains neither `client-ca.key`, the Web `client.key`, nor any other private key. Transfer
+only the `.age` file to the Node VPS through a trusted channel.
+
+Install on the Node with the same Release. After verifying the Release assets, the installer opens
+plaintext only in a private directory under `/dev/shm` and removes it on every success or failure exit.
+The default is an interactive password prompt; explicitly pass the environment through `sudo` for
+non-interactive operation:
+
+```bash
+sudo ./install.sh validate --mode node --bundle ./node-sg.g1.age
+sudo ./install.sh install --mode node --bundle ./node-sg.g1.age
+# Non-interactive example: sudo env TP_NODE_BUNDLE_PASSWORD="$TP_NODE_BUNDLE_PASSWORD" \
+#   ./install.sh install --mode node --bundle ./node-sg.g1.age
+```
+
+The installer first checks MariaDB, the Redis cache ACL, and the Redis auth ACL with the Node's own
+identities, then waits for Web-to-Node mTLS/gRPC verification. While the Node install is waiting, run
+this from another terminal on the Web control plane:
+
+```bash
+sudo docker exec trojan-panel /tpdata/trojan-panel/trojan-panel \
+  node-identity verify --id <node-identity-id> --challenge <installer-printed-challenge>
+```
+
+The challenge is random for this installation and must be copied from that installation's output.
+The call uses the client certificate retained by Web and verifies the Node server certificate. Node
+`/healthz` becomes ready only after the identity ID, generation, server ID, and challenge all match,
+and installation succeeds only after all four checks pass. The Node rechecks all three data identities
+over fresh connections at a fixed production cadence and exits within 10 seconds after invalidation.
+After rotation or revocation, an old bundle cannot pass installation and an already-running
+old-generation Node stops. Generate and install a new bundle for the new generation.
+
+A mode-`0600` `--config` remains available for development, removal, and certificate refresh, but use
+the encrypted `--bundle` for a production Node's initial install.
 
 When a host manager has generated a Protocol v1 EntrySpec, pass it explicitly:
 
@@ -153,7 +188,7 @@ Passwords are never printed. Treat populated configuration files as secrets and 
 ## Versioned release assets
 
 The release workflow uses `release/generate-assets.sh` to produce matching versions of
-`bootstrap.sh`, `install.sh`, the `secure-file` helper for descriptor-safe reads and atomic sensitive writes, the `web|node|combined` configuration templates,
+`bootstrap.sh`, `install.sh`, `node-bundle`, the `secure-file` helper for descriptor-safe reads and atomic sensitive writes, the `web|node|combined` configuration templates,
 `release-manifest.json`, and `SHA256SUMS`. Product and runtime images are pinned as
 `name@sha256:<digest>`. Before invoking the installer, `bootstrap.sh` runs the bundled
 `verify-assets.sh` to verify versions, asset digests, image references, and configuration. The
@@ -162,7 +197,7 @@ mutation boundary. The verifier only depends on Bash, awk, grep, and coreutils f
 base system; it does not require a preinstalled `jq`. It checks `SHA256SUMS` against its fixed asset
 set, rejects symlink components in bundle paths, and accepts only the generator's printable ASCII +
 LF manifest bytes before sourcing or executing any other bundled program. Both entrypoints verify all
-12 assets, including `secure-file`, before the helper can first execute, then verify the configuration
+13 assets, including `secure-file` and `node-bundle`, before a helper can first execute, then verify the configuration
 contract again from the descriptor-safe snapshot before crossing the host mutation boundary.
 
 The release configuration contract uses `deployment_mode`, `api_image`, `web_image`, and

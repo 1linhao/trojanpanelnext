@@ -43,9 +43,9 @@ sudo ./install.sh install --mode web --config ./web.yaml
 Node Agent：
 
 ```bash
-cp examples/node-agent.yaml ./node-agent.yaml
-./install.sh validate --mode node --config ./node-agent.yaml
-sudo ./install.sh install --mode node --config ./node-agent.yaml
+# 在 Web 主控登记身份并用 node-bundle 生成 node-sg.age 后
+sudo ./install.sh validate --mode node --bundle ./node-sg.age
+sudo ./install.sh install --mode node --bundle ./node-sg.age
 ```
 
 查看[完整安装说明](./install-tutorial/installation.md)。

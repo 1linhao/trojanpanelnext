@@ -35,7 +35,9 @@ sudo docker exec trojan-panel /tpdata/trojan-panel/trojan-panel node-identity re
 凭据文件以 `0600`、同目录原子发布、不覆盖既有目标且拒绝符号链接路径的方式创建；控制面保存
 文件内容的 SHA-256 承诺，预置、修改或换代次重放都会在触碰数据服务前被拒绝。终端和生命周期事件只记录
 Node ID、代次、动作、结果与固定错误码，不输出 MariaDB/Redis 密钥。该明文文件是 Web 主控上的
-受限中间材料；加密 Node 引导包由后续交付流程生成，不应把它直接放进发布资产、日志或工单。
+受限中间材料；使用 Release 中的 `node-bundle` 把它与 Node 配置、公开客户端 CA 封装为
+`age` scrypt 加密引导包，具体命令见[安装器文档](../../../deploy/installer/README.md)。不要把明文
+凭据文件直接放进发布资产、日志或工单。
 
 登记会创建独立的 MariaDB 用户、两个 Redis ACL 用户和 `node_server` 登记：cache 身份只能读写
 `trojan-panel-core:*`，auth 身份只能读取共享 JWT/token 键，不能写入。重复登记只能使用当前代次
@@ -53,9 +55,16 @@ sudo docker exec trojan-panel /tpdata/trojan-panel/trojan-panel node-identity ro
 
 ```bash
 sudo docker exec trojan-panel /tpdata/trojan-panel/trojan-panel node-identity status --id <node-identity-id>
+sudo docker exec trojan-panel /tpdata/trojan-panel/trojan-panel node-identity verify \
+  --id <node-identity-id> --challenge <installer-printed-challenge>
 sudo docker exec trojan-panel /tpdata/trojan-panel/trojan-panel node-identity revoke --id <node-identity-id>
 sudo docker exec trojan-panel /tpdata/trojan-panel/trojan-panel node-identity force-evict --id <node-identity-id>
 ```
+
+`verify` 仅接受活动身份，从登记的公网 IP 和 gRPC 端口连接 Node，使用 Web 本地客户端证书并
+校验登记域名对应的 Node 服务端证书。`--challenge` 必须是当前 Node 安装器打印的 64 位小写十六
+进制随机值。成功调用要求请求和响应中的身份 ID、代次、服务器 ID 与 challenge 全部精确匹配，
+才会把本次安装标记为就绪；输出只含身份 ID 与代次，不含秘密。
 
 `revoke` 回收全部数据层凭据，但保留 `node_server` 与不可用的 Node 身份审计墓碑；`force-evict`
 还会删除活动 `node_server` 登记并明确表达故障处置意图。两者都不连接 Node 宿主，因此 Node 离线时

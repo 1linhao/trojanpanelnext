@@ -49,6 +49,25 @@ create table trojan_panel_db.account
 
 router->api->middleware->app->service/dao->core
 
+## Bootstrap readiness and credential invalidation
+
+Before startup, the Node Agent opens fresh connections with its dedicated identities and verifies
+MariaDB `node_server` read access, Redis cache read/write access within `trojan-panel-core:*`, and
+Redis auth read access to the shared JWT key. Any failure prevents startup. While running, it repeats
+the checks over fresh connections at a fixed production cadence and exits within 10 seconds after a
+credential becomes invalid. Rotation or revocation makes the old authentication fail and stops the
+process; the container restart policy may retry, but stale configuration cannot become healthy again.
+
+`GET /healthz` returns `503` until the current `node_identity_id`, `identity_generation`, `server_id`,
+and the fresh per-installation `bootstrap_challenge` receive a Web-to-Node gRPC state call authenticated
+by a client certificate, then returns `200`. The readiness marker is written atomically with mode
+`0600` and bound to all four values, so a copied marker or replayed challenge cannot make the current
+installation ready. The installer uses this endpoint as its final gate.
+
+For diagnostics, set `TP_VERIFY_NODE_DATA_SERVICES=mariadb|redis|all` inside the container to run an
+individual data-layer probe. Output reports only the successful category or a generic failure and
+never prints credentials.
+
 ## Build
 
 [compile.bat](compile.bat)
