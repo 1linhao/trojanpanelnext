@@ -9,6 +9,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"io"
 	"math/big"
 	"os"
@@ -423,6 +424,52 @@ func TestCreateRejectsUnknownCredentialField(t *testing.T) {
 	}, []byte(testPassword))
 	if err == nil || !strings.Contains(err.Error(), "parse Node credential") {
 		t.Fatalf("createBundle error = %v, want unknown-field rejection", err)
+	}
+}
+
+func TestCreateRejectsInvalidCredentialSemantics(t *testing.T) {
+	cases := map[string]func(*credentialFile){
+		"identity UUID": func(credential *credentialFile) { credential.NodeIdentityID = "not-a-uuid" },
+		"server ID":     func(credential *credentialFile) { credential.NodeServerID = 0 },
+		"node name":     func(credential *credentialFile) { credential.NodeName = "node name" },
+		"domain":        func(credential *credentialFile) { credential.NodeDomain = "bad domain" },
+		"public IP":     func(credential *credentialFile) { credential.PublicIP = "not-an-ip" },
+		"generation":    func(credential *credentialFile) { credential.Generation = 0 },
+		"redis keys":    func(credential *credentialFile) { credential.Redis.KeyPatterns = []string{""} },
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			credentialPath := writeTestCredential(t, root)
+			contents, err := os.ReadFile(credentialPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var credential credentialFile
+			if err = json.Unmarshal(contents, &credential); err != nil {
+				t.Fatal(err)
+			}
+			mutate(&credential)
+			contents, err = json.Marshal(credential)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = os.WriteFile(credentialPath, contents, 0600); err != nil {
+				t.Fatal(err)
+			}
+			configPath := writeTestConfig(t, root)
+			caPath := filepath.Join(root, "client-ca.crt")
+			if err = os.WriteFile(caPath, testCAPEM(t), 0644); err != nil {
+				t.Fatal(err)
+			}
+			outputPath := filepath.Join(root, "node.age")
+			if err = createBundle(createOptions{credentialPath, configPath, caPath, outputPath}, []byte(testPassword)); err == nil {
+				t.Fatal("create accepted invalid credential semantics")
+			}
+			if _, statErr := os.Stat(outputPath); !errors.Is(statErr, os.ErrNotExist) {
+				t.Fatalf("create left an output bundle after rejection: %v", statErr)
+			}
+		})
 	}
 }
 

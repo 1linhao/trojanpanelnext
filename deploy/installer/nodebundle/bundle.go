@@ -144,6 +144,15 @@ func createBundle(options createOptions, password []byte) error {
 	if err != nil {
 		return err
 	}
+	manifest := bundleManifest{
+		SchemaVersion: bundleSchemaVersion, NodeIdentityID: credential.NodeIdentityID,
+		NodeServerID: credential.NodeServerID, NodeName: credential.NodeName,
+		NodeDomain: credential.NodeDomain, PublicIP: credential.PublicIP,
+		Generation: credential.Generation, Inventory: append([]string(nil), bundleInventory...),
+	}
+	if _, _, err = parseAndValidateNodeConfig(config, &manifest); err != nil {
+		return fmt.Errorf("validate rendered Node configuration: %w", err)
+	}
 	clientCA, err := readRegularFile(options.ClientCAPath, false)
 	if err != nil {
 		return fmt.Errorf("read public control-plane CA: %w", err)
@@ -152,13 +161,7 @@ func createBundle(options createOptions, password []byte) error {
 		return err
 	}
 
-	manifest := bundleManifest{
-		SchemaVersion: bundleSchemaVersion, NodeIdentityID: credential.NodeIdentityID,
-		NodeServerID: credential.NodeServerID, NodeName: credential.NodeName,
-		NodeDomain: credential.NodeDomain, PublicIP: credential.PublicIP,
-		Generation: credential.Generation, Inventory: append([]string(nil), bundleInventory...),
-		Files: []manifestFile{{Path: configPath, SHA256: digest(config)}, {Path: clientCAPath, SHA256: digest(clientCA)}},
-	}
+	manifest.Files = []manifestFile{{Path: configPath, SHA256: digest(config)}, {Path: clientCAPath, SHA256: digest(clientCA)}}
 	manifestContents, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
 		return err
@@ -626,16 +629,48 @@ func extractBundle(path, outputDir string, password []byte) (err error) {
 }
 
 func validateCredential(credential credentialFile) error {
-	if credential.SchemaVersion != 2 || credential.NodeIdentityID == "" || credential.NodeServerID == 0 ||
-		credential.NodeName == "" || credential.NodeDomain == "" || credential.Generation == 0 ||
+	if credential.SchemaVersion != 2 || !uuidPattern.MatchString(credential.NodeIdentityID) || credential.NodeServerID == 0 ||
+		!validNodeName(credential.NodeName) || !validHostname(credential.NodeDomain) || net.ParseIP(credential.PublicIP) == nil || credential.Generation == 0 ||
 		credential.MariaDB.Database != "trojan_panel_db" || credential.MariaDB.Username == "" || credential.MariaDB.Password == "" ||
 		strings.EqualFold(credential.MariaDB.Username, "root") || credential.Redis.Username == "" ||
 		credential.Redis.Password == "" || strings.EqualFold(credential.Redis.Username, "default") ||
 		credential.RedisAuth.Username == "" || credential.RedisAuth.Password == "" ||
-		strings.EqualFold(credential.RedisAuth.Username, "default") || credential.RedisAuth.Username == credential.Redis.Username {
+		strings.EqualFold(credential.RedisAuth.Username, "default") || credential.RedisAuth.Username == credential.Redis.Username ||
+		len(credential.Redis.KeyPatterns) == 0 || len(credential.RedisAuth.KeyPatterns) == 0 ||
+		!allNonEmpty(credential.Redis.KeyPatterns) || !allNonEmpty(credential.RedisAuth.KeyPatterns) {
 		return errors.New("Node credential file is incomplete or does not contain dedicated identities")
 	}
 	return nil
+}
+
+func validNodeName(value string) bool {
+	return value != "" && !strings.ContainsAny(value, " \t\r\n")
+}
+
+func validHostname(value string) bool {
+	if value == "" || len(value) > 253 || net.ParseIP(value) != nil {
+		return false
+	}
+	for _, label := range strings.Split(value, ".") {
+		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for _, r := range label {
+			if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '-' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func allNonEmpty(values []string) bool {
+	for _, value := range values {
+		if strings.TrimSpace(value) == "" {
+			return false
+		}
+	}
+	return true
 }
 
 func validatePassword(password []byte) error {
