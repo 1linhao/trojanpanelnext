@@ -11,10 +11,12 @@ WEB_PATH="${WEB_PATH:-${TP_DATA}/web}"
 INITIAL_SYSADMIN_PASSWORD_FILE="${INITIAL_SYSADMIN_PASSWORD_FILE:-${TP_DATA}/trojan-panel/config/initial-admin-password}"
 TP_PKI_BUNDLE_DIR="${TP_PKI_BUNDLE_DIR:-${TP_DATA}/trojanpanelnext-pki}"
 INSTALLER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SECURE_FILE_HELPER="${SECURE_FILE_HELPER:-${INSTALLER_DIR}/secure-file}"
+SECURE_FILE_HELPER_OVERRIDE="${SECURE_FILE_HELPER:-}"
+SECURE_FILE_HELPER="${SECURE_FILE_HELPER_OVERRIDE:-${INSTALLER_DIR}/secure-file}"
 NODE_BUNDLE_HELPER_OVERRIDE="${NODE_BUNDLE_HELPER:-}"
-NODE_BUNDLE_HELPER="${INSTALLER_DIR}/node-bundle"
-ENTRYCTL_PATH="${ENTRYCTL_PATH:-${INSTALLER_DIR}/entry/entryctl.sh}"
+NODE_BUNDLE_HELPER="${NODE_BUNDLE_HELPER_OVERRIDE:-${INSTALLER_DIR}/node-bundle}"
+ENTRYCTL_PATH_OVERRIDE="${ENTRYCTL_PATH:-}"
+ENTRYCTL_PATH="${ENTRYCTL_PATH_OVERRIDE:-${INSTALLER_DIR}/entry/entryctl.sh}"
 ENTRY_SPEC_FILE="${ENTRY_SPEC_FILE:-}"
 EXTERNAL_MANAGED_DIR="${EXTERNAL_MANAGED_DIR:-${TP_DATA}/trojanpanelnext-external}"
 EXTERNAL_ROUTES_DIR="${EXTERNAL_ROUTES_DIR:-${TP_DATA}/trojan-panel-core/external}"
@@ -538,15 +540,33 @@ verify_release_assets_before_host_change() {
   fi
 }
 
+apply_executable_asset_policy() {
+  if [[ "${INSTALLER_ASSET_VERSION}" != development ]]; then
+    if [[ -n "${SECURE_FILE_HELPER_OVERRIDE}" ]]; then
+      echo_content red "Released installer rejects SECURE_FILE_HELPER overrides"
+      exit 1
+    fi
+    if [[ -n "${NODE_BUNDLE_HELPER_OVERRIDE}" ]]; then
+      echo_content red "Released installer rejects NODE_BUNDLE_HELPER overrides"
+      exit 1
+    fi
+    if [[ -n "${ENTRYCTL_PATH_OVERRIDE}" ]]; then
+      echo_content red "Released installer rejects ENTRYCTL_PATH overrides"
+      exit 1
+    fi
+    SECURE_FILE_HELPER="${INSTALLER_DIR}/secure-file"
+    NODE_BUNDLE_HELPER="${INSTALLER_DIR}/node-bundle"
+    ENTRYCTL_PATH="${INSTALLER_DIR}/entry/entryctl.sh"
+    return
+  fi
+
+  [[ -n "${SECURE_FILE_HELPER_OVERRIDE}" ]] && SECURE_FILE_HELPER="${SECURE_FILE_HELPER_OVERRIDE}"
+  [[ -n "${NODE_BUNDLE_HELPER_OVERRIDE}" ]] && NODE_BUNDLE_HELPER="${NODE_BUNDLE_HELPER_OVERRIDE}"
+  [[ -n "${ENTRYCTL_PATH_OVERRIDE}" ]] && ENTRYCTL_PATH="${ENTRYCTL_PATH_OVERRIDE}"
+  return 0
+}
+
 ensure_node_bundle_helper() {
-	if [[ "${INSTALLER_ASSET_VERSION}" != development && -n "${NODE_BUNDLE_HELPER_OVERRIDE}" && \
-	  "${NODE_BUNDLE_HELPER_OVERRIDE}" != "${INSTALLER_DIR}/node-bundle" ]]; then
-		echo_content red "Released installer rejects NODE_BUNDLE_HELPER overrides"
-		exit 1
-	fi
-	if [[ "${INSTALLER_ASSET_VERSION}" == development && -n "${NODE_BUNDLE_HELPER_OVERRIDE}" ]]; then
-		NODE_BUNDLE_HELPER="${NODE_BUNDLE_HELPER_OVERRIDE}"
-	fi
   if [[ -x "${NODE_BUNDLE_HELPER}" && ! -L "${NODE_BUNDLE_HELPER}" ]]; then
     return
   fi
@@ -2381,10 +2401,14 @@ main() {
   fi
   if [[ -n "${bundle_file}" ]]; then
     verify_release_assets_before_host_change "" 1
+  else
+    verify_release_assets_before_host_change "${config_file}"
+  fi
+  apply_executable_asset_policy
+  if [[ -n "${bundle_file}" ]]; then
     prepare_node_bundle "${bundle_file}"
     config_file="${TP_NODE_BUNDLE_DIR}/config-node.yaml"
   else
-    verify_release_assets_before_host_change "${config_file}"
     prepare_secure_config "${config_file}"
   fi
   verify_release_assets_before_host_change "${TP_CONFIG_READ_FILE}"

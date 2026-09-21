@@ -15,6 +15,7 @@ fi
 API_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INSTALLER_DIR="$(cd "${API_DIR}/../../../deploy/installer" && pwd)"
 work="$(mktemp -d)"
+bundle_tmpfs_root="$(mktemp -d /dev/shm/tp-node-identity-bundles.XXXXXX)"
 suffix="${RANDOM}-$$"
 mariadb_container="tp-node-identity-mariadb-${suffix}"
 redis_container="tp-node-identity-redis-${suffix}"
@@ -29,6 +30,7 @@ cleanup() {
   if [[ "${created_tpdata:-0}" == 1 ]]; then
     sudo -n rm -rf -- /tpdata
   fi
+  sudo -n find "${bundle_tmpfs_root}" -depth -delete >/dev/null 2>&1 || true
   rm -rf -- "${work}"
 }
 trap cleanup EXIT
@@ -342,9 +344,10 @@ grep -Fq "Node identity registered: ${node_identity_id}" "${work}/register.out" 
 # Seal the exact generation-one data identities and public client CA into the
 # product bundle format before rotating them. Later failures therefore prove
 # that a previously valid encrypted bundle cannot be installed after rotation.
-cp "${INSTALLER_DIR}/examples/node-agent.yaml" "${work}/node-a.yaml"
+cp "${release_assets}/config-node.yaml" "${work}/node-a.yaml"
 sed -i \
   -e 's/hostname: node.example.com/hostname: node-a.example.com/' \
+  -e 's/grpc_tls_server_name: node.example.com/grpc_tls_server_name: node-a.example.com/' \
   -e 's/mariadb_host: panel.example.com/mariadb_host: 127.0.0.1/' \
   -e "s/mariadb_port: 9507/mariadb_port: ${mariadb_port}/" \
   -e 's/redis_host: panel.example.com/redis_host: 127.0.0.1/' \
@@ -414,6 +417,7 @@ chmod 0600 "${work}/web-runtime/pki/client.key" "${work}/node-runtime/cert/serve
 cp "${release_assets}/config-node.yaml" "${work}/release-node.yaml"
 sed -i \
   -e 's/hostname: node.example.com/hostname: node-a.example.com/' \
+  -e 's/grpc_tls_server_name: node.example.com/grpc_tls_server_name: node-a.example.com/' \
   -e 's/mariadb_host: panel.example.com/mariadb_host: 127.0.0.1/' \
   -e "s/mariadb_port: 9507/mariadb_port: ${mariadb_port}/" \
   -e 's/redis_host: panel.example.com/redis_host: 127.0.0.1/' \
@@ -518,11 +522,13 @@ chmod 0755 "${work}/installer-tools/yq"
 printf '#!/bin/sh\nexit 0\n' >"${work}/installer-tools/age"
 chmod 0755 "${work}/installer-tools/age"
 printf 'ID=debian\nVERSION_ID="12"\n' >"${work}/debian-os-release"
-before_plaintext_count="$(find /dev/shm -maxdepth 1 -type d -name 'trojanpanelnext-node-bundle.*' | wc -l)"
+test -z "$(find "${bundle_tmpfs_root}" -mindepth 1 -maxdepth 1 -print -quit)" ||
+  fail 'isolated Node bundle tmpfs root was not empty before installation'
 sudo -n env \
   PATH="${work}/installer-tools:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
   TP_INSTALL_DEPS=0 TP_NODE_BUNDLE_PASSWORD="${bundle_password}" \
   TP_OS_RELEASE_FILE="${work}/debian-os-release" \
+  TP_NODE_BUNDLE_TMP_ROOT="${bundle_tmpfs_root}" \
   TP_HEALTH_ATTEMPTS=90 TP_HEALTH_DELAY_SECONDS=1 CORE_CONTAINER="${node_container}" \
   "${release_assets}/install.sh" install --mode node --bundle "${work}/release-node.g1.age" \
   >"${work}/release-install.out" 2>"${work}/release-install.err" &
@@ -572,8 +578,8 @@ for label in 'Node MariaDB identity' 'Node Redis identities' 'Web-to-Node mTLS/g
   grep -Fq -- "Health check passed: ${label}" "${work}/release-install.out" ||
     fail "formal Release install omitted health gate: ${label}"
 done
-after_plaintext_count="$(find /dev/shm -maxdepth 1 -type d -name 'trojanpanelnext-node-bundle.*' | wc -l)"
-test "${before_plaintext_count}" = "${after_plaintext_count}" || fail 'formal Release install left decrypted bundle plaintext in tmpfs'
+test -z "$(find "${bundle_tmpfs_root}" -mindepth 1 -maxdepth 1 -print -quit)" ||
+  fail 'formal Release install left decrypted bundle plaintext in its isolated tmpfs root'
 test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8082/healthz || true)" = 200 ||
   fail 'Node API did not become healthy after formal Release installation'
 test "$(sudo -n jq -r '.identity_generation' /tpdata/trojan-panel-core/runtime/bootstrap-verified.json)" = 1 ||
@@ -582,17 +588,17 @@ test "$(sudo -n jq -r '.bootstrap_challenge' /tpdata/trojan-panel-core/runtime/b
   fail 'Node readiness marker did not bind this formal installation challenge'
 test ! -e /tpdata/trojan-panel-core/pki/client.key || fail 'Web mTLS client private key leaked to Node'
 test ! -e /tpdata/trojan-panel-core/pki/client-ca.key || fail 'Web client CA private key leaked to Node'
-docker update --restart=no "${node_container}" >/dev/null
 
 assert_formal_release_bundle_install_fails() {
   local bundle_path="$1"
   local label="$2"
-  local before_count after_count
-  before_count="$(find /dev/shm -maxdepth 1 -type d -name 'trojanpanelnext-node-bundle.*' | wc -l)"
+  test -z "$(find "${bundle_tmpfs_root}" -mindepth 1 -maxdepth 1 -print -quit)" ||
+    fail "${label} started with plaintext in its isolated tmpfs root"
   if sudo -n env \
     PATH="${work}/installer-tools:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
     TP_INSTALL_DEPS=0 TP_NODE_BUNDLE_PASSWORD="${bundle_password}" \
     TP_OS_RELEASE_FILE="${work}/debian-os-release" \
+    TP_NODE_BUNDLE_TMP_ROOT="${bundle_tmpfs_root}" \
     TP_HEALTH_ATTEMPTS=3 TP_HEALTH_DELAY_SECONDS=1 \
     TP_CONTAINER_ATTEMPTS=5 TP_CONTAINER_DELAY_SECONDS=1 CORE_CONTAINER="${node_container}" \
     "${release_assets}/install.sh" install --mode node --bundle "${bundle_path}" \
@@ -600,8 +606,49 @@ assert_formal_release_bundle_install_fails() {
     fail "formal Release accepted ${label}"
   fi
   docker rm -fv "${node_container}" >/dev/null 2>&1 || true
-  after_count="$(find /dev/shm -maxdepth 1 -type d -name 'trojanpanelnext-node-bundle.*' | wc -l)"
-  test "${before_count}" = "${after_count}" || fail "${label} left decrypted bundle plaintext in tmpfs"
+  test -z "$(find "${bundle_tmpfs_root}" -mindepth 1 -maxdepth 1 -print -quit)" ||
+    fail "${label} left decrypted bundle plaintext in its isolated tmpfs root"
+}
+
+assert_restart_always_fails_closed_after_invalidation() {
+  local label="$1"
+  local http_port="$2"
+  local grpc_port="$3"
+  local invalidation_started="$4"
+  local initial_restart_count="$5"
+  local restart_count first_restart_count="" node_http_status startup_failures
+
+  test "$(docker inspect --format '{{.HostConfig.RestartPolicy.Name}}' "${node_container}")" = always ||
+    fail "${label} did not retain the production restart=always policy"
+  for _ in $(seq 1 60); do
+    restart_count="$(docker inspect --format '{{.RestartCount}}' "${node_container}" 2>/dev/null || true)"
+    if [[ "${restart_count:-0}" -gt "${initial_restart_count}" ]]; then
+      first_restart_count="${restart_count}"
+      break
+    fi
+    sleep 0.25
+  done
+  test -n "${first_restart_count}" || fail "${label} did not restart after credential invalidation"
+  test "$(( $(date +%s) - invalidation_started ))" -le 10 ||
+    fail "${label} exceeded the production credential invalidation deadline before restarting"
+
+  local observation_deadline=$(( $(date +%s) + 12 ))
+  while [[ "$(date +%s)" -lt "${observation_deadline}" ]]; do
+    node_http_status="$(curl --connect-timeout 1 -s -o /dev/null -w '%{http_code}' \
+      "http://127.0.0.1:${http_port}/healthz" || true)"
+    test "${node_http_status:-000}" = 000 ||
+      fail "${label} exposed its HTTP API during the production restart loop"
+    if timeout 1 bash -c "exec 3<>/dev/tcp/127.0.0.1/${grpc_port}" >/dev/null 2>&1; then
+      fail "${label} exposed gRPC during the production restart loop"
+    fi
+    sleep 0.25
+  done
+  restart_count="$(docker inspect --format '{{.RestartCount}}' "${node_container}")"
+  test "${restart_count}" -gt "${first_restart_count}" ||
+    fail "${label} did not continue restarting under the production policy"
+  startup_failures="$(docker logs "${node_container}" 2>&1 | grep -Fc 'Node data-service startup health check failed' || true)"
+  test "${startup_failures}" -ge 2 ||
+    fail "${label} restarts did not fail at the startup data-service gate"
 }
 docker exec -e "MYSQL_PWD=${admin_db_password}" "${mariadb_container}" \
   mariadb -uroot trojan_panel_db -e "UPDATE node_identity SET public_ip='203.0.113.10' WHERE identity_id='${node_identity_id}'; UPDATE node_server SET ip='203.0.113.10' WHERE id=${node_server_id}" >/dev/null
@@ -771,6 +818,8 @@ if (cd "${work}/runtime" && "${work}/trojan-panel" node-identity rotate \
 fi
 rm "${rotated_credential_file}"
 
+rotation_restart_count="$(docker inspect --format '{{.RestartCount}}' "${node_container}")"
+rotation_started="$(date +%s)"
 (cd "${work}/runtime" && "${work}/trojan-panel" node-identity rotate \
   --id "${node_identity_id}" \
   --credential-file "${rotated_credential_file}" \
@@ -793,15 +842,9 @@ for secret in "${rotated_db_password}" "${rotated_redis_password}" "${rotated_re
   ! grep -Fq -- "${secret}" "${work}/rotate.out" "${work}/rotate.err" || fail 'rotate leaked a secret'
 done
 
-rotation_started="$(date +%s)"
-for _ in $(seq 1 60); do
-  running="$(docker inspect --format '{{.State.Running}}' "${node_container}" 2>/dev/null || true)"
-  [[ "${running}" == false ]] && break
-  sleep 0.25
-done
-test "${running:-}" = false || fail 'running Node Agent did not stop after its bundle credentials were rotated'
-test "$(( $(date +%s) - rotation_started ))" -le 10 ||
-  fail 'running Node Agent exceeded the production credential invalidation deadline after rotation'
+assert_restart_always_fails_closed_after_invalidation \
+  'rotated generation-one Node' 8082 8100 "${rotation_started}" "${rotation_restart_count}"
+docker update --restart=no "${node_container}" >/dev/null
 docker rm -fv "${node_container}" >/dev/null
 assert_formal_release_bundle_install_fails "${work}/release-node.g1.age" 'generation-one bundle after rotation'
 
@@ -927,7 +970,7 @@ write_node_runtime_config "${rotated_db_password}" "${rotated_redis_password}" \
   "${rotated_redis_auth_password}" 2 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 docker exec -e "MYSQL_PWD=${admin_db_password}" "${mariadb_container}" \
   mariadb -uroot trojan_panel_db -e "UPDATE node_identity SET public_ip='127.0.0.1' WHERE identity_id='${node_identity_id}'; UPDATE node_server SET ip='127.0.0.1' WHERE id=${node_server_id}" >/dev/null
-docker run -d --name "${node_container}" --network host --user "$(id -u):$(id -g)" \
+docker run -d --name "${node_container}" --restart always --network host --user "$(id -u):$(id -g)" \
   -e TP_KERNEL_RUNTIME=/tpdata/trojan-panel-core/runtime \
   -v "${work}/node-runtime:/tpdata/trojan-panel-core" \
   -w /tpdata/trojan-panel-core "${debian_image}" ./trojan-panel-core >/dev/null
@@ -948,17 +991,13 @@ for _ in $(seq 1 20); do
 done
 test "${node_http_status:-}" = 200 || fail 'generation-two Node did not become ready for its fresh challenge'
 
+revoke_restart_count="$(docker inspect --format '{{.RestartCount}}' "${node_container}")"
 revoke_started="$(date +%s)"
 (cd "${work}/runtime" && "${work}/trojan-panel" node-identity revoke --id "${node_identity_id}" \
   >"${work}/revoke.out" 2>"${work}/revoke.err") || fail 'revoke returned non-zero'
-for _ in $(seq 1 60); do
-  running="$(docker inspect --format '{{.State.Running}}' "${node_container}" 2>/dev/null || true)"
-  [[ "${running}" == false ]] && break
-  sleep 0.25
-done
-test "${running:-}" = false || fail 'running generation-two Node did not stop after revoke'
-test "$(( $(date +%s) - revoke_started ))" -le 10 ||
-  fail 'running Node Agent exceeded the production credential invalidation deadline after revoke'
+assert_restart_always_fails_closed_after_invalidation \
+  'revoked generation-two Node' 18082 8100 "${revoke_started}" "${revoke_restart_count}"
+docker update --restart=no "${node_container}" >/dev/null
 docker rm -fv "${node_container}" >/dev/null
 assert_formal_release_bundle_install_fails "${work}/release-node.g2.age" 'generation-two bundle after revoke'
 if docker exec -e "MYSQL_PWD=${rotated_db_password}" "${mariadb_container}" \

@@ -126,7 +126,12 @@ func TestDecryptRejectsDataAfterTarEndOfArchive(t *testing.T) {
 	root := t.TempDir()
 	valid := createTestBundle(t, root)
 	forged := filepath.Join(root, "trailing-private-key.age")
-	rewriteBundleWithTail(t, valid, forged, []byte("-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n"))
+	privateKeyTail := strings.Join([]string{
+		"-----BEGIN", " PRIVATE", " KEY-----\n",
+		"AAAA\n",
+		"-----END", " PRIVATE", " KEY-----\n",
+	}, "")
+	rewriteBundleWithTail(t, valid, forged, []byte(privateKeyTail))
 	if _, _, err := decryptAndValidate(forged, []byte(testPassword)); err == nil {
 		t.Fatal("bundle with private-key data after tar end-of-archive was accepted")
 	}
@@ -153,6 +158,213 @@ func TestDecryptRevalidatesCompleteNodeConfigurationSchema(t *testing.T) {
 			forged := createForgedBundle(t, root, mutate)
 			if _, _, err := decryptAndValidate(forged, []byte(testPassword)); err == nil {
 				t.Fatalf("forged Node configuration %q was accepted", name)
+			}
+		})
+	}
+}
+
+func TestCreateRejectsNodeConfigWithoutSchemaVersion(t *testing.T) {
+	root := t.TempDir()
+	credentialPath := writeTestCredential(t, root)
+	configPath := writeTestConfig(t, root)
+	removeConfigLine(t, configPath, "  schema_version: 1\n")
+	caPath := filepath.Join(root, "client-ca.crt")
+	if err := os.WriteFile(caPath, testCAPEM(t), 0644); err != nil {
+		t.Fatal(err)
+	}
+	err := createBundle(createOptions{
+		CredentialPath: credentialPath,
+		ConfigPath:     configPath,
+		ClientCAPath:   caPath,
+		OutputPath:     filepath.Join(root, "node.age"),
+	}, []byte(testPassword))
+	if err == nil {
+		t.Fatal("create accepted a Node configuration without schema_version")
+	}
+}
+
+func TestDecryptRejectsNodeConfigWithoutSchemaVersion(t *testing.T) {
+	root := t.TempDir()
+	forged := createForgedBundle(t, root, func(config []byte) []byte {
+		return bytes.Replace(config, []byte("  schema_version: 1\n"), nil, 1)
+	})
+	if _, _, err := decryptAndValidate(forged, []byte(testPassword)); err == nil {
+		t.Fatal("extract accepted a Node configuration without schema_version")
+	}
+}
+
+func TestCreateRejectsEveryOtherMissingRequiredNodeConfigField(t *testing.T) {
+	required := []string{
+		"asset_version", "deployment_mode", "hostname", "email",
+		"caddy_image", "mariadb_image", "redis_image", "api_image", "web_image", "node_agent_image",
+		"node_caddy_http_port", "node_caddy_https_port",
+		"mariadb_host", "mariadb_port", "mariadb_user", "mariadb_password", "database", "account_table",
+		"redis_host", "redis_port", "redis_username", "redis_password", "redis_auth_username", "redis_auth_password",
+		"grpc_port", "core_port", "node_server_id", "node_identity_id", "node_identity_generation",
+		"grpc_tls_mode", "grpc_tls_server_name", "grpc_client_ca_path", "pki_bundle_dir", "kernel_runtime_path",
+		"force", "purge_data",
+	}
+	root := t.TempDir()
+	credentialPath := writeTestCredential(t, root)
+	caPath := filepath.Join(root, "client-ca.crt")
+	if err := os.WriteFile(caPath, testCAPEM(t), 0644); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range required {
+		t.Run(key, func(t *testing.T) {
+			caseRoot := t.TempDir()
+			configPath := writeTestConfig(t, caseRoot)
+			removeConfigKey(t, configPath, key)
+			err := createBundle(createOptions{
+				CredentialPath: credentialPath,
+				ConfigPath:     configPath,
+				ClientCAPath:   caPath,
+				OutputPath:     filepath.Join(caseRoot, "node.age"),
+			}, []byte(testPassword))
+			if err == nil {
+				t.Fatalf("create accepted a Node configuration without %s", key)
+			}
+		})
+	}
+}
+
+func TestDecryptRejectsOtherMissingRequiredNodeConfigFields(t *testing.T) {
+	for _, key := range []string{"asset_version", "caddy_image", "mariadb_port", "database", "core_port", "force"} {
+		t.Run(key, func(t *testing.T) {
+			root := t.TempDir()
+			forged := createForgedBundle(t, root, func(config []byte) []byte {
+				return removeConfigKeyBytes(t, config, key)
+			})
+			if _, _, err := decryptAndValidate(forged, []byte(testPassword)); err == nil {
+				t.Fatalf("extract accepted a Node configuration without %s", key)
+			}
+		})
+	}
+}
+
+func TestCreateRejectsWrongNodeConfigTypesAndValues(t *testing.T) {
+	tests := map[string]func(*testing.T, []byte) []byte{
+		"wrong schema version": func(t *testing.T, config []byte) []byte {
+			return setConfigValueBytes(t, config, "schema_version", "999")
+		},
+		"string schema version": func(t *testing.T, config []byte) []byte {
+			return setConfigValueBytes(t, config, "schema_version", `"1"`)
+		},
+		"numeric asset version": func(t *testing.T, config []byte) []byte {
+			return setConfigValueBytes(t, config, "asset_version", "123")
+		},
+		"boolean deployment mode": func(t *testing.T, config []byte) []byte {
+			return setConfigValueBytes(t, config, "deployment_mode", "true")
+		},
+		"numeric email": func(t *testing.T, config []byte) []byte {
+			return setConfigValueBytes(t, config, "email", "7")
+		},
+		"numeric image": func(t *testing.T, config []byte) []byte {
+			return setConfigValueBytes(t, config, "caddy_image", "7")
+		},
+		"string port": func(t *testing.T, config []byte) []byte {
+			return setConfigValueBytes(t, config, "mariadb_port", `"9507"`)
+		},
+		"zero port": func(t *testing.T, config []byte) []byte {
+			return setConfigValueBytes(t, config, "mariadb_port", "0")
+		},
+		"oversized port": func(t *testing.T, config []byte) []byte {
+			return setConfigValueBytes(t, config, "core_port", "65536")
+		},
+		"boolean force": func(t *testing.T, config []byte) []byte {
+			return setConfigValueBytes(t, config, "force", "true")
+		},
+		"force outside enum": func(t *testing.T, config []byte) []byte {
+			return setConfigValueBytes(t, config, "force", "2")
+		},
+		"wrong database": func(t *testing.T, config []byte) []byte {
+			return setConfigValueBytes(t, config, "database", "other")
+		},
+		"wrong account table": func(t *testing.T, config []byte) []byte {
+			return setConfigValueBytes(t, config, "account_table", "other")
+		},
+		"malformed identity": func(t *testing.T, config []byte) []byte {
+			return setConfigValueBytes(t, config, "node_identity_id", "not-a-uuid")
+		},
+		"mismatched grpc server name": func(t *testing.T, config []byte) []byte {
+			return setConfigValueBytes(t, config, "grpc_tls_server_name", "other.example.com")
+		},
+		"relative image bundle directory": func(t *testing.T, config []byte) []byte {
+			return append(config, []byte("  image_bundle_dir: ../images\n")...)
+		},
+		"relative external TLS directory": func(t *testing.T, config []byte) []byte {
+			return append(config, []byte("  tls_mode: external\n  tls_cert_dir: ../certs\n")...)
+		},
+		"certificate file path": func(t *testing.T, config []byte) []byte {
+			return append(config, []byte("  tls_cert_file: ../server.crt\n")...)
+		},
+		"invalid bind address": func(t *testing.T, config []byte) []byte {
+			return append(config, []byte("  bind_address: every-interface\n")...)
+		},
+		"wrong managed certificate directory": func(t *testing.T, config []byte) []byte {
+			return append(config, []byte("  managed_cert_dir: /tmp/cert\n")...)
+		},
+		"wrong external managed directory": func(t *testing.T, config []byte) []byte {
+			return append(config, []byte("  external_managed_dir: /tmp/external\n")...)
+		},
+		"wrong external routes directory": func(t *testing.T, config []byte) []byte {
+			return append(config, []byte("  external_routes_dir: /tmp/routes\n")...)
+		},
+	}
+	root := t.TempDir()
+	credentialPath := writeTestCredential(t, root)
+	caPath := filepath.Join(root, "client-ca.crt")
+	if err := os.WriteFile(caPath, testCAPEM(t), 0644); err != nil {
+		t.Fatal(err)
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			caseRoot := t.TempDir()
+			configPath := writeTestConfig(t, caseRoot)
+			contents, err := os.ReadFile(configPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = os.WriteFile(configPath, mutate(t, contents), 0600); err != nil {
+				t.Fatal(err)
+			}
+			err = createBundle(createOptions{
+				CredentialPath: credentialPath, ConfigPath: configPath, ClientCAPath: caPath,
+				OutputPath: filepath.Join(caseRoot, "node.age"),
+			}, []byte(testPassword))
+			if err == nil {
+				t.Fatalf("create accepted invalid Node configuration: %s", name)
+			}
+		})
+	}
+}
+
+func TestDecryptRejectsWrongNodeConfigTypesAndValues(t *testing.T) {
+	tests := map[string]func(*testing.T, []byte) []byte{
+		"wrong schema version": func(t *testing.T, config []byte) []byte {
+			return setConfigValueBytes(t, config, "schema_version", "999")
+		},
+		"string port": func(t *testing.T, config []byte) []byte {
+			return setConfigValueBytes(t, config, "redis_port", `"6378"`)
+		},
+		"force outside enum": func(t *testing.T, config []byte) []byte {
+			return setConfigValueBytes(t, config, "force", "2")
+		},
+		"wrong database": func(t *testing.T, config []byte) []byte {
+			return setConfigValueBytes(t, config, "database", "other")
+		},
+		"unsafe optional host path": func(t *testing.T, config []byte) []byte {
+			return append(config, []byte("  image_bundle_dir: ../images\n")...)
+		},
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			forged := createForgedBundle(t, root, func(config []byte) []byte {
+				return mutate(t, config)
+			})
+			if _, _, err := decryptAndValidate(forged, []byte(testPassword)); err == nil {
+				t.Fatalf("extract accepted invalid Node configuration: %s", name)
 			}
 		})
 	}
@@ -313,7 +525,13 @@ func writeTestConfig(t *testing.T, root string) string {
   hostname: node.example.com
   email: admin@example.com
   caddy_image: caddy@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  mariadb_image: mariadb@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+  redis_image: redis@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+  api_image: example/api@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+  web_image: example/web@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
   node_agent_image: example/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  node_caddy_http_port: 80
+  node_caddy_https_port: 8863
   mariadb_host: panel.example.com
   mariadb_port: 9507
   mariadb_user: replace
@@ -329,6 +547,8 @@ func writeTestConfig(t *testing.T, root string) string {
   grpc_port: 8100
   core_port: 8082
   node_server_id: 1
+  node_identity_id: 11111111-2222-4333-8444-555555555555
+  node_identity_generation: 1
   grpc_tls_mode: mtls
   grpc_tls_server_name: node.example.com
   grpc_client_ca_path: /tpdata/trojan-panel-core/pki/client-ca.crt
@@ -341,6 +561,60 @@ func writeTestConfig(t *testing.T, root string) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+func removeConfigLine(t *testing.T, path, line string) {
+	t.Helper()
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated := bytes.Replace(contents, []byte(line), nil, 1)
+	if bytes.Equal(updated, contents) {
+		t.Fatalf("test fixture does not contain %q", line)
+	}
+	if err = os.WriteFile(path, updated, 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func removeConfigKey(t *testing.T, path, key string) {
+	t.Helper()
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated := removeConfigKeyBytes(t, contents, key)
+	if err = os.WriteFile(path, updated, 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func removeConfigKeyBytes(t *testing.T, contents []byte, key string) []byte {
+	t.Helper()
+	prefix := []byte("  " + key + ":")
+	lines := bytes.SplitAfter(contents, []byte("\n"))
+	for index, line := range lines {
+		if bytes.HasPrefix(line, prefix) {
+			return bytes.Join(append(lines[:index], lines[index+1:]...), nil)
+		}
+	}
+	t.Fatalf("test fixture does not contain key %q", key)
+	return nil
+}
+
+func setConfigValueBytes(t *testing.T, contents []byte, key, value string) []byte {
+	t.Helper()
+	prefix := []byte("  " + key + ":")
+	lines := bytes.SplitAfter(contents, []byte("\n"))
+	for index, line := range lines {
+		if bytes.HasPrefix(line, prefix) {
+			lines[index] = []byte("  " + key + ": " + value + "\n")
+			return bytes.Join(lines, nil)
+		}
+	}
+	t.Fatalf("test fixture does not contain key %q", key)
+	return nil
 }
 
 func writeEncryptedArchive(path, password string, entries map[string][]byte) error {

@@ -82,8 +82,8 @@ generate "${bundle}"
 release_validate_output="$("${bundle}/install.sh" validate --mode web --config "${bundle}/config-web.yaml")"
 grep -q 'valid for web deployment mode' <<<"${release_validate_output}"
 
-# A released installer must execute only the node-bundle binary covered by the
-# verified Release asset set. NODE_BUNDLE_HELPER remains a development-only seam.
+# A released installer must execute only helper binaries covered by the verified
+# Release asset set. Helper overrides remain development-only seams.
 cat >"${work}/node-credential.json" <<'JSON'
 {"schema_version":2,"node_identity_id":"11111111-2222-4333-8444-555555555555","node_server_id":42,"node_name":"node-sg","node_domain":"node.example.com","public_ip":"203.0.113.42","generation":1,"mariadb":{"database":"trojan_panel_db","username":"tpn_example","password":"db-secret"},"redis":{"username":"tpn-cache-example","password":"cache-secret","key_patterns":["trojan-panel-core:*"]},"redis_auth":{"username":"tpn-auth-example","password":"auth-secret","key_patterns":["trojan-panel:jwt-key","trojan-panel:token:*"]}}
 JSON
@@ -109,6 +109,16 @@ assert_fails env TP_HELPER_SENTINEL="${helper_sentinel}" NODE_BUNDLE_HELPER="${m
   TP_NODE_BUNDLE_PASSWORD="${release_bundle_password}" \
   "${bundle}/install.sh" validate --mode node --bundle "${work}/node.age" >/dev/null
 test ! -e "${helper_sentinel}" || fail 'release installer executed an environment-overridden node-bundle helper'
+
+entry_helper_sentinel="${work}/malicious-entryctl-ran"
+assert_fails env TP_HELPER_SENTINEL="${entry_helper_sentinel}" ENTRYCTL_PATH="${malicious_helper}" \
+  "${bundle}/install.sh" validate --mode web --config "${bundle}/config-web.yaml" >/dev/null
+test ! -e "${entry_helper_sentinel}" || fail 'release installer accepted an environment-overridden EntryController helper'
+
+secure_helper_sentinel="${work}/malicious-secure-file-ran"
+assert_fails env TP_HELPER_SENTINEL="${secure_helper_sentinel}" SECURE_FILE_HELPER="${malicious_helper}" \
+  "${bundle}/install.sh" validate --mode web --config "${bundle}/config-web.yaml" >/dev/null
+test ! -e "${secure_helper_sentinel}" || fail 'release installer executed an environment-overridden secure-file helper'
 
 tag_only_config="${work}/tag-only-config.yaml"
 cp "${bundle}/config-web.yaml" "${tag_only_config}"

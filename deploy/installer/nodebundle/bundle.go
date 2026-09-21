@@ -11,8 +11,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -35,6 +37,11 @@ const (
 )
 
 var bundleInventory = []string{configPath, manifestPath, clientCAPath}
+
+var (
+	imageReferencePattern = regexp.MustCompile(`^[a-zA-Z0-9._:/-]+@sha256:[0-9a-f]{64}$`)
+	uuidPattern           = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+)
 
 type createOptions struct {
 	CredentialPath string
@@ -101,6 +108,17 @@ var allowedNodeConfigKeys = map[string]bool{
 	"tls_cert_dir": true, "tls_cert_file": true, "tls_key_file": true,
 	"bind_address": true, "managed_cert_dir": true, "external_managed_dir": true,
 	"external_routes_dir": true, "force": true, "purge_data": true,
+}
+
+var requiredNodeConfigKeys = []string{
+	"schema_version", "asset_version", "deployment_mode", "hostname", "email",
+	"caddy_image", "mariadb_image", "redis_image", "api_image", "web_image", "node_agent_image",
+	"node_caddy_http_port", "node_caddy_https_port",
+	"mariadb_host", "mariadb_port", "mariadb_user", "mariadb_password", "database", "account_table",
+	"redis_host", "redis_port", "redis_username", "redis_password", "redis_auth_username", "redis_auth_password",
+	"grpc_port", "core_port", "node_server_id", "node_identity_id", "node_identity_generation",
+	"grpc_tls_mode", "grpc_tls_server_name", "grpc_client_ca_path", "pki_bundle_dir", "kernel_runtime_path",
+	"force", "purge_data",
 }
 
 func createBundle(options createOptions, password []byte) error {
@@ -336,14 +354,81 @@ func parseAndValidateNodeConfig(contents []byte, expected *bundleManifest) (map[
 			return nil, nil, fmt.Errorf("unsupported node configuration key %q", key)
 		}
 	}
-	if scalarString(config["deployment_mode"]) != "node" {
+	for _, key := range requiredNodeConfigKeys {
+		if _, present := config[key]; !present {
+			return nil, nil, fmt.Errorf("Node configuration requires %s", key)
+		}
+	}
+	schemaVersion, err := requiredUnsigned(config, "schema_version")
+	if err != nil || schemaVersion != 1 {
+		return nil, nil, errors.New("Node configuration schema_version must be 1")
+	}
+	requiredStrings := []string{
+		"asset_version", "deployment_mode", "hostname",
+		"caddy_image", "mariadb_image", "redis_image", "api_image", "web_image", "node_agent_image",
+		"mariadb_host", "mariadb_user", "mariadb_password", "database", "account_table",
+		"redis_host", "redis_username", "redis_password", "redis_auth_username", "redis_auth_password",
+		"node_identity_id", "grpc_tls_mode", "grpc_tls_server_name", "grpc_client_ca_path",
+		"pki_bundle_dir", "kernel_runtime_path",
+	}
+	stringValues := make(map[string]string, len(requiredStrings)+1)
+	for _, key := range requiredStrings {
+		value, stringErr := requiredString(config, key, false)
+		if stringErr != nil {
+			return nil, nil, stringErr
+		}
+		stringValues[key] = value
+	}
+	if _, err = requiredString(config, "email", true); err != nil {
+		return nil, nil, err
+	}
+	if stringValues["deployment_mode"] != "node" {
 		return nil, nil, errors.New("Node configuration deployment_mode must be node")
 	}
-	if scalarString(config["grpc_tls_mode"]) != "mtls" {
+	for _, key := range []string{"caddy_image", "mariadb_image", "redis_image", "api_image", "web_image", "node_agent_image"} {
+		if !imageReferencePattern.MatchString(stringValues[key]) {
+			return nil, nil, fmt.Errorf("Node configuration %s must be pinned by sha256 digest", key)
+		}
+	}
+	if stringValues["database"] != "trojan_panel_db" {
+		return nil, nil, errors.New("Node configuration database must be trojan_panel_db")
+	}
+	if stringValues["account_table"] != "account" {
+		return nil, nil, errors.New("Node configuration account_table must be account")
+	}
+	if !uuidPattern.MatchString(stringValues["node_identity_id"]) {
+		return nil, nil, errors.New("Node configuration node_identity_id must be a UUID")
+	}
+	if stringValues["grpc_tls_mode"] != "mtls" {
 		return nil, nil, errors.New("Node configuration must keep grpc_tls_mode mtls")
 	}
-	if uint64Value(config["grpc_port"]) != 8100 {
+	if stringValues["grpc_tls_server_name"] != stringValues["hostname"] {
+		return nil, nil, errors.New("Node configuration grpc_tls_server_name must match hostname")
+	}
+	ports := make(map[string]uint64, 6)
+	for _, key := range []string{"node_caddy_http_port", "node_caddy_https_port", "mariadb_port", "redis_port", "grpc_port", "core_port"} {
+		value, portErr := requiredUnsigned(config, key)
+		if portErr != nil || value < 1 || value > 65535 {
+			return nil, nil, fmt.Errorf("Node configuration %s must be an integer between 1 and 65535", key)
+		}
+		ports[key] = value
+	}
+	if ports["grpc_port"] != 8100 {
 		return nil, nil, errors.New("Node configuration grpc_port must match the registered port 8100")
+	}
+	nodeServerID, err := requiredUnsigned(config, "node_server_id")
+	if err != nil || nodeServerID == 0 {
+		return nil, nil, errors.New("Node configuration node_server_id must be a positive integer")
+	}
+	identityGeneration, err := requiredUnsigned(config, "node_identity_generation")
+	if err != nil || identityGeneration == 0 {
+		return nil, nil, errors.New("Node configuration node_identity_generation must be a positive integer")
+	}
+	for _, key := range []string{"force", "purge_data"} {
+		value, enumErr := requiredUnsigned(config, key)
+		if enumErr != nil || value > 1 {
+			return nil, nil, fmt.Errorf("Node configuration %s must be integer 0 or 1", key)
+		}
 	}
 	fixedPaths := map[string]string{
 		"grpc_client_ca_path": nodeClientCAPath,
@@ -351,7 +436,7 @@ func parseAndValidateNodeConfig(contents []byte, expected *bundleManifest) (map[
 		"kernel_runtime_path": nodeKernelRuntime,
 	}
 	for key, expectedPath := range fixedPaths {
-		if scalarString(config[key]) != expectedPath {
+		if stringValues[key] != expectedPath {
 			return nil, nil, fmt.Errorf("Node configuration %s must be %s", key, expectedPath)
 		}
 	}
@@ -361,28 +446,107 @@ func parseAndValidateNodeConfig(contents []byte, expected *bundleManifest) (map[
 		"external_routes_dir":  nodeExternalRoutes,
 	}
 	for key, expectedPath := range optionalFixedPaths {
-		if value := strings.TrimSpace(scalarString(config[key])); value != "" && value != expectedPath {
+		value, optionalErr := optionalString(config, key)
+		if optionalErr != nil {
+			return nil, nil, optionalErr
+		}
+		if value != "" && value != expectedPath {
 			return nil, nil, fmt.Errorf("Node configuration %s must be %s", key, expectedPath)
 		}
 	}
 	for _, key := range []string{"tls_cert_file", "tls_key_file"} {
-		if value := strings.TrimSpace(scalarString(config[key])); value != "" && (filepath.Base(value) != value || value == "." || value == "..") {
+		value, optionalErr := optionalString(config, key)
+		if optionalErr != nil {
+			return nil, nil, optionalErr
+		}
+		if value != "" && (filepath.Base(value) != value || value == "." || value == "..") {
 			return nil, nil, fmt.Errorf("Node configuration %s must be a file name without path components", key)
 		}
 	}
-	for _, key := range []string{"hostname", "mariadb_host", "redis_host", "node_agent_image", "grpc_client_ca_path"} {
-		if strings.TrimSpace(scalarString(config[key])) == "" {
-			return nil, nil, fmt.Errorf("Node configuration requires %s", key)
+	for _, key := range []string{"image_bundle_dir", "tls_cert_dir"} {
+		value, optionalErr := optionalString(config, key)
+		if optionalErr != nil {
+			return nil, nil, optionalErr
+		}
+		if value != "" && (!filepath.IsAbs(value) || filepath.Clean(value) != value) {
+			return nil, nil, fmt.Errorf("Node configuration %s must be a clean absolute path", key)
 		}
 	}
-	if expected != nil && (scalarString(config["node_identity_id"]) != expected.NodeIdentityID ||
-		uint64Value(config["node_identity_generation"]) != expected.Generation ||
-		uint64Value(config["node_server_id"]) != expected.NodeServerID ||
-		scalarString(config["hostname"]) != expected.NodeDomain ||
-		scalarString(config["grpc_tls_server_name"]) != expected.NodeDomain) {
-		return nil, nil, errors.New("Node bootstrap manifest and configuration identity disagree")
+	tlsMode, err := optionalString(config, "tls_mode")
+	if err != nil {
+		return nil, nil, err
+	}
+	if tlsMode != "" && tlsMode != "acme" && tlsMode != "external" {
+		return nil, nil, errors.New("Node configuration tls_mode must be acme or external")
+	}
+	if tlsMode == "external" {
+		tlsCertDir, _ := optionalString(config, "tls_cert_dir")
+		if tlsCertDir == "" {
+			return nil, nil, errors.New("Node configuration tls_cert_dir is required for external TLS")
+		}
+	}
+	bindAddress, err := optionalString(config, "bind_address")
+	if err != nil {
+		return nil, nil, err
+	}
+	if bindAddress != "" && net.ParseIP(bindAddress) == nil {
+		return nil, nil, errors.New("Node configuration bind_address must be an IP address")
+	}
+	if expected != nil {
+		if strings.EqualFold(stringValues["mariadb_user"], "root") ||
+			strings.EqualFold(stringValues["redis_username"], "default") ||
+			strings.EqualFold(stringValues["redis_auth_username"], "default") ||
+			stringValues["redis_username"] == stringValues["redis_auth_username"] {
+			return nil, nil, errors.New("Node configuration must contain dedicated data-service identities")
+		}
+		if stringValues["node_identity_id"] != expected.NodeIdentityID ||
+			identityGeneration != expected.Generation || nodeServerID != expected.NodeServerID ||
+			stringValues["hostname"] != expected.NodeDomain || stringValues["grpc_tls_server_name"] != expected.NodeDomain {
+			return nil, nil, errors.New("Node bootstrap manifest and configuration identity disagree")
+		}
 	}
 	return root, config, nil
+}
+
+func requiredString(config map[string]interface{}, key string, allowEmpty bool) (string, error) {
+	value, ok := config[key].(string)
+	if !ok {
+		return "", fmt.Errorf("Node configuration %s must be a string", key)
+	}
+	if !allowEmpty && strings.TrimSpace(value) == "" {
+		return "", fmt.Errorf("Node configuration %s requires a value", key)
+	}
+	return value, nil
+}
+
+func optionalString(config map[string]interface{}, key string) (string, error) {
+	raw, present := config[key]
+	if !present {
+		return "", nil
+	}
+	value, ok := raw.(string)
+	if !ok {
+		return "", fmt.Errorf("Node configuration %s must be a string", key)
+	}
+	return value, nil
+}
+
+func requiredUnsigned(config map[string]interface{}, key string) (uint64, error) {
+	switch value := config[key].(type) {
+	case int:
+		if value >= 0 {
+			return uint64(value), nil
+		}
+	case int64:
+		if value >= 0 {
+			return uint64(value), nil
+		}
+	case uint:
+		return uint64(value), nil
+	case uint64:
+		return value, nil
+	}
+	return 0, fmt.Errorf("Node configuration %s must be a non-negative integer", key)
 }
 
 func decodeStrictJSON(contents []byte, destination interface{}) error {

@@ -3,7 +3,11 @@ set -Eeuo pipefail
 
 INSTALLER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 work="$(mktemp -d)"
-trap 'rm -rf -- "${work}"' EXIT
+bundle_tmpfs_root="$(mktemp -d /dev/shm/trojanpanelnext-node-bundle-test.XXXXXX)"
+cleanup() {
+  rm -rf -- "${work}" "${bundle_tmpfs_root}"
+}
+trap cleanup EXIT
 
 fail() {
   printf 'FAIL: %s\n' "$1" >&2
@@ -33,14 +37,15 @@ cat >"${work}/credential.json" <<'JSON'
   "redis_auth": {"username":"tpn-auth-example","password":"auth-secret","key_patterns":["trojan-panel:jwt-key","trojan-panel:token:*"]}
 }
 JSON
-cp "${INSTALLER_DIR}/examples/node-agent.yaml" "${work}/config-node.yaml"
+cp "${INSTALLER_DIR}/release/templates/config-node.yaml" "${work}/config-node.yaml"
 sed -i \
-  -e 's/mariadb_user: .*/mariadb_user: replace/' \
-  -e 's/mariadb_password: .*/mariadb_password: replace/' \
-  -e 's/redis_username: .*/redis_username: replace/' \
-  -e 's/redis_password: .*/redis_password: replace/' \
-  -e 's/redis_auth_username: .*/redis_auth_username: replace/' \
-  -e 's/redis_auth_password: .*/redis_auth_password: replace/' \
+  -e 's/__ASSET_VERSION__/1.2.3/' \
+  -e 's|__CADDY_IMAGE__|caddy@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa|' \
+  -e 's|__MARIADB_IMAGE__|mariadb@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb|' \
+  -e 's|__REDIS_IMAGE__|redis@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc|' \
+  -e 's|__API_IMAGE__|api@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd|' \
+  -e 's|__WEB_IMAGE__|web@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee|' \
+  -e 's|__NODE_AGENT_IMAGE__|node-agent@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff|' \
   "${work}/config-node.yaml"
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=control-plane-ca \
   -addext basicConstraints=critical,CA:TRUE \
@@ -70,11 +75,12 @@ if find "${work}/plain" -type f -iname '*key*' -print -quit | grep -q .; then
   fail 'private key-like file leaked from Node bootstrap bundle'
 fi
 
-before_count="$(find /dev/shm -maxdepth 1 -type d -name 'trojanpanelnext-node-bundle.*' | wc -l)"
+test -z "$(find "${bundle_tmpfs_root}" -mindepth 1 -maxdepth 1 -print -quit)"
 TP_NODE_BUNDLE_PASSWORD="${password}" NODE_BUNDLE_HELPER="${work}/node-bundle" \
+  TP_NODE_BUNDLE_TMP_ROOT="${bundle_tmpfs_root}" \
   "${INSTALLER_DIR}/install.sh" validate --mode node --bundle "${work}/node.age" |
   grep -q 'valid for node deployment mode'
-after_count="$(find /dev/shm -maxdepth 1 -type d -name 'trojanpanelnext-node-bundle.*' | wc -l)"
-test "${before_count}" = "${after_count}" || fail 'installer left decrypted Node bundle files in tmpfs'
+test -z "$(find "${bundle_tmpfs_root}" -mindepth 1 -maxdepth 1 -print -quit)" ||
+  fail 'installer left decrypted Node bundle files in its isolated tmpfs root'
 
 printf 'PASS encrypted Node bootstrap bundle CLI and cleanup contract\n'
