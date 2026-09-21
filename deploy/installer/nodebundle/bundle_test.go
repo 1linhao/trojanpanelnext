@@ -426,6 +426,80 @@ func TestCreateRejectsUnknownCredentialField(t *testing.T) {
 	}
 }
 
+func TestCreateRejectsInvalidCredentialValuesAndTypes(t *testing.T) {
+	tests := map[string]struct {
+		old string
+		new string
+	}{
+		"invalid identity UUID": {
+			old: `"node_identity_id":"11111111-2222-4333-8444-555555555555"`,
+			new: `"node_identity_id":"not-a-uuid"`,
+		},
+		"invalid node domain": {
+			old: `"node_domain":"node.example.com"`,
+			new: `"node_domain":"not a domain"`,
+		},
+		"loopback public IP": {
+			old: `"public_ip":"203.0.113.42"`,
+			new: `"public_ip":"127.0.0.1"`,
+		},
+		"private public IP": {
+			old: `"public_ip":"203.0.113.42"`,
+			new: `"public_ip":"10.0.0.7"`,
+		},
+		"public IP wrong type": {
+			old: `"public_ip":"203.0.113.42"`,
+			new: `"public_ip":203`,
+		},
+		"node server ID wrong type": {
+			old: `"node_server_id":42`,
+			new: `"node_server_id":"42"`,
+		},
+		"wrong Redis cache key pattern": {
+			old: `"key_patterns":["trojan-panel-core:*"]`,
+			new: `"key_patterns":["trojan-panel:*"]`,
+		},
+		"wrong Redis auth key pattern": {
+			old: `"key_patterns":["trojan-panel:jwt-key","trojan-panel:token:*"]`,
+			new: `"key_patterns":["trojan-panel-core:*"]`,
+		},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			credentialPath := writeTestCredential(t, root)
+			contents, err := os.ReadFile(credentialPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			updated := bytes.Replace(contents, []byte(test.old), []byte(test.new), 1)
+			if bytes.Equal(updated, contents) {
+				t.Fatalf("test fixture does not contain %q", test.old)
+			}
+			if err = os.WriteFile(credentialPath, updated, 0600); err != nil {
+				t.Fatal(err)
+			}
+			configPath := writeTestConfig(t, root)
+			caPath := filepath.Join(root, "client-ca.crt")
+			if err = os.WriteFile(caPath, testCAPEM(t), 0644); err != nil {
+				t.Fatal(err)
+			}
+			outputPath := filepath.Join(root, "node.age")
+			if err = createBundle(createOptions{
+				CredentialPath: credentialPath,
+				ConfigPath:     configPath,
+				ClientCAPath:   caPath,
+				OutputPath:     outputPath,
+			}, []byte(testPassword)); err == nil {
+				t.Fatalf("create accepted invalid credential: %s", name)
+			}
+			if _, statErr := os.Stat(outputPath); !os.IsNotExist(statErr) {
+				t.Fatalf("invalid credential left output bundle, stat error = %v", statErr)
+			}
+		})
+	}
+}
+
 func TestCreateRejectsPublicCABundleContainingPrivateKey(t *testing.T) {
 	root := t.TempDir()
 	credentialPath := writeTestCredential(t, root)

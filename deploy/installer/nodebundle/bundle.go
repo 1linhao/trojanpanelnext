@@ -41,6 +41,13 @@ var bundleInventory = []string{configPath, manifestPath, clientCAPath}
 var (
 	imageReferencePattern = regexp.MustCompile(`^[a-zA-Z0-9._:/-]+@sha256:[0-9a-f]{64}$`)
 	uuidPattern           = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+	namePattern           = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._ -]{0,63}$`)
+	domainPattern         = regexp.MustCompile(`^(?i:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+)$`)
+)
+
+var (
+	redisCacheKeyPatterns = []string{"trojan-panel-core:*"}
+	redisAuthKeyPatterns  = []string{"trojan-panel:jwt-key", "trojan-panel:token:*"}
 )
 
 type createOptions struct {
@@ -223,6 +230,15 @@ func renderNodeConfig(template []byte, credential credentialFile) ([]byte, error
 	}
 	if err = encoder.Close(); err != nil {
 		return nil, err
+	}
+	expected := &bundleManifest{
+		SchemaVersion: bundleSchemaVersion, NodeIdentityID: credential.NodeIdentityID,
+		NodeServerID: credential.NodeServerID, NodeName: credential.NodeName,
+		NodeDomain: credential.NodeDomain, PublicIP: credential.PublicIP,
+		Generation: credential.Generation,
+	}
+	if _, _, err = parseAndValidateNodeConfig(encoded.Bytes(), expected); err != nil {
+		return nil, fmt.Errorf("validate rendered Node configuration: %w", err)
 	}
 	return encoded.Bytes(), nil
 }
@@ -626,16 +642,55 @@ func extractBundle(path, outputDir string, password []byte) (err error) {
 }
 
 func validateCredential(credential credentialFile) error {
-	if credential.SchemaVersion != 2 || credential.NodeIdentityID == "" || credential.NodeServerID == 0 ||
-		credential.NodeName == "" || credential.NodeDomain == "" || credential.Generation == 0 ||
-		credential.MariaDB.Database != "trojan_panel_db" || credential.MariaDB.Username == "" || credential.MariaDB.Password == "" ||
-		strings.EqualFold(credential.MariaDB.Username, "root") || credential.Redis.Username == "" ||
-		credential.Redis.Password == "" || strings.EqualFold(credential.Redis.Username, "default") ||
-		credential.RedisAuth.Username == "" || credential.RedisAuth.Password == "" ||
-		strings.EqualFold(credential.RedisAuth.Username, "default") || credential.RedisAuth.Username == credential.Redis.Username {
-		return errors.New("Node credential file is incomplete or does not contain dedicated identities")
+	if credential.SchemaVersion != 2 {
+		return errors.New("Node credential schema_version must be 2")
+	}
+	if !uuidPattern.MatchString(credential.NodeIdentityID) {
+		return errors.New("Node credential node_identity_id must be a UUID")
+	}
+	if credential.NodeServerID == 0 || credential.Generation == 0 {
+		return errors.New("Node credential node_server_id and generation must be positive integers")
+	}
+	if !namePattern.MatchString(credential.NodeName) {
+		return errors.New("Node credential node_name is invalid")
+	}
+	if len(credential.NodeDomain) > 253 || !domainPattern.MatchString(credential.NodeDomain) {
+		return errors.New("Node credential node_domain must be a valid DNS hostname")
+	}
+	parsedIP := net.ParseIP(credential.PublicIP)
+	if parsedIP == nil || !parsedIP.IsGlobalUnicast() || parsedIP.IsPrivate() {
+		return errors.New("Node credential public_ip must be a routable IP literal")
+	}
+	if credential.MariaDB.Database != "trojan_panel_db" || !nonEmptyCredentialValue(credential.MariaDB.Username) ||
+		!nonEmptyCredentialValue(credential.MariaDB.Password) || strings.EqualFold(credential.MariaDB.Username, "root") {
+		return errors.New("Node credential MariaDB identity is invalid")
+	}
+	if !nonEmptyCredentialValue(credential.Redis.Username) || !nonEmptyCredentialValue(credential.Redis.Password) ||
+		strings.EqualFold(credential.Redis.Username, "default") || !sameStringList(credential.Redis.KeyPatterns, redisCacheKeyPatterns) {
+		return errors.New("Node credential Redis identity is invalid")
+	}
+	if !nonEmptyCredentialValue(credential.RedisAuth.Username) || !nonEmptyCredentialValue(credential.RedisAuth.Password) ||
+		strings.EqualFold(credential.RedisAuth.Username, "default") || credential.RedisAuth.Username == credential.Redis.Username ||
+		!sameStringList(credential.RedisAuth.KeyPatterns, redisAuthKeyPatterns) {
+		return errors.New("Node credential Redis auth identity is invalid")
 	}
 	return nil
+}
+
+func nonEmptyCredentialValue(value string) bool {
+	return strings.TrimSpace(value) != ""
+}
+
+func sameStringList(actual, expected []string) bool {
+	if len(actual) != len(expected) {
+		return false
+	}
+	for index := range expected {
+		if actual[index] != expected[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func validatePassword(password []byte) error {
