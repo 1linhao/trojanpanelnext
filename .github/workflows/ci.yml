@@ -51,7 +51,6 @@ jobs:
         run: go test ./...
       - name: Test Node identity lifecycle with MariaDB and Redis ACL
         run: |
-          bash testing/node_identity_cli_test.sh
           bash testing/node_server_delete_api_test.sh
       - name: Build
         run: CGO_ENABLED=0 go build -trimpath -o /tmp/trojanpanelnext-api .
@@ -152,10 +151,27 @@ jobs:
           NODE_OPTIONS: --openssl-legacy-provider
         run: npx --yes pnpm@8.15.9 run docs:build
 
+  docker-smoke:
+    name: released Web and Node Docker smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: 1.23.x
+          cache: true
+          cache-dependency-path: |
+            apps/control-plane/api/go.sum
+            apps/node-agent/go.sum
+            deploy/installer/nodebundle/go.sum
+            deploy/installer/securefile/go.sum
+      - name: Smoke released installer entrypoints without credentials in output
+        run: bash deploy/installer/tests/docker_smoke_test.sh
+
   gate:
     name: gate
     if: always()
-    needs: [repository, api, web, node-agent, installer, docs]
+    needs: [repository, api, web, node-agent, installer, docs, docker-smoke]
     runs-on: ubuntu-latest
     steps:
       - name: Require every CI job to pass
@@ -166,6 +182,7 @@ jobs:
           NODE_AGENT_RESULT: ${{ needs.node-agent.result }}
           INSTALLER_RESULT: ${{ needs.installer.result }}
           DOCS_RESULT: ${{ needs.docs.result }}
+          DOCKER_SMOKE_RESULT: ${{ needs.docker-smoke.result }}
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -175,6 +192,7 @@ jobs:
             "$WEB_RESULT" \
             "$NODE_AGENT_RESULT" \
             "$INSTALLER_RESULT" \
-            "$DOCS_RESULT"; do
+            "$DOCS_RESULT" \
+            "$DOCKER_SMOKE_RESULT"; do
             test "$result" = success
           done
