@@ -215,6 +215,10 @@ entry_v2_remove "$tmp/node" "$ENTRY_STATE_ROOT" 0 >/dev/null
 # A modified committed snapshot cannot pass status validation.
 snapshot="$tmp/first-failure/trojanpanelnext-combined.json"
 cp "$snapshot" "$tmp/valid-state"
+jq '.certificates.web.not_after = "2030-01-01T00:00:00.123+05:30"' "$tmp/valid-state" >"$snapshot"
+chmod 0600 "$snapshot"
+offset_status="$(main status --deployment trojanpanelnext-combined --state-root "$tmp/first-failure")"
+[[ "$(jq -r '.certificates.web.not_after' <<<"$offset_status")" == '2030-01-01T00:00:00.123+05:30' ]] || fail 'RFC3339 offset/fraction expiry was rejected'
 jq '.certificates.web.unexpected = true' "$tmp/valid-state" >"$snapshot"
 chmod 0600 "$snapshot"
 expect_fail main status --deployment trojanpanelnext-combined --state-root "$tmp/first-failure"

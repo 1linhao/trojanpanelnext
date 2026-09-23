@@ -107,6 +107,19 @@ entry_v2_validate_state() {
         (.identity | type == "object" and keys == ["digest","marker"] and
         (.digest | hash) and (.marker | type == "string" and length > 0));
     def certificate:
+      def leap($year): ($year % 4 == 0 and $year % 100 != 0) or ($year % 400 == 0);
+      def valid_datetime:
+        capture("^(?<year>[0-9]{4})-(?<month>[0-9]{2})-(?<day>[0-9]{2})T(?<hour>[0-9]{2}):(?<minute>[0-9]{2}):(?<second>[0-9]{2})(?<fraction>\\.[0-9]+)?(?<zone>Z|[+-][0-9]{2}:[0-9]{2})$") as $parts |
+        ($parts.year | tonumber) as $year |
+        ($parts.month | tonumber) as $month |
+        ($parts.day | tonumber) as $day |
+        ($parts.hour | tonumber) as $hour |
+        ($parts.minute | tonumber) as $minute |
+        ($parts.second | tonumber) as $second |
+        ($parts.zone | if . == "Z" then true else ((.[1:3] | tonumber) <= 23 and (.[4:6] | tonumber) <= 59) end) and
+        ($month >= 1 and $month <= 12) and
+        ($day >= 1 and $day <= (if [1,3,5,7,8,10,12] | index($month) then 31 elif [4,6,9,11] | index($month) then 30 elif leap($year) then 29 else 28 end)) and
+        ($hour >= 0 and $hour <= 23) and ($minute >= 0 and $minute <= 59) and ($second >= 0 and $second <= 60);
       type == "object" and
       keys == ["cert_path","domain","fingerprint","generation","key_path","last_hook_status","not_after","renewal_owner"] and
       (.domain | fqdn) and (.cert_path | absolute) and (.key_path | absolute) and
@@ -115,9 +128,7 @@ entry_v2_validate_state() {
       .renewal_owner == "caddy-legacy" and
       (.last_hook_status == "ok" or .last_hook_status == "unchanged" or
        .last_hook_status == "failed" or .last_hook_status == "unknown") and
-      (.not_after | type == "string" and
-        test("^[0-9]{4}-(0[1-9]|1[0-2])-([0-2][1-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\\.[0-9]+)?(Z|[+-]([01][0-9]|2[0-3]):[0-5][0-9])$") and
-        (try fromdateiso8601 catch null) != null);
+      (.not_after | type == "string" and (try valid_datetime catch false));
     . as $state | .schema_version == 2 and .topology == "combined" and
     (keys - ["schema_version","topology","deployment_id","desired_revision","observed_revision","desired_digest","generation","active_provider","phase","health","domains","active_roles","committed_target","candidate_target","resources","previous_resources","candidate_resources","certificates","listeners","capabilities","last_error"] | length) == 0 and
     (.deployment_id | type == "string" and test("^[a-z][a-z0-9-]{0,62}$")) and
