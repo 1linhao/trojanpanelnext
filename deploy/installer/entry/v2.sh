@@ -483,7 +483,21 @@ entry_v2_reconcile_locked() {
     return 7
   fi
   # Adapter must identify exactly the candidate resources committed by this run.
-  jq -e --argjson obs "$verified" '.candidate_resources == $obs.resources' <<<"$state" >/dev/null || {
+  jq -e --argjson obs "$verified" --argjson spec "$(jq -c . "$spec")" '
+    def same_identity($a;$b):
+      $a.kind == $b.kind and $a.id == $b.id and $a.owner == $b.owner and
+      $a.deployment_id == $b.deployment_id and $a.scope == $b.scope and
+      ($a.role // null) == ($b.role // null) and
+      $a.identity.marker == $b.identity.marker and $a.identity.digest == $b.identity.digest;
+    def allowed_certificate:
+      .kind == "certificate" and
+      ((.role == "web" and (.id == $spec.certificate_targets.web.cert_path or .id == $spec.certificate_targets.web.key_path)) or
+       (.role == "node" and (.id == $spec.certificate_targets.node.cert_path or .id == $spec.certificate_targets.node.key_path)));
+    . as $journal |
+    (all($journal.candidate_resources[]; . as $candidate | any($obs.resources[]; same_identity($candidate;.)))) and
+    (all($obs.resources[]; . as $observed |
+      any($journal.candidate_resources[]; same_identity($observed;.)) or allowed_certificate))
+  ' <<<"$state" >/dev/null || {
     entry_v2_fail "$spec" "$root" "$state" verifying ownership_conflict || return $?
     return 7;
   }

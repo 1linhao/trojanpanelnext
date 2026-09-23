@@ -98,8 +98,11 @@ entry_v2_adapter_remove() {
 plan="$(main plan --spec "$tmp/spec" --state-root "$ENTRY_STATE_ROOT")"
 [[ "$(jq -r '.schema_version' <<<"$plan")" == 2 ]] || fail 'v2 plan did not dispatch'
 [[ "$(jq -r '.executable' <<<"$plan")" == false ]] || fail 'production plan enabled mutation'
-expect_fail bash "$repo/deploy/installer/entry/entryctl.sh" reconcile --spec "$tmp/spec" --state-root "$ENTRY_STATE_ROOT"
-[[ "$(jq -r '.code' <"$tmp/out")" == unsupported_capability ]] || fail 'production v2 mutation did not fail closed'
+# The Caddy Adapter is now connected. Without certificate material it must
+# still fail closed during verification and leave a rollback journal.
+expect_fail env CADDY_ADAPTER_ROOT="$tmp/caddy" CADDY_ADAPTER_FAKE=1 \
+  bash "$repo/deploy/installer/entry/entryctl.sh" reconcile --spec "$tmp/spec" --state-root "$tmp/production-state"
+[[ "$(jq -r '.code' <"$tmp/out")" == verification_failed ]] || fail 'Caddy mutation did not fail closed'
 make_spec '.active_roles = ["web"] | del(.roles.node, .certificate_targets.node)' "$tmp/initial-one-role"
 expect_fail entry_v2_reconcile "$tmp/initial-one-role" "$ENTRY_STATE_ROOT"
 [[ "$(jq -r '.code' <"$tmp/out")" == invalid_spec ]] || fail 'one-role initial deployment accepted'

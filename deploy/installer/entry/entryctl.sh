@@ -4,6 +4,8 @@ set -Eeuo pipefail
 ENTRY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=controller.sh
 source "${ENTRY_DIR}/controller.sh"
+# shellcheck source=adapters/caddy.sh
+source "${ENTRY_DIR}/adapters/caddy.sh"
 # shellcheck source=adapters/external.sh
 source "${ENTRY_DIR}/adapters/external.sh"
 
@@ -16,9 +18,9 @@ Usage:
   entryctl.sh remove    --spec <file> [--purge]
 
 The versioned EntrySpec and ObservedState contracts are documented under
-docs/entry-controller/schema/. The external adapter is executable when its
-root-owned driver passes capability negotiation; other mutating adapters stay
-fail closed until their real-machine acceptance tests have passed.
+docs/entry-controller/schema/. Caddy v2 uses the journaled combined Adapter;
+the external adapter is executable when its root-owned driver passes capability
+negotiation.
 EOF
 }
 
