@@ -56,7 +56,14 @@ fake_observation() {
        .resources[0].identity.digest = ($resource_digest*64)
      else . end'
 }
-entry_v2_adapter_probe() { printf 'probe\n' >>"$trace"; fake_observation "$1" "$2" probe; }
+entry_v2_adapter_probe() {
+  printf 'probe\n' >>"$trace"
+  if [[ "${FAKE_REMOVE_BAD:-0}" == 1 ]]; then
+    fake_observation "$1" "$2" probe | jq '.candidate_resources[0].owner = "external"'
+  else
+    fake_observation "$1" "$2" probe
+  fi
+}
 entry_v2_adapter_prepare() {
   printf 'prepare\n' >>"$trace"
   [[ -z "${FAIL_AT:-}" ]] || printf 'fail-at:%s\n' "$FAIL_AT" >>"$trace"
@@ -204,6 +211,9 @@ entry_v2_reconcile "$tmp/explicit" "$ENTRY_STATE_ROOT" >/dev/null
 make_spec '.revision = 7 | .active_roles = ["node"] | del(.roles.web, .certificate_targets.web)' "$tmp/node"
 entry_v2_reconcile "$tmp/node" "$ENTRY_STATE_ROOT" >/dev/null
 [[ "$(jq -r '.active_roles[0]' <"$ENTRY_STATE_ROOT/trojanpanelnext-combined.json")" == node ]] || fail 'web removal failed'
+FAKE_REMOVE_BAD=1 expect_fail entry_v2_remove "$tmp/node" "$ENTRY_STATE_ROOT" 0
+[[ "$(jq -r '.code' <"$tmp/out")" == ownership_conflict ]] || fail 'invalid remove observation was not structured'
+[[ "$(jq -r '.resource' <"$tmp/out")" == trojanpanelnext-combined ]] || fail 'invalid remove observation omitted resource'
 FAIL_REMOVE=1 expect_fail entry_v2_remove "$tmp/node" "$ENTRY_STATE_ROOT" 0
 [[ "$(jq -r '.phase' <"$ENTRY_STATE_ROOT/trojanpanelnext-combined.json")" == failed ]] || fail 'remove failure lost journal'
 : >"$trace"

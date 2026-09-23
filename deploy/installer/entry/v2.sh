@@ -552,7 +552,10 @@ entry_v2_remove_locked() {
     entry_v2_error invalid_spec stable 'Remove target must match the last committed role'; return 2;
   }
   observation="$(entry_v2_adapter_probe "$spec" "$old")" || { entry_v2_error ownership_conflict stable 'Remove ownership probe failed'; return 4; }
-  entry_v2_validate_observation "$observation" "$spec" probe || return 4
+  if ! entry_v2_validate_observation "$observation" "$spec" probe; then
+    entry_v2_error ownership_conflict stable 'Remove returned untrusted resource identity' "$deployment" false not-needed
+    return 4
+  fi
   jq -e --argjson obs "$observation" '.resources == $obs.resources' <<<"$old" >/dev/null || {
     entry_v2_error ownership_conflict stable 'Resource identity changed'; return 4;
   }
