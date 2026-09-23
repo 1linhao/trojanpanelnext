@@ -189,7 +189,46 @@ sudo -n bash -c \
   _ "${SMOKE_HELPERS}" "${config}" "${work}/failure-diagnostics" ||
   fail 'injected failure diagnostics leaked a configured credential'
 
+initial_admin_password_file="${SMOKE_DATA_DIR}/trojan-panel/config/initial-admin-password"
+admin_credential_state() {
+  sudo -n bash -c \
+    'source "$1"; smoke_report_admin_credential_state "$2" "$3" "$4"' \
+    _ "${SMOKE_HELPERS}" "${config}" "${initial_admin_password_file}" "${api_container}"
+}
+sudo -n bash -c \
+  'source "$1"; expected="$(smoke_config_secret "$2" sysadmin_password)"; actual="$(<"$3")"; [[ -n "${expected}" && "${actual}" != "${expected}" ]]' \
+  _ "${SMOKE_HELPERS}" "${config}" "${initial_admin_password_file}" ||
+  fail 'Docker failure injection did not change the initial administrator credential'
+injected_state=""
+for _ in $(seq 1 10); do
+  injected_state="$(admin_credential_state)"
+  [[ "${injected_state}" == 'TRACE admin_file_matches_config=0 container_file_matches_config=0 verifier_exit=2' ]] && break
+  sleep 1
+done
+[[ "${injected_state}" == 'TRACE admin_file_matches_config=0 container_file_matches_config=0 verifier_exit=2' ]] ||
+  fail "Docker failure injection did not produce a real unhealthy-credential response (${injected_state})"
+# Restore the isolated data file after the intentional corruption. The second
+# installer pass then verifies recovery from the real health failure.
+sudo -n bash -c \
+  'source "$1"; expected="$(smoke_config_secret "$2" sysadmin_password)"; [[ -n "${expected}" ]]; printf "%s\\n" "${expected}" >"$3"; chmod 0600 "$3"' \
+  _ "${SMOKE_HELPERS}" "${config}" "${initial_admin_password_file}"
+sudo -n bash -c \
+  'source "$1"; expected="$(smoke_config_secret "$2" sysadmin_password)"; actual="$(<"$3")"; byte_count="$(wc -c <"$3")"; expected_bytes=$((${#expected} + 1)); [[ -n "${expected}" && "${actual}" == "${expected}" && "${byte_count}" -eq "${expected_bytes}" ]]' \
+  _ "${SMOKE_HELPERS}" "${config}" "${initial_admin_password_file}" ||
+  fail 'failed to restore the isolated administrator credential after injection'
+restored_state=""
+for _ in $(seq 1 10); do
+  restored_state="$(admin_credential_state)"
+  [[ "${restored_state}" == 'TRACE admin_file_matches_config=1 container_file_matches_config=1 verifier_exit=0' ]] && break
+  sleep 1
+done
+[[ "${restored_state}" == 'TRACE admin_file_matches_config=1 container_file_matches_config=1 verifier_exit=0' ]] ||
+  fail "restored administrator credential did not recover the API health probe (${restored_state})"
+
 if ! run_installer 0 "${work}/install.out" "${work}/install.err"; then
+  sudo -n bash -c \
+    'source "$1"; smoke_report_admin_credential_state "$2" "$3" "$4"' \
+    _ "${SMOKE_HELPERS}" "${config}" "${initial_admin_password_file}" "${api_container}" >&2
   docker logs "${api_container}" >"${work}/api.log" 2>&1 || true
   sudo -n bash -c \
     'source "$1"; smoke_print_install_failure_diagnostics "$2" "$3" "$4" "$5"' \

@@ -68,3 +68,24 @@ smoke_assert_diagnostics_sanitized() {
   fi
   rm -f -- "${sanitized}"
 }
+
+smoke_report_admin_credential_state() {
+  local config="$1"
+  local host_password_file="$2"
+  local container="$3"
+  local expected_password host_password container_password verifier_status
+  local host_matches=0 container_matches=0
+
+  expected_password="$(smoke_config_secret "${config}" sysadmin_password)"
+  host_password="$(<"${host_password_file}")"
+  container_password="$(/usr/bin/docker exec "${container}" sh -c 'cat "$TP_INITIAL_SYSADMIN_PASSWORD_FILE"')"
+  [[ "${host_password}" == "${expected_password}" ]] && host_matches=1
+  [[ "${container_password}" == "${expected_password}" ]] && container_matches=1
+  if /usr/bin/docker exec -e TP_VERIFY_SYSADMIN_CREDENTIAL=1 "${container}" ./trojan-panel >/dev/null 2>&1; then
+    verifier_status=0
+  else
+    verifier_status=$?
+  fi
+  printf 'TRACE admin_file_matches_config=%s container_file_matches_config=%s verifier_exit=%s\n' \
+    "${host_matches}" "${container_matches}" "${verifier_status}"
+}
