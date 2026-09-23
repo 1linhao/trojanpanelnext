@@ -133,6 +133,12 @@ jobs:
           bash deploy/installer/tests/web_bare_install_test.sh
           bash deploy/installer/tests/release_assets_test.sh
           bash deploy/installer/tests/jq_free_release_verification_test.sh
+      - name: Test combined installation and shared Entry
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          bash deploy/installer/tests/combined_install_test.sh
+          bash deploy/installer/tests/combined_docker_smoke_test.sh
 
   docs:
     name: documentation site
