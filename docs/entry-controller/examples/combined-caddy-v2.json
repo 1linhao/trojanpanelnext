@@ -1,0 +1,17 @@
+{
+  "schema_version": 2,
+  "topology": "combined",
+  "revision": 1,
+  "deployment_id": "trojanpanelnext-combined",
+  "provider": "caddy-legacy",
+  "domains": {"web": "panel.example.com", "node": "node.example.com"},
+  "active_roles": ["web", "node"],
+  "roles": {
+    "web": {"web_upstream": "127.0.0.1:8888"},
+    "node": {"node_exposure": "direct", "route_manifest": "/tpdata/trojan-panel-core/external/routes.json", "certificate_consumer": "/tpdata/trojan-panel-core/cert"}
+  },
+  "certificate_targets": {
+    "web": {"managed_dir": "/tpdata/custom/web-caddy/data", "cert_path": "/tpdata/trojanpanelnext-entry/cert/web/fullchain.pem", "key_path": "/tpdata/trojanpanelnext-entry/cert/web/privkey.pem", "renewal_owner": "caddy-legacy"},
+    "node": {"managed_dir": "/tpdata/custom/web-caddy/data", "cert_path": "/tpdata/trojanpanelnext-entry/cert/node/fullchain.pem", "key_path": "/tpdata/trojanpanelnext-entry/cert/node/privkey.pem", "renewal_owner": "caddy-legacy"}
+  }
+}

@@ -339,10 +339,17 @@ main() {
       printf '{"schema_version":1,"code":"invalid_spec","message":"--spec is required"}\n'
       return 2
     fi
+    if [[ "$(jq -r '.schema_version // empty' "${spec}" 2>/dev/null)" == 2 ]]; then
+      entry_validate_spec "${spec}" || { entry_v2_error invalid_spec stable 'Invalid v2 EntrySpec'; return 2; }
+      entry_v2_plan "${spec}" "${state_root}"
+      return $?
+    fi
     local status=0
     if entry_validate_spec "${spec}"; then
       local deployment current
       deployment="$(jq -r '.deployment_id' "${spec}")"
+      ENTRY_STATE_ROOT="${state_root}"
+      export ENTRY_STATE_ROOT
       if current="$(entry_read_state "${state_root}" "${deployment}" 2>/dev/null)"; then
         ENTRY_CURRENT_PROVIDER="$(jq -r '.active_provider' <<<"${current}")"
         ENTRY_CURRENT_PHASE="$(jq -r '.phase' <<<"${current}")"
@@ -400,7 +407,11 @@ main() {
       esac
     done
     [[ -n "${spec}" ]] || { entryctl_error invalid_spec preparing "" false not-needed "--spec is required"; return 2; }
-    entryctl_external_reconcile "${spec}" "${state_root}"
+    if [[ "$(jq -r '.schema_version // empty' "${spec}" 2>/dev/null)" == 2 ]]; then
+      entry_v2_reconcile "${spec}" "${state_root}"
+    else
+      entryctl_external_reconcile "${spec}" "${state_root}"
+    fi
     ;;
   remove)
     shift
@@ -416,7 +427,11 @@ main() {
       esac
     done
     [[ -n "${spec}" ]] || { entryctl_error invalid_spec stable "" false not-needed "--spec is required"; return 2; }
-    entryctl_external_remove "${spec}" "${state_root}" "${purge}"
+    if [[ "$(jq -r '.schema_version // empty' "${spec}" 2>/dev/null)" == 2 ]]; then
+      entry_v2_remove "${spec}" "${state_root}" "${purge}"
+    else
+      entryctl_external_remove "${spec}" "${state_root}" "${purge}"
+    fi
     ;;
   *)
     printf 'Unknown command: %s\n' "${command}" >&2

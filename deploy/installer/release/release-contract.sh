@@ -15,6 +15,7 @@ TP_RELEASE_ASSET_PATHS=(
   config-combined.yaml
   entry/entryctl.sh
   entry/controller.sh
+  entry/v2.sh
   entry/adapters/external.sh
   entry/adapters/nginx_certbot.sh
 )
