@@ -176,6 +176,12 @@ entry_v2_error() {
     '{schema_version:2,code:$code,phase:$phase,resource:$resource,retryable:$retryable,rollback_status:$rollback_status,message:$message}'
 }
 
+entry_v2_infrastructure_error() {
+  local resource="$1" message="$2"
+  entry_v2_error dependency_missing infrastructure "$message" "$resource" true not-needed
+  return 12
+}
+
 entry_v2_adapter_available() {
   local action
   for action in probe prepare activate verify rollback remove; do
@@ -361,10 +367,13 @@ entry_v2_reconcile_locked() {
   entry_v2_adapter_available || { entry_v2_error unsupported_capability preparing 'No combined v2 Adapter is connected'; return 3; }
   deployment="$(jq -r '.deployment_id' "$spec")"
   digest="$(entry_v2_target_digest "$spec")"
-  mkdir -p "$root" && chmod 0700 "$root" || return 12
+  if ! { mkdir -p "$root" && chmod 0700 "$root"; } 2>/dev/null; then
+    entry_v2_infrastructure_error "$root" 'Unable to prepare state root'
+    return 12
+  fi
   local lock_fd
-  exec {lock_fd}>"$root/.lock" || return 12
-  flock -x "$lock_fd" || return 12
+  exec {lock_fd}>"$root/.lock" 2>/dev/null || { entry_v2_infrastructure_error "$root" 'Unable to open state lock'; return 12; }
+  flock -x "$lock_fd" || { entry_v2_infrastructure_error "$root" 'Unable to acquire state lock'; return 12; }
   old="$(entry_v2_locked_state "$root" "$deployment")" || {
     entry_v2_error ownership_conflict preparing 'Journal ownership or format is invalid'; return 4;
   }
@@ -374,7 +383,7 @@ entry_v2_reconcile_locked() {
     if [[ "$phase" == stable && "$(jq -r '.health' <<<"$old")" == healthy && "$digest" == "$(jq -r '.committed_target.digest // ""' <<<"$old")" ]]; then
       if [[ "$(jq -r '.revision' "$spec")" != "$(jq -r '.desired_revision' <<<"$old")" ]]; then
         old="$(jq -c --argjson spec "$(jq -c . "$spec")" '.desired_revision=$spec.revision | .observed_revision=$spec.revision | .committed_target.spec=$spec' <<<"$old")"
-        entry_v2_persist "$root" "$old" || return 12
+        entry_v2_persist "$root" "$old" || { entry_v2_infrastructure_error "$root" 'Unable to persist state'; return 12; }
       fi
       jq -c '. + {result:"unchanged"}' <<<"$old"
       return 0
@@ -423,22 +432,22 @@ entry_v2_reconcile_locked() {
   if [[ "$old" != null && "$(jq -r '.phase' <<<"$old")" != stable ]]; then
     # The old journal, not the current request, selects the rollback target.
     state="$(jq -c --argjson obs "$observation" '.phase="rolling_back" | .health="unknown" | .candidate_resources=$obs.candidate_resources' <<<"$old")"
-    entry_v2_persist "$root" "$state" || return 12
+    entry_v2_persist "$root" "$state" || { entry_v2_infrastructure_error "$root" 'Unable to persist state'; return 12; }
     if ! entry_v2_rollback "$spec" "$state" >/dev/null; then
       state="$(jq -c '.phase="failed" | .health="unhealthy"' <<<"$state")"
-      entry_v2_persist "$root" "$state" || return 12
+      entry_v2_persist "$root" "$state" || { entry_v2_infrastructure_error "$root" 'Unable to persist state'; return 12; }
       entry_v2_error rollback_failed rolling_back 'Crash recovery failed' "$(jq -r '.deployment_id' <<<"$state")" true failed; return 8
     fi
     if [[ "$(jq -r '.committed_target == null' <<<"$state")" == true ]]; then
-      rm -f -- "$(entry_state_path "$root" "$deployment")" || return 12
+      rm -f -- "$(entry_state_path "$root" "$deployment")" || { entry_v2_infrastructure_error "$root" 'Unable to remove first-install journal'; return 12; }
       old=null
     else
       old="$(jq -c '.phase="stable" | .health="degraded" | .candidate_target=null | .candidate_resources=[]' <<<"$state")"
-      entry_v2_persist "$root" "$old" || return 12
+      entry_v2_persist "$root" "$old" || { entry_v2_infrastructure_error "$root" 'Unable to persist state'; return 12; }
     fi
   fi
   state="$(entry_v2_state "$spec" preparing unknown "$digest" "$old" "$observation")"
-  entry_v2_persist "$root" "$state" || return 12
+  entry_v2_persist "$root" "$state" || { entry_v2_infrastructure_error "$root" 'Unable to persist state'; return 12; }
   if ! observation="$(entry_v2_adapter_prepare "$spec" "$state")"; then
     entry_v2_fail "$spec" "$root" "$state" preparing prepare_failed || return $?
     return 5
@@ -448,15 +457,15 @@ entry_v2_reconcile_locked() {
     return 5;
   }
   state="$(jq -c --argjson obs "$observation" '.phase="prepared" | .candidate_resources=$obs.candidate_resources' <<<"$state")"
-  entry_v2_persist "$root" "$state" || return 12
+  entry_v2_persist "$root" "$state" || { entry_v2_infrastructure_error "$root" 'Unable to persist state'; return 12; }
   state="$(jq -c '.phase="activating"' <<<"$state")"
-  entry_v2_persist "$root" "$state" || return 12
+  entry_v2_persist "$root" "$state" || { entry_v2_infrastructure_error "$root" 'Unable to persist state'; return 12; }
   if ! entry_v2_adapter_activate "$spec" "$state" >/dev/null; then
     entry_v2_fail "$spec" "$root" "$state" activating activation_failed || return $?
     return 6
   fi
   state="$(jq -c '.phase="verifying"' <<<"$state")"
-  entry_v2_persist "$root" "$state" || return 12
+  entry_v2_persist "$root" "$state" || { entry_v2_infrastructure_error "$root" 'Unable to persist state'; return 12; }
   if ! verified="$(entry_v2_adapter_verify "$spec" "$state")" ||
      ! entry_v2_validate_observation "$verified" "$spec" verify; then
     entry_v2_fail "$spec" "$root" "$state" verifying verification_failed || return $?
@@ -474,14 +483,14 @@ entry_v2_reconcile_locked() {
     .candidate_target=null | .resources=$obs.resources | .previous_resources=[] |
     .candidate_resources=[] | .certificates=$obs.certificates |
     .listeners=$obs.listeners | .capabilities=$obs.capabilities | del(.last_error)' <<<"$state")"
-  entry_v2_persist "$root" "$result" || return 12
+  entry_v2_persist "$root" "$result" || { entry_v2_infrastructure_error "$root" 'Unable to persist state'; return 12; }
   printf '%s\n' "$result"
 }
 
 entry_v2_fail() {
   local spec="$1" root="$2" state="$3" failed_phase="$4" code="$5" error
   state="$(jq -c '.phase="rolling_back" | .health="unknown"' <<<"$state")"
-  entry_v2_persist "$root" "$state" || return 12
+  entry_v2_persist "$root" "$state" || { entry_v2_infrastructure_error "$root" 'Unable to persist state'; return 12; }
   if entry_v2_rollback "$spec" "$state" >/dev/null; then
     error="$(jq -cn --arg code "$code" --arg phase "$failed_phase" '{code:$code,phase:$phase,retryable:true,rollback_status:"succeeded",message:"Combined Adapter transaction failed"}')"
     # First-install failure has no committed target; keep an explicit tombstone
@@ -495,7 +504,7 @@ entry_v2_fail() {
     error="$(jq -cn --arg code "$code" --arg phase "$failed_phase" '{code:$code,phase:$phase,retryable:true,rollback_status:"failed",message:"Combined Adapter transaction and rollback failed"}')"
     state="$(jq -c --argjson err "$error" '.phase="failed" | .health="unhealthy" | .last_error=$err' <<<"$state")"
   fi
-  entry_v2_persist "$root" "$state" || return 12
+  entry_v2_persist "$root" "$state" || { entry_v2_infrastructure_error "$root" 'Unable to persist state'; return 12; }
   local resource
   resource="$(jq -r '.deployment_id' <<<"$state")"
   if [[ "$(jq -r '.last_error.rollback_status' <<<"$state")" == succeeded ]]; then
@@ -514,10 +523,13 @@ entry_v2_remove_locked() {
   }
   entry_v2_adapter_available || { entry_v2_error unsupported_capability stable 'No combined v2 Adapter is connected'; return 3; }
   deployment="$(jq -r '.deployment_id' "$spec")"
-  mkdir -p "$root" && chmod 0700 "$root" || return 12
+  if ! { mkdir -p "$root" && chmod 0700 "$root"; } 2>/dev/null; then
+    entry_v2_infrastructure_error "$root" 'Unable to prepare state root'
+    return 12
+  fi
   local lock_fd
-  exec {lock_fd}>"$root/.lock" || return 12
-  flock -x "$lock_fd" || return 12
+  exec {lock_fd}>"$root/.lock" 2>/dev/null || { entry_v2_infrastructure_error "$root" 'Unable to open state lock'; return 12; }
+  flock -x "$lock_fd" || { entry_v2_infrastructure_error "$root" 'Unable to acquire state lock'; return 12; }
   old="$(entry_v2_locked_state "$root" "$deployment")" || { entry_v2_error ownership_conflict stable 'Invalid journal'; return 4; }
   [[ "$old" != null ]] || { entry_v2_error ownership_conflict stable 'No committed v2 deployment to remove'; return 4; }
   entry_v2_check_target "$spec" "$old" "$(entry_v2_target_digest "$spec")" || return $?
@@ -534,13 +546,13 @@ entry_v2_remove_locked() {
     entry_v2_error ownership_conflict stable 'Resource identity changed'; return 4;
   }
   old="$(jq -c --argjson spec "$(jq -c . "$spec")" '.phase="activating" | .desired_revision=$spec.revision | .desired_digest=.committed_target.digest | .candidate_target=.committed_target | .previous_resources=.resources | .candidate_resources=[]' <<<"$old")"
-  entry_v2_persist "$root" "$old" || return 12
+  entry_v2_persist "$root" "$old" || { entry_v2_infrastructure_error "$root" 'Unable to persist state'; return 12; }
   if ! entry_v2_adapter_remove "$spec" "$old" "$purge" >/dev/null; then
     old="$(jq -c '.phase="failed" | .health="unhealthy"' <<<"$old")"
-    entry_v2_persist "$root" "$old" || return 12
+    entry_v2_persist "$root" "$old" || { entry_v2_infrastructure_error "$root" 'Unable to persist state'; return 12; }
     entry_v2_error driver_failed activating 'Combined Adapter remove failed'; return 5
   fi
   path="$(entry_state_path "$root" "$deployment")"
-  rm -f -- "$path"
+  rm -f -- "$path" || { entry_v2_infrastructure_error "$root" 'Unable to remove deployment journal'; return 12; }
   jq -cn --arg deployment "$deployment" '{schema_version:2,deployment_id:$deployment,result:"removed"}'
 }

@@ -96,6 +96,11 @@ expect_fail bash "$repo/deploy/installer/entry/entryctl.sh" reconcile --spec "$t
 make_spec '.active_roles = ["web"] | del(.roles.node, .certificate_targets.node)' "$tmp/initial-one-role"
 expect_fail entry_v2_reconcile "$tmp/initial-one-role" "$ENTRY_STATE_ROOT"
 [[ "$(jq -r '.code' <"$tmp/out")" == invalid_spec ]] || fail 'one-role initial deployment accepted'
+state_root_file="$tmp/state-root-file"
+printf 'not-a-directory\n' >"$state_root_file"
+expect_fail entry_v2_reconcile "$tmp/spec" "$state_root_file"
+[[ "$(jq -r '.code' <"$tmp/out")" == dependency_missing ]] || fail 'state root failure was not structured'
+[[ "$(jq -r '.resource' <"$tmp/out")" == "$state_root_file" ]] || fail 'state root failure omitted resource'
 
 # No committed target exists after a failed first prepare. Recovery removes the
 # tombstone only after rollback and then retries the same two-role target.
