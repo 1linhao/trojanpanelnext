@@ -29,6 +29,7 @@ UI_CONTAINER="${UI_CONTAINER:-trojan-panel-ui}"
 CORE_CONTAINER="${CORE_CONTAINER:-trojan-panel-core}"
 WEB_CADDY_CONTAINER="${WEB_CADDY_CONTAINER:-trojan-panel-web-caddy}"
 NODE_CADDY_CONTAINER="${NODE_CADDY_CONTAINER:-trojan-panel-node-caddy}"
+COMBINED_ENTRY_DEPLOYMENT_ID="${COMBINED_ENTRY_DEPLOYMENT_ID:-trojanpanelnext-combined-entry}"
 
 CADDY_IMAGE="${CADDY_IMAGE:-caddy:2.8.4}"
 MARIADB_IMAGE="${MARIADB_IMAGE:-mariadb:10.7.3}"
@@ -62,6 +63,12 @@ GRPC_SERVER_CA_PATH="${GRPC_SERVER_CA_PATH:-}"
 KERNEL_RUNTIME_PATH="${KERNEL_RUNTIME_PATH:-${TP_DATA}/trojan-panel-core/runtime}"
 NODE_CADDY_HTTP_PORT="${NODE_CADDY_HTTP_PORT:-80}"
 NODE_CADDY_HTTPS_PORT="${NODE_CADDY_HTTPS_PORT:-8863}"
+TP_NODE_NAME="${TP_NODE_NAME:-}"
+TP_NODE_PUBLIC_IP="${TP_NODE_PUBLIC_IP:-}"
+NODE_IDENTITY_CREDENTIAL_FILE="${NODE_IDENTITY_CREDENTIAL_FILE:-}"
+WEB_MARIADB_USER="${WEB_MARIADB_USER:-}"
+WEB_MARIADB_PASSWORD="${WEB_MARIADB_PASSWORD:-}"
+WEB_REDIS_PASSWORD="${WEB_REDIS_PASSWORD:-}"
 TLS_MODE="${TLS_MODE:-acme}"
 TLS_CERT_DIR="${TLS_CERT_DIR:-}"
 TLS_CERT_FILE="${TLS_CERT_FILE:-}"
@@ -84,6 +91,7 @@ TP_CONFIG_ROOT="${TP_CONFIG_ROOT:-}"
 TP_CONFIG_FILE=""
 TP_CONFIG_READ_FILE=""
 TP_CONFIG_IDENTITY=""
+TP_REQUEST_COMMAND=""
 INSTALLER_ASSET_VERSION="development"
 TP_ASSET_VERSION=""
 TP_TEMP_TOOLS_DIR=""
@@ -127,16 +135,16 @@ echo_content() {
 }
 
 usage() {
-  local mode="${1:-web|node}"
+  local mode="${1:-web|node|combined}"
   cat <<EOF
 Usage:
   $0 install  --mode $mode (--config <file>|--bundle <encrypted.age>) [--entry-spec <0600-file>]
   $0 remove   --mode $mode --config <file> [--entry-spec <0600-file>] [--purge-data|--keep-data]
   $0 validate --mode $mode (--config <file>|--bundle <encrypted.age>) [--entry-spec <file>]
-  $0 refresh-cert --mode node --config <file>
+  $0 refresh-cert --mode node|combined --config <file>
 
 Options:
-  --mode <mode>      Deployment mode: Web control plane or Node Agent
+  --mode <mode>      Deployment mode: Web control plane, Node Agent, or combined
   --entry-spec <file>  Versioned EntrySpec consumed by EntryController
   --config <file>    YAML configuration file
   --bundle <file>    Encrypted Node bootstrap bundle (node install/validate only)
@@ -158,6 +166,8 @@ trojanpanelnext.purpose remains accepted as compatibility input.
 TLS ownership:
   tls_mode: acme      (default) the installer runs a Caddy container that
                       listens on 80/443 and obtains its own ACME certificate.
+                      In combined mode one shared Caddy deployment owns both
+                      domains and both certificates.
   tls_mode: external  no Caddy container is created. The external entry
                       point owns Web 80/443, ACME and required plain-HTTP
                       fallback listeners. Node protocol ports stay direct.
@@ -718,8 +728,14 @@ load_config() {
   cfg_apply "${file}" MANAGED_CERT_DIR managed_cert_dir
   cfg_apply "${file}" EXTERNAL_MANAGED_DIR external_managed_dir
   cfg_apply "${file}" EXTERNAL_ROUTES_DIR external_routes_dir
+  cfg_apply "${file}" NODE_IDENTITY_CREDENTIAL_FILE node_identity_credential_file
   cfg_apply "${file}" TP_FORCE force
   cfg_apply "${file}" TP_PURGE_DATA purge_data
+  # A combined configuration is also accepted by role-scoped removal. Load
+  # the complete shared configuration before deciding which role to remove.
+  if [[ "${TP_DEPLOYMENT_MODE}" == combined ]]; then
+    action=combined
+  fi
   case "${action}" in
   web)
     TP_WEB_DOMAIN=""
@@ -755,6 +771,25 @@ load_config() {
     cfg_apply "${file}" REDIS_PASSWORD redis_password
     cfg_apply "${file}" REDIS_AUTH_USERNAME redis_auth_username
     cfg_apply "${file}" REDIS_AUTH_PASSWORD redis_auth_password
+    ;;
+  combined)
+    TP_WEB_DOMAIN=""
+    TP_NODE_DOMAIN=""
+    TP_EMAIL=""
+    TP_NODE_NAME=""
+    TP_NODE_PUBLIC_IP=""
+    MARIADB_PASSWORD=""
+    REDIS_PASSWORD=""
+    SYSADMIN_PASSWORD=""
+    cfg_apply "${file}" TP_WEB_DOMAIN web_hostname
+    cfg_apply "${file}" TP_NODE_DOMAIN node_hostname
+    cfg_apply "${file}" TP_EMAIL email
+    cfg_apply "${file}" TP_NODE_NAME node_name
+    cfg_apply "${file}" TP_NODE_PUBLIC_IP node_public_ip
+    cfg_apply "${file}" MARIADB_USER mariadb_user
+    cfg_apply "${file}" MARIADB_PASSWORD mariadb_password
+    cfg_apply "${file}" REDIS_PASSWORD redis_password
+    cfg_apply "${file}" SYSADMIN_PASSWORD sysadmin_password
     ;;
   esac
 }
@@ -834,12 +869,134 @@ require_sysadmin_password() {
   fi
 }
 
+require_domain() {
+  local name="$1"
+  local value="${!name:-}"
+  if [[ ! "${value}" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$ ]]; then
+    echo_content red "${name} must be a lowercase DNS hostname with valid labels"
+    exit 1
+  fi
+}
+
+require_public_ip() {
+  local name="$1"
+  local value="${!name:-}"
+  [[ -n "${value}" ]] || {
+    echo_content red "${name} is required for a combined Node identity"
+    exit 1
+  }
+  local valid=0
+  local -a parts=()
+  if [[ "${value}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+    local part
+    IFS=. read -r -a parts <<<"${value}"
+    valid=1
+    for part in "${parts[@]}"; do
+      if ((10#${part} > 255)); then
+        valid=0
+        break
+      fi
+    done
+  elif [[ "${value}" == *:* && "${value}" =~ ^[0-9a-fA-F:]+$ ]]; then
+    valid=1
+  fi
+  if [[ "${valid}" != 1 ]]; then
+    echo_content red "${name} must be an IP address"
+    exit 1
+  fi
+}
+
+validate_combined_entry_preconditions() {
+  require_domain TP_WEB_DOMAIN
+  require_domain TP_NODE_DOMAIN
+  if [[ "${TP_WEB_DOMAIN,,}" == "${TP_NODE_DOMAIN,,}" ]]; then
+    echo_content red "combined deployment requires two different domains (web_hostname and node_hostname)"
+    exit 1
+  fi
+  require_value TP_NODE_NAME
+  require_public_ip TP_NODE_PUBLIC_IP
+  require_one_of tls_mode "${TLS_MODE}" acme
+  if [[ "${NODE_CADDY_HTTP_PORT}" != 80 || "${NODE_CADDY_HTTPS_PORT}" != 443 ]]; then
+    echo_content red "combined shared Entry must own ports 80 and 443"
+    exit 1
+  fi
+  if [[ "${CORE_PORT}" == 80 || "${CORE_PORT}" == 443 || "${GRPC_PORT}" == 80 || "${GRPC_PORT}" == 443 ]]; then
+    echo_content red "Node API and gRPC ports must not compete with the shared Entry ports 80/443"
+    exit 1
+  fi
+  if [[ -z "${NODE_IDENTITY_CREDENTIAL_FILE}" ]]; then
+    NODE_IDENTITY_CREDENTIAL_FILE="${TP_DATA}/trojan-panel/config/node-identities/combined-node.json"
+  fi
+  local identity_root="${TP_DATA%/}/trojan-panel/config/node-identities"
+  [[ "${NODE_IDENTITY_CREDENTIAL_FILE}" == "${identity_root}/"* &&
+    "${NODE_IDENTITY_CREDENTIAL_FILE}" != *$'\n'* &&
+    "${NODE_IDENTITY_CREDENTIAL_FILE}" != *'/../'* ]] || {
+    echo_content red "node_identity_credential_file must be below ${identity_root}"
+    exit 1
+  }
+}
+
+check_combined_host_preconditions() {
+  if container_exists "${NODE_CADDY_CONTAINER}"; then
+    echo_content red "A standalone Node Entry already exists: ${NODE_CADDY_CONTAINER}; remove it explicitly before combined installation"
+    exit 1
+  fi
+  if container_exists "${WEB_CADDY_CONTAINER}"; then
+    require_combined_entry_ownership
+  fi
+  [[ "${TP_SKIP_NETWORK_PRECHECK:-0}" != 1 ]] || return 0
+  command -v getent >/dev/null 2>&1 || {
+    echo_content red "getent is required to verify combined DNS prerequisites"
+    exit 1
+  }
+  local domain
+  for domain in "${TP_WEB_DOMAIN}" "${TP_NODE_DOMAIN}"; do
+    if ! getent ahosts "${domain}" 2>/dev/null |
+      awk -v expected="${TP_NODE_PUBLIC_IP}" '$1 == expected {found=1} END {exit !found}'; then
+      echo_content red "combined DNS prerequisite failed: ${domain} does not resolve to ${TP_NODE_PUBLIC_IP}"
+      exit 1
+    fi
+  done
+
+  # Replays may encounter the installer-owned shared Entry. Any other listener
+  # on 80/443 is a hard ownership conflict before containers are changed.
+  if container_running "${WEB_CADDY_CONTAINER}"; then
+    :
+  else
+    command -v ss >/dev/null 2>&1 || {
+      echo_content red "ss is required to verify combined port ownership"
+      exit 1
+    }
+    if ss -H -ltn 2>/dev/null | awk '$4 ~ /(^|\]|:)(80|443)$/ {found=1} END {exit !found}'; then
+      echo_content red "combined shared Entry cannot own 80/443 because another listener is active"
+      exit 1
+    fi
+  fi
+}
+
+require_combined_entry_ownership() {
+  container_exists "${WEB_CADDY_CONTAINER}" || return 0
+  local owner
+  owner="$(container_env_value "${WEB_CADDY_CONTAINER}" TP_ENTRY_DEPLOYMENT_ID || true)"
+  if [[ "${owner}" != "${COMBINED_ENTRY_DEPLOYMENT_ID}" ]]; then
+    echo_content red "Shared Entry ownership conflict: ${WEB_CADDY_CONTAINER} is not owned by ${COMBINED_ENTRY_DEPLOYMENT_ID}"
+    return 1
+  fi
+}
+
 validate_config() {
   local mode="$1"
 
   if [[ -n "${TP_DEPLOYMENT_MODE}" && "${TP_DEPLOYMENT_MODE}" != "${mode}" ]]; then
-    echo_content red "Configuration deployment mode '${TP_DEPLOYMENT_MODE}' does not match --mode '${mode}'"
-    exit 1
+    local combined_role_remove=0
+    if [[ "${TP_REQUEST_COMMAND}" == remove && "${TP_DEPLOYMENT_MODE}" == combined &&
+      ( "${mode}" == web || "${mode}" == node ) ]]; then
+      combined_role_remove=1
+    fi
+    if [[ "${combined_role_remove}" != 1 ]]; then
+      echo_content red "Configuration deployment mode '${TP_DEPLOYMENT_MODE}' does not match --mode '${mode}'"
+      exit 1
+    fi
   fi
   require_value TP_DEPLOYMENT_MODE
   local schema_version
@@ -925,6 +1082,19 @@ validate_config() {
       echo_content yellow "for example /etc/vps-factory/certs/<domain>, and see deploy/installer/EXTERNAL.md"
       exit 1
     fi
+    ;;
+  combined)
+    validate_combined_entry_preconditions
+    require_sysadmin_password
+    require_port PANEL_PORT
+    require_port UI_PORT
+    require_port CORE_PORT
+    require_port GRPC_PORT
+    require_one_of grpc_tls_mode "${GRPC_TLS_MODE}" mtls
+    require_value PANEL_IMAGE
+    require_value UI_IMAGE
+    require_value CORE_IMAGE
+    require_value TP_PKI_BUNDLE_DIR
     ;;
   *)
     echo_content red "Unsupported deployment mode: ${mode}"
@@ -1533,6 +1703,14 @@ install_pki_material() {
     mkdir -p "$(dirname "${GRPC_CLIENT_CA_PATH}")"
     install -m 0644 "${TP_PKI_BUNDLE_DIR}/client-ca.crt" "${GRPC_CLIENT_CA_PATH}"
     ;;
+  combined)
+    generate_web_client_pki
+    mkdir -p "$(dirname "${GRPC_CLIENT_CERT_PATH}")" "$(dirname "${GRPC_CLIENT_KEY_PATH}")"
+    install -m 0644 "${TP_PKI_BUNDLE_DIR}/client.crt" "${GRPC_CLIENT_CERT_PATH}"
+    install -m 0600 "${TP_PKI_BUNDLE_DIR}/client.key" "${GRPC_CLIENT_KEY_PATH}"
+    mkdir -p "$(dirname "${GRPC_CLIENT_CA_PATH}")"
+    install -m 0644 "${TP_PKI_BUNDLE_DIR}/client-ca.crt" "${GRPC_CLIENT_CA_PATH}"
+    ;;
   esac
 }
 
@@ -1693,7 +1871,6 @@ write_web_caddyfile() {
 {
     email ${TP_EMAIL}
 }
-
 ${domain} {
     reverse_proxy 127.0.0.1:${UI_PORT}
 }
@@ -1705,6 +1882,47 @@ ${domain} {
 }
 EOF
   fi
+}
+
+write_combined_caddyfile() {
+  local caddyfile="${TP_DATA}/custom/web-caddy/Caddyfile"
+  if [[ -n "${TP_EMAIL:-}" ]]; then
+    cat >"${caddyfile}" <<EOF
+{
+    email ${TP_EMAIL}
+}
+
+${TP_WEB_DOMAIN} {
+    reverse_proxy 127.0.0.1:${UI_PORT}
+}
+
+${TP_NODE_DOMAIN} {
+    root * /srv
+    file_server
+}
+EOF
+  else
+    cat >"${caddyfile}" <<EOF
+${TP_WEB_DOMAIN} {
+    reverse_proxy 127.0.0.1:${UI_PORT}
+}
+
+${TP_NODE_DOMAIN} {
+    root * /srv
+    file_server
+}
+EOF
+  fi
+}
+
+write_combined_node_only_caddyfile() {
+  local caddyfile="${TP_DATA}/custom/web-caddy/Caddyfile"
+  cat >"${caddyfile}" <<EOF
+${TP_NODE_DOMAIN} {
+    root * /srv
+    file_server
+}
+EOF
 }
 
 write_node_caddyfile() {
@@ -1743,7 +1961,16 @@ start_caddy() {
   local config_dir="$2"
   local data_dir="$3"
   local web_dir="$4"
+  local deployment_id="${5:-}"
 
+  if [[ -n "${deployment_id}" ]] && container_exists "${name}"; then
+    local current_owner
+    current_owner="$(container_env_value "${name}" TP_ENTRY_DEPLOYMENT_ID || true)"
+    [[ "${current_owner}" == "${deployment_id}" ]] || {
+      echo_content red "Entry container ownership conflict: ${name}"
+      return 1
+    }
+  fi
   remove_container_if_force "${name}"
   if container_running "${name}"; then
     echo_content skyBlue "---> ${name} already running"
@@ -1755,8 +1982,11 @@ start_caddy() {
   fi
 
   ensure_image "${CADDY_IMAGE}"
+  local -a ownership_env=()
+  [[ -z "${deployment_id}" ]] || ownership_env=(-e "TP_ENTRY_DEPLOYMENT_ID=${deployment_id}")
   docker run -d --name "${name}" --restart always \
     --network=host \
+    "${ownership_env[@]}" \
     -v "${config_dir}/Caddyfile:/etc/caddy/Caddyfile" \
     -v "${data_dir}:/data" \
     -v "${config_dir}:/config" \
@@ -1792,6 +2022,88 @@ wait_for_cert() {
   echo_content red "    Check DNS, firewall, and Caddy logs. If another process owns port 80,"
   echo_content red "    switch the configuration to tls_mode: external instead."
   exit 1
+}
+
+wait_for_combined_certs() {
+  local data_dir="$1"
+  wait_for_cert "${TP_WEB_DOMAIN}" "${data_dir}"
+  wait_for_cert "${TP_NODE_DOMAIN}" "${data_dir}"
+  validate_combined_certificate_domains "${data_dir}"
+}
+
+validate_combined_certificate_domains() {
+  local data_dir="$1"
+  local domain pair certificate hostname_check
+  for domain in "${TP_WEB_DOMAIN}" "${TP_NODE_DOMAIN}"; do
+    pair="$(caddy_cert_files "${domain}" "${data_dir}" | head -n 1)"
+    [[ -n "${pair}" ]] || {
+      echo_content red "Shared Entry certificate is missing for ${domain}"
+      return 1
+    }
+    certificate="${pair%%|*}"
+    hostname_check="$(openssl x509 -in "${certificate}" -noout -checkhost "${domain}" 2>&1 || true)"
+    if [[ "${hostname_check}" != *" does match certificate"* ]]; then
+      echo_content red "Shared Entry certificate does not cover ${domain}"
+      return 1
+    fi
+  done
+}
+
+combined_node_cert_sha256() {
+  local data_dir="${TP_DATA}/custom/web-caddy/data"
+  local pair certificate key
+  pair="$(caddy_cert_files "${TP_NODE_DOMAIN}" "${data_dir}" | head -n 1)"
+  [[ -n "${pair}" ]] || return 1
+  certificate="${pair%%|*}"
+  key="${pair##*|}"
+  sha256sum "${certificate}" "${key}" | sha256sum | awk '{print $1}'
+}
+
+record_combined_node_cert_generation() {
+  local state_dir="${TP_DATA}/trojanpanelnext-entry"
+  local fingerprint="$1"
+  mkdir -p "${state_dir}"
+  chmod 0700 "${state_dir}"
+  printf '%s\n' "${fingerprint}" >"${state_dir}/combined-node-cert.sha256"
+  chmod 0600 "${state_dir}/combined-node-cert.sha256"
+}
+
+reconcile_combined_node_cert_consumer() {
+  local fingerprint previous=""
+  fingerprint="$(combined_node_cert_sha256)" || return 1
+  local state_file="${TP_DATA}/trojanpanelnext-entry/combined-node-cert.sha256"
+  [[ ! -r "${state_file}" ]] || previous="$(<"${state_file}")"
+  if [[ "${fingerprint}" != "${previous}" ]]; then
+    docker restart "${CORE_CONTAINER}" >/dev/null
+    wait_for_container "${CORE_CONTAINER}"
+    echo_content green "---> Reconciled renewed combined Node certificate generation"
+  fi
+  record_combined_node_cert_generation "${fingerprint}"
+}
+
+refresh_combined_certificate() {
+  local data_dir="${TP_DATA}/custom/web-caddy/data"
+  validate_combined_certificate_domains "${data_dir}"
+  local fingerprint previous=""
+  fingerprint="$(combined_node_cert_sha256)" || {
+    echo_content red "Combined Node certificate material is unavailable"
+    return 1
+  }
+  local state_file="${TP_DATA}/trojanpanelnext-entry/combined-node-cert.sha256"
+  [[ ! -r "${state_file}" ]] || previous="$(<"${state_file}")"
+  if [[ "${fingerprint}" == "${previous}" ]]; then
+    printf 'unchanged\n'
+    return 0
+  fi
+  container_exists "${CORE_CONTAINER}" || {
+    echo_content red "Certificate changed but ${CORE_CONTAINER} does not exist"
+    return 1
+  }
+  docker restart "${CORE_CONTAINER}" >/dev/null
+  wait_for_container "${CORE_CONTAINER}"
+  record_combined_node_cert_generation "${fingerprint}"
+  echo_content green "---> Combined Node certificate generation refreshed"
+  printf 'changed\n'
 }
 
 wait_for_container() {
@@ -1963,13 +2275,112 @@ deploy_panel_ui() {
   wait_for_container "${UI_CONTAINER}"
 }
 
+prepare_combined_node_identity() {
+  command -v jq >/dev/null 2>&1 || {
+    echo_content red "jq is required to provision the combined Node identity"
+    exit 1
+  }
+  local credential_file="${NODE_IDENTITY_CREDENTIAL_FILE}"
+  mkdir -p "$(dirname "${credential_file}")"
+  chmod 0700 "$(dirname "${credential_file}")"
+
+  # The API container and host deliberately share this restricted path. The
+  # CLI is idempotent for the same name/domain and replays the committed file
+  # on a same-version rerun without minting a second identity.
+  if ! docker exec "${PANEL_CONTAINER}" /tpdata/trojan-panel/trojan-panel \
+    node-identity register \
+    --name "${TP_NODE_NAME}" \
+    --domain "${TP_NODE_DOMAIN}" \
+    --public-ip "${TP_NODE_PUBLIC_IP}" \
+    --credential-file "${credential_file}"; then
+    echo_content red "Unable to provision the combined Node identity"
+    exit 1
+  fi
+  [[ -r "${credential_file}" && ! -L "${credential_file}" ]] || {
+    echo_content red "Combined Node identity did not produce a safe credential file"
+    exit 1
+  }
+
+  NODE_IDENTITY_ID="$(jq -r '.node_identity_id // empty' "${credential_file}")"
+  NODE_SERVER_ID="$(jq -r '.node_server_id // empty' "${credential_file}")"
+  NODE_IDENTITY_GENERATION="$(jq -r '.generation // empty' "${credential_file}")"
+  MARIADB_USER="$(jq -r '.mariadb.username // empty' "${credential_file}")"
+  MARIADB_PASSWORD="$(jq -r '.mariadb.password // empty' "${credential_file}")"
+  REDIS_USERNAME="$(jq -r '.redis.username // empty' "${credential_file}")"
+  REDIS_PASSWORD="$(jq -r '.redis.password // empty' "${credential_file}")"
+  REDIS_AUTH_USERNAME="$(jq -r '.redis_auth.username // empty' "${credential_file}")"
+  REDIS_AUTH_PASSWORD="$(jq -r '.redis_auth.password // empty' "${credential_file}")"
+  MARIADB_HOST=127.0.0.1
+  REDIS_HOST=127.0.0.1
+  export NODE_IDENTITY_ID NODE_SERVER_ID NODE_IDENTITY_GENERATION \
+    MARIADB_USER MARIADB_PASSWORD REDIS_USERNAME REDIS_PASSWORD \
+    REDIS_AUTH_USERNAME REDIS_AUTH_PASSWORD MARIADB_HOST REDIS_HOST
+
+  [[ -n "${NODE_IDENTITY_ID}" && -n "${MARIADB_USER}" && -n "${REDIS_USERNAME}" &&
+    -n "${REDIS_AUTH_USERNAME}" ]] || {
+    echo_content red "Combined Node credential file is incomplete"
+    exit 1
+  }
+}
+
+revoke_combined_node_identity() {
+  local credential_file="${NODE_IDENTITY_CREDENTIAL_FILE}"
+  if [[ ! -e "${credential_file}" ]] && ! container_exists "${CORE_CONTAINER}"; then
+    echo_content skyBlue "---> Combined Node identity is already absent"
+    return 0
+  fi
+  [[ -r "${credential_file}" && ! -L "${credential_file}" ]] || {
+    echo_content red "Cannot remove the combined Node role without its owned identity record: ${credential_file}"
+    return 1
+  }
+  local identity_id
+  identity_id="$(jq -r '.node_identity_id // empty' "${credential_file}")"
+  [[ "${identity_id}" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]] || {
+    echo_content red "Combined Node identity record is invalid"
+    return 1
+  }
+  local status=0
+  if container_running "${PANEL_CONTAINER}"; then
+    docker exec "${PANEL_CONTAINER}" /tpdata/trojan-panel/trojan-panel \
+      node-identity revoke --id "${identity_id}" || status=$?
+  else
+    # Web role removal leaves the shared database and Redis running. Use the
+    # same control-plane binary for a one-shot revocation without restoring
+    # its public service or taking ownership of the Node role.
+    docker run --rm --network=host \
+      --entrypoint /tpdata/trojan-panel/trojan-panel \
+      -w /tpdata/trojan-panel \
+      -v "${TP_DATA}/trojan-panel/config:/tpdata/trojan-panel/config" \
+      "${PANEL_IMAGE}" node-identity revoke --id "${identity_id}" || status=$?
+  fi
+  if [[ "${status}" != 0 ]]; then
+    echo_content red "Combined Node identity revocation failed; local Node resources were retained"
+    return 1
+  fi
+  echo_content skyBlue "---> Combined Node identity revoked: ${identity_id}"
+}
+
 probe_mariadb_health() {
+  if [[ "${TP_DEPLOYMENT_MODE}" == combined && -n "${WEB_MARIADB_PASSWORD}" ]]; then
+    local previous_user="${MARIADB_USER}" previous_password="${MARIADB_PASSWORD}"
+    MARIADB_USER="${WEB_MARIADB_USER}"
+    MARIADB_PASSWORD="${WEB_MARIADB_PASSWORD}"
+    local status=0
+    mariadb_query_with_configured_credential 'select 1' || status=$?
+    MARIADB_USER="${previous_user}"
+    MARIADB_PASSWORD="${previous_password}"
+    return "${status}"
+  fi
   mariadb_query_with_configured_credential 'select 1'
 }
 
 probe_redis_health() {
+  local redis_password="${REDIS_PASSWORD}"
+  if [[ "${TP_DEPLOYMENT_MODE}" == combined && -n "${WEB_REDIS_PASSWORD}" ]]; then
+    redis_password="${WEB_REDIS_PASSWORD}"
+  fi
   local response
-  response="$(printf 'AUTH %s\r\nPING\r\n' "${REDIS_PASSWORD}" |
+  response="$(printf 'AUTH %s\r\nPING\r\n' "${redis_password}" |
     docker exec -i "${REDIS_CONTAINER}" redis-cli -p "${REDIS_PORT}" --no-auth-warning 2>/dev/null)" || return
   grep -Fxq PONG <<<"${response}"
 }
@@ -1977,6 +2388,11 @@ probe_redis_health() {
 probe_web_https_health() {
   curl --proto '=https' --tlsv1.2 --fail --silent --show-error \
     --connect-timeout 5 --max-time 15 "https://${TP_WEB_DOMAIN}/" >/dev/null
+}
+
+probe_node_https_health() {
+  curl --proto '=https' --tlsv1.2 --fail --silent --show-error \
+    --connect-timeout 5 --max-time 15 "https://${TP_NODE_DOMAIN}/" >/dev/null
 }
 
 probe_sysadmin_credential_health() {
@@ -2061,12 +2477,35 @@ verify_web_health() {
   wait_for_health_probe "sysadmin container credential" probe_sysadmin_credential_health
 }
 
+verify_combined_health() {
+  verify_web_health
+  wait_for_health_probe "Node HTTPS" probe_node_https_health
+  verify_node_health
+  wait_for_health_probe "Web-to-Node mTLS/gRPC" probe_combined_mtls_grpc_health
+}
+
+probe_combined_mtls_grpc_health() {
+  docker exec "${PANEL_CONTAINER}" /tpdata/trojan-panel/trojan-panel \
+    node-identity verify --id "${NODE_IDENTITY_ID}" --challenge "${NODE_BOOTSTRAP_CHALLENGE}" >/dev/null
+}
+
 print_web_success() {
   echo_content red "\n=============================================================="
   echo_content skyBlue "Web control plane is healthy"
   echo_content yellow "URL: https://${TP_WEB_DOMAIN}"
   echo_content yellow "Username: sysadmin"
   echo_content yellow "Credentials are stored in the restricted deployment configuration and are not printed."
+  echo_content red "==============================================================\n"
+}
+
+print_combined_success() {
+  echo_content red "\n=============================================================="
+  echo_content skyBlue "Combined deployment is healthy"
+  echo_content yellow "Web URL: https://${TP_WEB_DOMAIN}"
+  echo_content yellow "Node URL: https://${TP_NODE_DOMAIN}"
+  echo_content yellow "Shared Entry owns TCP 80/443; Node kernel protocol listeners remain direct."
+  echo_content yellow "Node identity: ${NODE_IDENTITY_ID} (generation ${NODE_IDENTITY_GENERATION})"
+  echo_content yellow "Credentials are stored in restricted deployment files and are not printed."
   echo_content red "==============================================================\n"
 }
 
@@ -2077,11 +2516,25 @@ deploy_core() {
   local runtime_config="${TP_DATA}/trojan-panel-core/config/config.ini"
   local node_config_sha256
   local cert_data="${TP_DATA}/custom/node-caddy/data"
+  if [[ "${TP_DEPLOYMENT_MODE}" == combined ]]; then
+    # The shared Entry owns the Node certificate too; the Node kernels only
+    # consume the material and never bind the Entry's 80/443 listeners.
+    cert_data="${TP_DATA}/custom/web-caddy/data"
+  fi
   local crt_path="${cert_data}/caddy/certificates/acme-v02.api.letsencrypt.org-directory/${domain}/${domain}.crt"
   local key_path="${cert_data}/caddy/certificates/acme-v02.api.letsencrypt.org-directory/${domain}/${domain}.key"
   if [[ "${TLS_MODE}" == "external" ]]; then
     crt_path="${MANAGED_CERT_DIR}/fullchain.pem"
     key_path="${MANAGED_CERT_DIR}/privkey.pem"
+  elif [[ "${TP_DEPLOYMENT_MODE}" == combined ]]; then
+    local caddy_pair
+    caddy_pair="$(caddy_cert_files "${domain}" "${cert_data}" | head -n 1)"
+    [[ -n "${caddy_pair}" ]] || {
+      echo_content red "Certificate material is unavailable for Node domain ${domain}"
+      exit 1
+    }
+    crt_path="${caddy_pair%%|*}"
+    key_path="${caddy_pair##*|}"
   fi
 
   write_core_runtime_config "${crt_path}" "${key_path}"
@@ -2095,12 +2548,18 @@ deploy_core() {
     if [[ "${TLS_MODE}" == "external" ]]; then
       echo_content yellow "---> Note: re-run with --force when switching tls_mode so the managed certificate mount is applied"
     fi
+    if [[ "${TP_DEPLOYMENT_MODE}" == combined ]]; then
+      reconcile_combined_node_cert_consumer
+    fi
     return
   fi
   if container_exists "${CORE_CONTAINER}"; then
     docker start "${CORE_CONTAINER}" >/dev/null
     if [[ "${TLS_MODE}" == "external" ]]; then
       echo_content yellow "---> Note: re-run with --force when switching tls_mode so the managed certificate mount is applied"
+    fi
+    if [[ "${TP_DEPLOYMENT_MODE}" == combined ]]; then
+      record_combined_node_cert_generation "$(combined_node_cert_sha256)"
     fi
     return
   fi
@@ -2116,7 +2575,7 @@ deploy_core() {
     -v "${runtime_config}:${runtime_config}:ro" \
     -v "${TP_DATA}/trojan-panel-core/pki/:${TP_DATA}/trojan-panel-core/pki/:ro" \
     -v "${KERNEL_RUNTIME_PATH}:${TP_DATA}/trojan-panel-core/runtime/" \
-    -v "${cert_data}:${cert_data}" \
+    -v "${cert_data}:${cert_data}:ro" \
     -v "${MANAGED_CERT_DIR}:${MANAGED_CERT_DIR}:ro" \
     -v "${EXTERNAL_MANAGED_DIR}:${EXTERNAL_MANAGED_DIR}" \
     -v "${EXTERNAL_ROUTES_DIR}:${EXTERNAL_ROUTES_DIR}" \
@@ -2147,6 +2606,9 @@ deploy_core() {
     -e "TP_NODE_DOMAIN=${domain}" \
     "${CORE_IMAGE}"
   wait_for_container "${CORE_CONTAINER}"
+  if [[ "${TP_DEPLOYMENT_MODE}" == combined ]]; then
+    record_combined_node_cert_generation "$(combined_node_cert_sha256)"
+  fi
 }
 
 write_external_entry_contract() {
@@ -2280,6 +2742,34 @@ deploy_node() {
 
 }
 
+deploy_combined() {
+  validate_combined_entry_preconditions
+  install_base_tools
+  install_docker
+  init_web_secrets
+  load_image_archives
+  prepare_dirs
+  install_pki_material combined
+  prepare_static_web
+  deploy_mariadb
+  deploy_redis
+  write_panel_runtime_config
+  write_initial_sysadmin_password_file
+  deploy_panel_backend
+  deploy_panel_ui
+
+  # The API provisions dedicated MariaDB/Redis identities for the local Node;
+  # the Core never receives the Web root password or the global Redis secret.
+  WEB_MARIADB_USER="${MARIADB_USER}"
+  WEB_MARIADB_PASSWORD="${MARIADB_PASSWORD}"
+  WEB_REDIS_PASSWORD="${REDIS_PASSWORD}"
+  prepare_combined_node_identity
+  write_combined_caddyfile
+  start_caddy "${WEB_CADDY_CONTAINER}" "${TP_DATA}/custom/web-caddy" "${TP_DATA}/custom/web-caddy/data" "${WEB_PATH}" "${COMBINED_ENTRY_DEPLOYMENT_ID}"
+  wait_for_combined_certs "${TP_DATA}/custom/web-caddy/data"
+  deploy_core "${TP_NODE_DOMAIN}"
+}
+
 remove_web() {
   local containers=("${UI_CONTAINER}" "${PANEL_CONTAINER}" "${REDIS_CONTAINER}" "${MARIADB_CONTAINER}")
   if [[ "${TLS_MODE}" != "external" ]]; then
@@ -2304,8 +2794,69 @@ remove_node() {
   echo_content skyBlue "---> Trojan Panel node side removed"
 }
 
+remove_combined_container_if_exists() {
+  local name="$1"
+  container_exists "${name}" || return 0
+  docker rm -f "${name}" >/dev/null || {
+    echo_content red "Could not remove combined role container: ${name}"
+    return 1
+  }
+}
+
+remove_combined_role() {
+  local role="$1"
+  require_combined_entry_ownership
+  if [[ "${role}" != combined ]] && ! container_exists "${WEB_CADDY_CONTAINER}"; then
+    echo_content red "Cannot preserve the other combined role without its shared Entry: ${WEB_CADDY_CONTAINER}"
+    return 1
+  fi
+  case "${role}" in
+  web)
+    # Keep the shared Entry and Node resources. Re-rendering the Caddyfile
+    # prevents a dead Web upstream while preserving the Node domain/cert.
+    remove_combined_container_if_exists "${UI_CONTAINER}"
+    remove_combined_container_if_exists "${PANEL_CONTAINER}"
+    if [[ "${TP_PURGE_DATA}" == 1 ]]; then
+      rm -rf "${TP_DATA}/trojan-panel-ui"
+    fi
+    write_combined_node_only_caddyfile
+    docker restart "${WEB_CADDY_CONTAINER}" >/dev/null
+    ;;
+  node)
+    revoke_combined_node_identity
+    remove_combined_container_if_exists "${CORE_CONTAINER}"
+    if [[ "${TP_PURGE_DATA}" == 1 ]]; then
+      rm -rf "${TP_DATA}/trojan-panel-core"
+      rm -f "${NODE_IDENTITY_CREDENTIAL_FILE}"
+    fi
+    write_web_caddyfile "${TP_WEB_DOMAIN}"
+    docker restart "${WEB_CADDY_CONTAINER}" >/dev/null
+    ;;
+  combined)
+    revoke_combined_node_identity
+    local resource
+    for resource in "${WEB_CADDY_CONTAINER}" "${UI_CONTAINER}" "${PANEL_CONTAINER}" \
+      "${CORE_CONTAINER}" "${REDIS_CONTAINER}" "${MARIADB_CONTAINER}"; do
+      remove_combined_container_if_exists "${resource}"
+    done
+    if [[ "${TP_PURGE_DATA}" == "1" ]]; then
+      rm -rf "${TP_DATA}/custom/web-caddy" "${TP_DATA}/custom/node-caddy" \
+        "${TP_DATA}/trojan-panel" "${TP_DATA}/trojan-panel-ui" \
+        "${TP_DATA}/trojan-panel-core" "${TP_DATA}/mariadb" "${TP_DATA}/redis" \
+        "${TP_DATA}/trojanpanelnext-entry" "$(dirname "${NODE_IDENTITY_CREDENTIAL_FILE}")"
+    fi
+    ;;
+  *)
+    echo_content red "Unsupported combined removal role: ${role}"
+    return 1
+    ;;
+  esac
+  echo_content skyBlue "---> Trojan Panel combined ${role} role removed; unrelated role resources were retained"
+}
+
 main() {
   local command="${1:-}"
+  TP_REQUEST_COMMAND="${command}"
   local mode=""
   local config_file=""
   local bundle_file=""
@@ -2376,7 +2927,7 @@ main() {
     esac
   done
 
-  require_one_of mode "${mode}" web node
+  require_one_of mode "${mode}" web node combined
   if [[ -n "${config_file}" && -n "${bundle_file}" ]] || [[ -z "${config_file}" && -z "${bundle_file}" ]]; then
     echo_content red "Exactly one of --config or --bundle is required"
     usage
@@ -2429,15 +2980,24 @@ main() {
   fi
   [[ -n "${force_override}" ]] && TP_FORCE="${force_override}"
   [[ -n "${purge_override}" ]] && TP_PURGE_DATA="${purge_override}"
-  validate_config "${mode}"
+  local validation_mode="${mode}"
+  if [[ "${command}" == remove && "${TP_DEPLOYMENT_MODE}" == combined &&
+    ( "${mode}" == web || "${mode}" == node ) ]]; then
+    validation_mode=combined
+  fi
+  validate_config "${validation_mode}"
   validate_entry_spec_binding "${mode}"
 
-  if [[ "${command}:${mode}" == install:node ]]; then
+  if [[ "${command}:${mode}" == install:combined ]]; then
+    check_combined_host_preconditions
+  fi
+
+  if [[ "${command}:${mode}" == install:node || "${command}:${mode}" == install:combined ]]; then
     initialize_node_bootstrap_challenge
   fi
 
-  if [[ "${command}" == refresh-cert && "${mode}" != node ]]; then
-    echo_content red "refresh-cert is only valid with --mode node"
+  if [[ "${command}" == refresh-cert && "${mode}" != node && "${mode}" != combined ]]; then
+    echo_content red "refresh-cert is only valid with --mode node or combined"
     exit 1
   fi
 
@@ -2456,8 +3016,8 @@ main() {
   fi
 
   case "${command}:${mode}" in
-  validate:web | validate:node)
-    echo_content green "Configuration is valid for ${mode} deployment mode: ${config_file}"
+  validate:web | validate:node | validate:combined)
+    echo_content green "Configuration is valid for ${TP_DEPLOYMENT_MODE} deployment mode: ${config_file}"
     ;;
   install:web)
     deploy_web
@@ -2465,14 +3025,31 @@ main() {
   install:node)
     deploy_node
     ;;
-  remove:web)
-    remove_web
+  install:combined)
+    deploy_combined
     ;;
   remove:node)
-    remove_node
+    if [[ "${TP_DEPLOYMENT_MODE}" == combined ]]; then
+      remove_combined_role node
+    else
+      remove_node
+    fi
+    ;;
+  remove:combined)
+    remove_combined_role combined
+    ;;
+  remove:web)
+    if [[ "${TP_DEPLOYMENT_MODE}" == combined ]]; then
+      remove_combined_role web
+    else
+      remove_web
+    fi
     ;;
   refresh-cert:node)
     refresh_node_certificate
+    ;;
+  refresh-cert:combined)
+    refresh_combined_certificate
     ;;
   esac
 
@@ -2485,6 +3062,9 @@ main() {
   elif [[ "${command}:${mode}" == install:node ]]; then
     verify_node_health
     print_node_success
+  elif [[ "${command}:${mode}" == install:combined ]]; then
+    verify_combined_health
+    print_combined_success
   fi
 }
 

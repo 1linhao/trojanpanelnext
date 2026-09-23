@@ -1,0 +1,38 @@
+trojanpanelnext:
+  schema_version: 1
+  deployment_mode: combined
+
+  # Both records must resolve to this host and must be different names.
+  web_hostname: panel.example.com
+  node_hostname: node.example.com
+  email: admin@example.com
+
+  # The identity is provisioned locally by the Web API. Its credential file is
+  # root-only staging material and is never placed in a Node bootstrap bundle.
+  node_name: combined-node
+  node_public_ip: 203.0.113.10
+  node_identity_credential_file: /tpdata/trojan-panel/config/node-identities/combined-node.json
+
+  caddy_image: caddy:2.8.4
+  mariadb_image: mariadb:10.7.3
+  redis_image: redis:6.2.7
+  api_image: ghcr.io/1linhao/trojanpanelnext-api:latest
+  web_image: ghcr.io/1linhao/trojanpanelnext-web:latest
+  node_agent_image: ghcr.io/1linhao/trojanpanelnext-node-agent:latest
+
+  mariadb_port: 9507
+  redis_port: 6378
+  panel_port: 8081
+  ui_port: 8888
+  core_port: 8082
+  grpc_port: 8100
+  grpc_tls_mode: mtls
+  node_caddy_http_port: 80
+  node_caddy_https_port: 443
+  pki_bundle_dir: /tpdata/trojanpanelnext-pki
+
+  mariadb_password: ""
+  redis_password: ""
+  sysadmin_password: ""
+  force: 0
+  purge_data: 0

@@ -4,6 +4,9 @@ trojanpanelnext:
   deployment_mode: combined
   web_hostname: panel.example.com
   node_hostname: node.example.com
+  node_name: combined-node
+  node_public_ip: 203.0.113.10
+  node_identity_credential_file: /tpdata/trojan-panel/config/node-identities/combined-node.json
   email: admin@example.com
   caddy_image: __CADDY_IMAGE__
   mariadb_image: __MARIADB_IMAGE__
@@ -18,6 +21,8 @@ trojanpanelnext:
   core_port: 8082
   grpc_port: 8100
   grpc_tls_mode: mtls
+  node_caddy_http_port: 80
+  node_caddy_https_port: 443
   pki_bundle_dir: /tpdata/trojanpanelnext-pki
   force: 0
   purge_data: 0

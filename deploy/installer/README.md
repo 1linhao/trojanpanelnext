@@ -160,11 +160,30 @@ sudo ./install.sh remove --mode web --config ./web.yaml --keep-data
 sudo ./install.sh remove --mode node --config ./node-agent.yaml --purge-data
 ```
 
+combined 使用两个不同且都解析到本机公网 IP 的域名。单个共享入口拥有 80/443，Node 内核协议
+端口保持直连；Node 使用 Web 主控在本机签发的独立 MariaDB/Redis 身份。安装与证书续订后的消费方
+刷新命令为：
+
+```bash
+sudo ./install.sh install --mode combined --config ./combined.yaml
+sudo ./install.sh refresh-cert --mode combined --config ./combined.yaml
+```
+
+`refresh-cert` 不接管 ACME；共享入口仍负责续订。它只在 Node 证书代次变化时重启 Core。
+使用 combined 配置配合 `remove --mode web|node` 可移除单个角色：共享入口会保留并重写为剩余域名，
+MariaDB/Redis 等共享资源不会被单角色卸载误删；Node 移除会先撤销其控制面身份。
+即使先移除 Web，再移除 Node，安装器也会用一次性控制面 CLI 撤销该身份。combined 安装
+拒绝接管已有的独立 Node 入口；成功前还会验证 Web→Node mTLS/gRPC。
+
 ## 配置文件
 
 [Web 主控模板](examples/web.yaml)包含域名、镜像、服务端口、mTLS 身份目录以及主控内部凭据。
 
 [Node Agent 模板](examples/node-agent.yaml)包含节点域名、主控数据库连接、Redis 连接、gRPC、公开 CA 目录与证书路径。
+
+[combined 模板](examples/combined.yaml)包含 Web 与 Node 双域名、本机 Node 公网 IP、独立 Node 身份
+凭据路径及共享入口端口。`node_identity_credential_file` 必须位于
+`/tpdata/trojan-panel/config/node-identities/` 下并保持 root-only。
 
 外部 TLS 模式使用 [external-web.yaml](examples/external-web.yaml) 与
 [external-node.yaml](examples/external-node.yaml)，它们在模板基础上增加以下键：
@@ -199,8 +218,8 @@ sudo ./install.sh remove --mode node --config ./node-agent.yaml --purge-data
 发布配置契约使用 `deployment_mode`、`api_image`、`web_image` 和 `node_agent_image`；旧的
 `purpose`、`panel_image`、`ui_image` 和 `core_image` 只供既有安装配置兼容读取，不会出现在新模板中。
 
-`combined` 是统一配置契约中的有效部署模式，但本工单不提供其容器编排；发布资产校验可以验证
-combined 配置，现有安装器仍只执行 `web` 与 `node`。无秘密的 manifest 结构示例见
+`combined` 由安装器正式编排：Web 与 Node 复用本机数据服务和单一共享入口，并为两个域名维护
+独立证书；Node 内核监听不会转发到统一 L4 入口。无秘密的 manifest 结构示例见
 [example-release-manifest.json](release/example-release-manifest.json)。Release 使用 tar.gz 保留脚本可执行位，
 并同时附带 manifest 与 SHA256SUMS。下载后先验证归档 attestation，再解包并验证包内摘要：
 
