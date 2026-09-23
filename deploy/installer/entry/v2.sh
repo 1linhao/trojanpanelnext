@@ -185,7 +185,7 @@ entry_v2_check_target() {
 }
 
 entry_v2_validate_observation() {
-  local observation="$1" spec="$2" mode="$3"
+  local observation="$1" spec="$2" mode="$3" journal="${4:-}"
   jq -e --argjson spec "$(jq -c . "$spec")" --arg mode "$mode" '
     .schema_version == 2 and .deployment_id == $spec.deployment_id and
     .provider == $spec.provider and .ownership_verified == true and
@@ -216,6 +216,18 @@ entry_v2_validate_observation() {
      else true end)
   ' <<<"$observation" >/dev/null 2>&1 || return 1
   if [[ "${mode}" == recovery ]]; then
+    [[ -n "${journal}" ]] || return 1
+    jq -n -e --argjson observation "$observation" --argjson journal "$journal" '
+      ($journal.resources + $journal.previous_resources + $journal.candidate_resources) as $known |
+      def same_identity($a;$b):
+        $a.kind == $b.kind and $a.id == $b.id and
+        $a.owner == $b.owner and $a.deployment_id == $b.deployment_id and
+        $a.scope == $b.scope and ($a.role // null) == ($b.role // null) and
+        $a.identity.marker == $b.identity.marker and
+        $a.identity.digest == $b.identity.digest;
+      (all($observation.resources[]; . as $seen | any($known[]; same_identity($seen;.)))) and
+      (all($observation.candidate_resources[]; . as $seen | any($known[]; same_identity($seen;.))))
+    ' >/dev/null 2>&1 || return 1
     return 0
   fi
   # Reuse the state validator for all resource ownership and identity fields.
@@ -327,7 +339,7 @@ entry_v2_reconcile_locked() {
   if [[ "$old" != null && "$(jq -r '.phase' <<<"$old")" != stable && "$(jq -r '.committed_target == null' <<<"$old")" == false ]]; then
     probe_mode=recovery
   fi
-  entry_v2_validate_observation "$observation" "$spec" "$probe_mode" || {
+  entry_v2_validate_observation "$observation" "$spec" "$probe_mode" "$old" || {
     entry_v2_error ownership_conflict preparing 'Adapter probe returned untrusted resource identity'; return 4;
   }
   if [[ "$old" == null ]]; then

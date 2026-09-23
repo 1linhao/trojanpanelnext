@@ -127,6 +127,10 @@ jq --argjson spec "$(jq -c . "$tmp/web")" --arg digest "$new_digest" '
 chmod 0600 "$tmp/crashed-journal"
 mv "$tmp/crashed-journal" "$ENTRY_STATE_ROOT/trojanpanelnext-combined.json"
 : >"$trace"
+recovery_observation="$(FAKE_CANDIDATE_DIGEST=b fake_observation "$tmp/web" "$(cat "$ENTRY_STATE_ROOT/trojanpanelnext-combined.json")" probe | jq '.candidate_resources += [(.candidate_resources[0] | .id = "/managed/unknown" | .identity.marker = "owned:trojanpanelnext-combined:unknown" | .identity.digest = ("c" * 64))]')"
+if entry_v2_validate_observation "$recovery_observation" "$tmp/web" recovery "$(cat "$ENTRY_STATE_ROOT/trojanpanelnext-combined.json")"; then
+  fail 'recovery accepted an unknown candidate resource'
+fi
 FAKE_IDENTITY_DRIFT=1 FAKE_RESOURCE_DIGEST=c expect_fail entry_v2_reconcile "$tmp/web" "$ENTRY_STATE_ROOT"
 [[ "$(jq -r '.code' <"$tmp/out")" == ownership_conflict ]] || fail 'unknown recovery digest was accepted'
 [[ "$(tr '\n' ' ' <"$trace")" == 'probe ' ]] || fail 'unknown recovery digest caused side effects'
