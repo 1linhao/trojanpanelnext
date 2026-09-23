@@ -128,6 +128,7 @@ jobs:
           bash deploy/installer/tests/node_bundle_cli_test.sh
           bash deploy/installer/tests/node_runtime_container_test.sh
           bash deploy/installer/tests/entry_controller_test.sh
+          bash deploy/installer/tests/entry_combined_v2_test.sh
           bash deploy/installer/tests/dependency_preflight_test.sh
           bash deploy/installer/tests/secure_file_test.sh
           bash deploy/installer/tests/web_bare_install_test.sh

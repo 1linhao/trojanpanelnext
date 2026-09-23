@@ -168,6 +168,7 @@ test -x "${bundle}/secure-file"
 test -x "${bundle}/node-bundle"
 test -x "${bundle}/entry/entryctl.sh"
 test -f "${bundle}/entry/controller.sh"
+test -f "${bundle}/entry/v2.sh"
 test -f "${bundle}/entry/adapters/external.sh"
 test -x "${bundle}/entry/adapters/nginx_certbot.sh"
 "${bundle}/entry/entryctl.sh" --help | grep -q 'Usage:'
@@ -196,7 +197,7 @@ for config in "${bundle}"/config-*.yaml; do
   grep -q '^  node_agent_image:' "${config}"
   ! grep -Eq '^  (purpose|panel_image|ui_image|core_image):' "${config}"
 done
-jq -e '.release_version == "1.2.3" and (.assets | length == 13)' \
+jq -e '.release_version == "1.2.3" and (.assets | length == 14)' \
   "${bundle}/release-manifest.json" >/dev/null
 EXPECTED_RELEASE_ASSET_PATHS=(
   bootstrap.sh
@@ -210,6 +211,7 @@ EXPECTED_RELEASE_ASSET_PATHS=(
   config-combined.yaml
   entry/entryctl.sh
   entry/controller.sh
+  entry/v2.sh
   entry/adapters/external.sh
   entry/adapters/nginx_certbot.sh
 )
