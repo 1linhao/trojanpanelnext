@@ -25,7 +25,8 @@ fake_observation() {
   local spec="$1" state="$2" stage="$3"
   jq -cn --argjson spec "$(jq -c . "$spec")" --argjson state "$state" --arg stage "$stage" \
     --arg partial "${FAKE_PARTIAL:-0}" --arg drift "${FAKE_IDENTITY_DRIFT:-0}" \
-    --arg resource_digest "${FAKE_RESOURCE_DIGEST:-a}" --arg candidate_digest "${FAKE_CANDIDATE_DIGEST:-a}" '
+    --arg resource_digest "${FAKE_RESOURCE_DIGEST:-a}" --arg candidate_digest "${FAKE_CANDIDATE_DIGEST:-a}" \
+    --arg unknown_candidate "${FAKE_UNKNOWN_CANDIDATE:-0}" '
     def identity($id;$digest): {marker:("owned:" + $spec.deployment_id + ":" + $id),digest:($digest*64)};
     def resource($id;$scope;$role):
       {kind:"file",id:("/managed/" + $id),owner:"provider",deployment_id:$spec.deployment_id,
@@ -46,7 +47,11 @@ fake_observation() {
        (if $partial == "1" and $state.phase != "stable" and $state != null then ($state.candidate_resources // [])
         else ($state.resources // []) end)
        else $candidate end),
-     candidate_resources:$candidate,certificates:$certs,listeners:$listeners,capabilities:[]} |
+     candidate_resources:(if $unknown_candidate == "1" then
+       $candidate + [($candidate[0] | .id = "/managed/unknown" |
+         .identity.marker = "owned:trojanpanelnext-combined:unknown" |
+         .identity.digest = ("c" * 64))]
+      else $candidate end),certificates:$certs,listeners:$listeners,capabilities:[]} |
      if $drift == "1" and $stage == "probe" and (.resources | length) > 0 then
        .resources[0].identity.digest = ($resource_digest*64)
      else . end'
@@ -131,7 +136,7 @@ recovery_observation="$(FAKE_CANDIDATE_DIGEST=b fake_observation "$tmp/web" "$(c
 if entry_v2_validate_observation "$recovery_observation" "$tmp/web" recovery "$(cat "$ENTRY_STATE_ROOT/trojanpanelnext-combined.json")"; then
   fail 'recovery accepted an unknown candidate resource'
 fi
-FAKE_IDENTITY_DRIFT=1 FAKE_RESOURCE_DIGEST=c expect_fail entry_v2_reconcile "$tmp/web" "$ENTRY_STATE_ROOT"
+FAKE_UNKNOWN_CANDIDATE=1 FAKE_CANDIDATE_DIGEST=b expect_fail entry_v2_reconcile "$tmp/web" "$ENTRY_STATE_ROOT"
 [[ "$(jq -r '.code' <"$tmp/out")" == ownership_conflict ]] || fail 'unknown recovery digest was accepted'
 [[ "$(tr '\n' ' ' <"$trace")" == 'probe ' ]] || fail 'unknown recovery digest caused side effects'
 : >"$trace"
@@ -204,6 +209,21 @@ entry_v2_remove "$tmp/node" "$ENTRY_STATE_ROOT" 0 >/dev/null
 
 # A modified committed snapshot cannot pass status validation.
 snapshot="$tmp/first-failure/trojanpanelnext-combined.json"
+jq '.committed_target.spec.unexpected = "field"' "$snapshot" >"$tmp/schema-tampered"
+schema_digest="$(jq -S -c '.committed_target.spec | del(.revision, .restore_intent) | .active_roles |= sort' "$tmp/schema-tampered" | sha256sum | awk '{print $1}')"
+jq --arg digest "$schema_digest" '.committed_target.digest = $digest | .desired_digest = $digest' "$tmp/schema-tampered" >"$tmp/schema-tampered-final"
+chmod 0600 "$tmp/schema-tampered-final"
+mv "$tmp/schema-tampered-final" "$snapshot"
+expect_fail main status --deployment trojanpanelnext-combined --state-root "$tmp/first-failure"
+[[ "$(jq -r '.code' <"$tmp/out")" == state_not_found_or_invalid ]] || fail 'schema-invalid committed spec passed status'
+cp "$tmp/schema-tampered" "$tmp/candidate-base"
+jq '.committed_target.spec |= del(.unexpected) | .candidate_target = .committed_target | .phase = "preparing" | .health = "unknown"' "$tmp/candidate-base" >"$tmp/candidate-tampered"
+candidate_digest="$(jq -S -c '.candidate_target.spec | del(.revision, .restore_intent) | .active_roles |= sort' "$tmp/candidate-tampered" | sha256sum | awk '{print $1}')"
+jq --arg digest "$candidate_digest" '.candidate_target.spec.unexpected = "field" | .candidate_target.digest = $digest | .desired_digest = $digest' "$tmp/candidate-tampered" >"$tmp/candidate-tampered-final"
+chmod 0600 "$tmp/candidate-tampered-final"
+mv "$tmp/candidate-tampered-final" "$snapshot"
+expect_fail main status --deployment trojanpanelnext-combined --state-root "$tmp/first-failure"
+[[ "$(jq -r '.code' <"$tmp/out")" == state_not_found_or_invalid ]] || fail 'schema-invalid candidate spec passed status'
 jq '.committed_target.spec.roles.web.web_upstream = "127.0.0.1:9999"' "$snapshot" >"$tmp/tampered"
 chmod 0600 "$tmp/tampered"
 mv "$tmp/tampered" "$snapshot"

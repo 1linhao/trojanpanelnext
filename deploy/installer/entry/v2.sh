@@ -53,6 +53,47 @@ entry_v2_validate_spec() {
 entry_v2_validate_state() {
   jq -e '
     def hash: type == "string" and test("^[a-f0-9]{64}$");
+    def fqdn: type == "string" and length <= 253 and
+      test("^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$");
+    def absolute: type == "string" and test("^/[^/]");
+    def valid_spec($deployment;$domains;$provider):
+      . as $spec |
+      type == "object" and
+      (keys - ["schema_version","topology","revision","deployment_id","provider","domains","active_roles","roles","certificate_targets","restore_intent"] | length) == 0 and
+      .schema_version == 2 and .topology == "combined" and
+      (.revision | type == "number" and floor == . and . >= 1) and
+      .deployment_id == $deployment and .provider == $provider and
+      (.domains | type == "object" and keys == ["node","web"] and
+        (.web | fqdn) and (.node | fqdn) and .web != .node) and
+      .domains == $domains and
+      (.active_roles | type == "array" and length >= 1 and length <= 2 and
+        length == (unique | length) and all(.[]; . == "web" or . == "node")) and
+      (.roles | type == "object" and keys == ($spec.active_roles | sort)) and
+      (.certificate_targets | type == "object" and keys == ($spec.active_roles | sort)) and
+      (if .active_roles | index("web") then
+        (.roles.web | type == "object" and keys == ["web_upstream"] and
+          (.web_upstream | type == "string" and test("^(127\\.0\\.0\\.1|\\[::1\\]):[0-9]{1,5}$")))
+       else true end) and
+      (if .active_roles | index("node") then
+        (.roles.node | type == "object" and keys == ["certificate_consumer","node_exposure","route_manifest"] and
+          .node_exposure == "direct" and (.route_manifest | absolute) and (.certificate_consumer | absolute))
+       else true end) and
+      (.certificate_targets | to_entries | all(.[];
+        (.value | type == "object" and
+          keys == ["cert_path","key_path","managed_dir","renewal_owner"] and
+          (.managed_dir | absolute) and (.cert_path | absolute) and (.key_path | absolute) and
+          .cert_path != .key_path and .renewal_owner == "caddy-legacy"))) and
+      (if .active_roles | length == 2 then
+        ([.certificate_targets.web.cert_path,.certificate_targets.web.key_path,
+          .certificate_targets.node.cert_path,.certificate_targets.node.key_path] |
+         length == (unique | length))
+       else true end) and
+      (if has("restore_intent") then
+        (.restore_intent | type == "object" and keys == ["expected_committed_digest","roles"] and
+          (.expected_committed_digest | type == "string" and test("^[a-f0-9]{64}$")) and
+          (.roles | type == "array" and length > 0 and length == (unique | length) and
+            all(.[]; . == "web" or . == "node")))
+       else true end);
     def resource($deployment):
       type == "object" and
       (keys - ["kind","id","owner","deployment_id","scope","role","retention","identity"] | length) == 0 and
@@ -79,12 +120,10 @@ entry_v2_validate_state() {
     (.desired_digest | hash) and
     (.committed_target == null or
       (.committed_target | type == "object" and keys == ["digest","spec"] and (.digest | hash) and
-        .spec.schema_version == 2 and .spec.deployment_id == $state.deployment_id and
-        .spec.domains == $state.domains and .spec.provider == $state.active_provider)) and
+        (.spec | valid_spec($state.deployment_id;$state.domains;$state.active_provider)))) and
     (.candidate_target == null or
       (.candidate_target | type == "object" and keys == ["digest","spec"] and (.digest | hash) and
-        .spec.schema_version == 2 and .spec.deployment_id == $state.deployment_id and
-        .spec.domains == $state.domains and .spec.provider == $state.active_provider)) and
+        (.spec | valid_spec($state.deployment_id;$state.domains;$state.active_provider)))) and
     (.resources | type == "array" and all(.[]; resource($state.deployment_id) and (if .scope == "role" then (.role as $r | $state.active_roles | index($r) != null) else true end))) and
     (.previous_resources | type == "array" and all(.[]; resource($state.deployment_id))) and
     (.candidate_resources | type == "array" and all(.[]; resource($state.deployment_id) and (if .scope == "role" then (.role as $r | $state.active_roles | index($r) != null) else true end))) and
@@ -361,7 +400,8 @@ entry_v2_reconcile_locked() {
           $a.scope == $b.scope and ($a.role // null) == ($b.role // null) and
           $a.identity.marker == $b.identity.marker and
           $a.identity.digest == $b.identity.digest;
-        all($obs.resources[]; . as $seen | any($known[]; same_identity($seen;.)))
+        (all($obs.resources[]; . as $seen | any($known[]; same_identity($seen;.)))) and
+        (all($obs.candidate_resources[]; . as $seen | any($known[]; same_identity($seen;.))))
       ' <<<"$old" >/dev/null
     fi || {
       entry_v2_error ownership_conflict preparing 'Observed resources differ from committed identities'; return 4;
@@ -369,7 +409,7 @@ entry_v2_reconcile_locked() {
   fi
   if [[ "$old" != null && "$(jq -r '.phase' <<<"$old")" != stable ]]; then
     # The old journal, not the current request, selects the rollback target.
-    state="$(jq -c --argjson obs "$observation" '.phase="rolling_back" | .health="unknown" | .candidate_resources=$obs.resources' <<<"$old")"
+    state="$(jq -c --argjson obs "$observation" '.phase="rolling_back" | .health="unknown" | .candidate_resources=$obs.candidate_resources' <<<"$old")"
     entry_v2_persist "$root" "$state" || return 12
     if ! entry_v2_rollback "$spec" "$state" >/dev/null; then
       state="$(jq -c '.phase="failed" | .health="unhealthy"' <<<"$state")"
