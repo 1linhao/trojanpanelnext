@@ -132,6 +132,7 @@ jobs:
           bash deploy/installer/tests/web_bare_install_test.sh
           bash deploy/installer/tests/release_assets_test.sh
           bash deploy/installer/tests/jq_free_release_verification_test.sh
+          bash deploy/installer/tests/release_web_docker_smoke_cleanup_test.sh
 
   docs:
     name: documentation site
