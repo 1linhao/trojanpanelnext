@@ -104,8 +104,18 @@ entry_v2_validate_state() {
       (.scope == "shared" or .scope == "role") and
       (if .scope == "role" then .role == "web" or .role == "node" else (has("role") | not) end) and
       (.retention == "managed" or .retention == "preserve") and
-      (.identity | type == "object" and keys == ["digest","marker"] and
+        (.identity | type == "object" and keys == ["digest","marker"] and
         (.digest | hash) and (.marker | type == "string" and length > 0));
+    def certificate:
+      type == "object" and
+      keys == ["cert_path","domain","fingerprint","generation","key_path","last_hook_status","not_after","renewal_owner"] and
+      (.domain | fqdn) and (.cert_path | absolute) and (.key_path | absolute) and
+      (.fingerprint | type == "string" and length > 0) and
+      (.generation | type == "number" and floor == . and . >= 1) and
+      .renewal_owner == "caddy-legacy" and
+      (.last_hook_status == "ok" or .last_hook_status == "unchanged" or
+       .last_hook_status == "failed" or .last_hook_status == "unknown") and
+      (.not_after | type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T"));
     . as $state | .schema_version == 2 and .topology == "combined" and
     (keys - ["schema_version","topology","deployment_id","desired_revision","observed_revision","desired_digest","generation","active_provider","phase","health","domains","active_roles","committed_target","candidate_target","resources","previous_resources","candidate_resources","certificates","listeners","capabilities","last_error"] | length) == 0 and
     (.deployment_id | type == "string" and test("^[a-z][a-z0-9-]{0,62}$")) and
@@ -127,7 +137,8 @@ entry_v2_validate_state() {
     (.resources | type == "array" and all(.[]; resource($state.deployment_id) and (if .scope == "role" then (.role as $r | $state.active_roles | index($r) != null) else true end))) and
     (.previous_resources | type == "array" and all(.[]; resource($state.deployment_id))) and
     (.candidate_resources | type == "array" and all(.[]; resource($state.deployment_id) and (if .scope == "role" then (.role as $r | $state.active_roles | index($r) != null) else true end))) and
-    (.certificates | type == "object") and
+    (.certificates | type == "object" and
+      all(to_entries[]; (.key == "web" or .key == "node") and (.value | certificate))) and
     (.listeners | type == "array" and all(.[];
       type == "object" and
       (keys - ["transport","address","port","purpose","owner","scope","role"] | length) == 0 and
@@ -137,7 +148,7 @@ entry_v2_validate_state() {
       (.owner == "provider" or .owner == "kernel") and
       (.scope == "shared" or .scope == "role") and
       (if .scope == "role" then .role == "node" or .role == "web" else (has("role") | not) end))) and
-    (.capabilities | type == "array") and
+    (.capabilities | type == "array" and all(.[]; type == "string")) and
     (if .phase == "stable" then .candidate_target == null else .candidate_target != null and .candidate_target.digest == .desired_digest end)
   ' "$1" >/dev/null 2>&1
 }

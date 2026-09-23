@@ -209,15 +209,23 @@ entry_v2_remove "$tmp/node" "$ENTRY_STATE_ROOT" 0 >/dev/null
 
 # A modified committed snapshot cannot pass status validation.
 snapshot="$tmp/first-failure/trojanpanelnext-combined.json"
-jq '.committed_target.spec.unexpected = "field"' "$snapshot" >"$tmp/schema-tampered"
+cp "$snapshot" "$tmp/valid-state"
+jq '.certificates.web.unexpected = true' "$tmp/valid-state" >"$snapshot"
+chmod 0600 "$snapshot"
+expect_fail main status --deployment trojanpanelnext-combined --state-root "$tmp/first-failure"
+[[ "$(jq -r '.code' <"$tmp/out")" == state_not_found_or_invalid ]] || fail 'invalid certificate passed status'
+jq '.capabilities = [42]' "$tmp/valid-state" >"$snapshot"
+chmod 0600 "$snapshot"
+expect_fail main status --deployment trojanpanelnext-combined --state-root "$tmp/first-failure"
+[[ "$(jq -r '.code' <"$tmp/out")" == state_not_found_or_invalid ]] || fail 'non-string capability passed status'
+jq '.committed_target.spec.unexpected = "field"' "$tmp/valid-state" >"$tmp/schema-tampered"
 schema_digest="$(jq -S -c '.committed_target.spec | del(.revision, .restore_intent) | .active_roles |= sort' "$tmp/schema-tampered" | sha256sum | awk '{print $1}')"
 jq --arg digest "$schema_digest" '.committed_target.digest = $digest | .desired_digest = $digest' "$tmp/schema-tampered" >"$tmp/schema-tampered-final"
 chmod 0600 "$tmp/schema-tampered-final"
 mv "$tmp/schema-tampered-final" "$snapshot"
 expect_fail main status --deployment trojanpanelnext-combined --state-root "$tmp/first-failure"
 [[ "$(jq -r '.code' <"$tmp/out")" == state_not_found_or_invalid ]] || fail 'schema-invalid committed spec passed status'
-cp "$tmp/schema-tampered" "$tmp/candidate-base"
-jq '.committed_target.spec |= del(.unexpected) | .candidate_target = .committed_target | .phase = "preparing" | .health = "unknown"' "$tmp/candidate-base" >"$tmp/candidate-tampered"
+jq '.candidate_target = .committed_target | .phase = "preparing" | .health = "unknown"' "$tmp/valid-state" >"$tmp/candidate-tampered"
 candidate_digest="$(jq -S -c '.candidate_target.spec | del(.revision, .restore_intent) | .active_roles |= sort' "$tmp/candidate-tampered" | sha256sum | awk '{print $1}')"
 jq --arg digest "$candidate_digest" '.candidate_target.spec.unexpected = "field" | .candidate_target.digest = $digest | .desired_digest = $digest' "$tmp/candidate-tampered" >"$tmp/candidate-tampered-final"
 chmod 0600 "$tmp/candidate-tampered-final"

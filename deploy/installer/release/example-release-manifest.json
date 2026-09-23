@@ -61,7 +61,7 @@
     {
       "name": "entry/v2",
       "path": "entry/v2.sh",
-      "sha256": "371eafa6569d8f64eb7d5a8cfa0b6f021fcbda1329bbe0b1bbfcf9923422778d"
+      "sha256": "8dc64c4912154e6fdbcf6812b1c8ae0233021062945cd7ef9368d2ab53b43085"
     },
     {
       "name": "entry/adapters/external",
