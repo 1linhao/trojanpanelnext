@@ -127,6 +127,10 @@ jq --argjson spec "$(jq -c . "$tmp/web")" --arg digest "$new_digest" '
 chmod 0600 "$tmp/crashed-journal"
 mv "$tmp/crashed-journal" "$ENTRY_STATE_ROOT/trojanpanelnext-combined.json"
 : >"$trace"
+FAKE_IDENTITY_DRIFT=1 FAKE_RESOURCE_DIGEST=c expect_fail entry_v2_reconcile "$tmp/web" "$ENTRY_STATE_ROOT"
+[[ "$(jq -r '.code' <"$tmp/out")" == ownership_conflict ]] || fail 'unknown recovery digest was accepted'
+[[ "$(tr '\n' ' ' <"$trace")" == 'probe ' ]] || fail 'unknown recovery digest caused side effects'
+: >"$trace"
 FAKE_CANDIDATE_DIGEST=b FAKE_RESOURCE_DIGEST=a entry_v2_reconcile "$tmp/web" "$ENTRY_STATE_ROOT" >"$tmp/crash-out" || {
   cat "$tmp/crash-out" >&2
   jq -c '{phase,health,active_roles,resources,previous_resources,candidate_resources,committed_target,candidate_target,last_error}' "$ENTRY_STATE_ROOT/trojanpanelnext-combined.json" >&2
@@ -150,6 +154,9 @@ for fail_at in prepare activate verify; do
   FAIL_AT="$fail_at" expect_fail entry_v2_reconcile "$tmp/web-failure" "$ENTRY_STATE_ROOT"
   [[ "$(jq -r '.active_roles | length' <"$ENTRY_STATE_ROOT/trojanpanelnext-combined.json")" == 1 ]] || fail "failed $fail_at changed committed roles"
   grep -Fqx rollback "$trace" || fail "failed $fail_at skipped rollback"
+  [[ "$(jq -r '.resource' <"$tmp/out")" == trojanpanelnext-combined ]] || fail "failed $fail_at omitted resource"
+  [[ "$(jq -r '.retryable' <"$tmp/out")" == true ]] || fail "failed $fail_at was not retryable"
+  [[ "$(jq -r '.rollback_status' <"$tmp/out")" == succeeded ]] || fail "failed $fail_at reported wrong rollback status"
 done
 make_spec '.revision = 4 | .active_roles = ["web"] | del(.roles.node, .certificate_targets.node) | .roles.web.web_upstream = "127.0.0.1:10000"' "$tmp/failed-conflict"
 : >"$trace"
@@ -158,23 +165,29 @@ expect_fail entry_v2_reconcile "$tmp/failed-conflict" "$ENTRY_STATE_ROOT"
 : >"$trace"
 FAIL_AT=verify FAIL_ROLLBACK=1 expect_fail entry_v2_reconcile "$tmp/web-failure" "$ENTRY_STATE_ROOT"
 [[ "$(jq -r '.phase' <"$ENTRY_STATE_ROOT/trojanpanelnext-combined.json")" == failed ]] || fail 'rollback failure was not durable'
+[[ "$(jq -r '.rollback_status' <"$tmp/out")" == failed ]] || fail 'rollback failure status was not reported'
 unset FAIL_AT
 : >"$trace"
 FAKE_PARTIAL=1 entry_v2_reconcile "$tmp/web-failure" "$ENTRY_STATE_ROOT" >/dev/null
 [[ "$(head -n 2 "$trace" | tr '\n' ' ')" == 'probe rollback ' ]] || fail 'crash recovery did not precede prepare'
 [[ "$(jq -r '.active_roles[0]' <"$ENTRY_STATE_ROOT/trojanpanelnext-combined.json")" == web ]] || fail 'node removal failed'
 make_spec '.revision = 5' "$tmp/restore"
-: >"$trace"
-expect_fail entry_v2_reconcile "$tmp/restore" "$ENTRY_STATE_ROOT"
-[[ ! -s "$trace" ]] || fail 'implicit role restore touched Adapter'
 digest="$(jq -r '.committed_target.digest' <"$ENTRY_STATE_ROOT/trojanpanelnext-combined.json")"
 jq --arg digest "$digest" '.restore_intent = {roles:["node"],expected_committed_digest:$digest}' "$tmp/restore" >"$tmp/explicit"
 chmod 0600 "$tmp/explicit"
+FAIL_AT=prepare expect_fail entry_v2_reconcile "$tmp/explicit" "$ENTRY_STATE_ROOT"
+[[ "$(jq -r '.active_roles | join(",")' <"$ENTRY_STATE_ROOT/trojanpanelnext-combined.json")" == web ]] || fail 'failed restore changed active roles'
+[[ "$(jq -r '.committed_target.spec.active_roles | join(",")' <"$ENTRY_STATE_ROOT/trojanpanelnext-combined.json")" == web ]] || fail 'failed restore changed committed roles'
+make_spec '.revision = 6' "$tmp/implicit-restore"
+: >"$trace"
+expect_fail entry_v2_reconcile "$tmp/implicit-restore" "$ENTRY_STATE_ROOT"
+[[ "$(jq -r '.code' <"$tmp/out")" == invalid_spec && ! -s "$trace" ]] || fail 'failed restore allowed implicit role restore'
+unset FAIL_AT
 entry_v2_reconcile "$tmp/explicit" "$ENTRY_STATE_ROOT" >/dev/null
 [[ "$(jq -r '.active_roles | length' <"$ENTRY_STATE_ROOT/trojanpanelnext-combined.json")" == 2 ]] || fail 'explicit restoration failed'
 
 # Second removal order: Web leaves first, then Node leaves through remove.
-make_spec '.revision = 6 | .active_roles = ["node"] | del(.roles.web, .certificate_targets.web)' "$tmp/node"
+make_spec '.revision = 7 | .active_roles = ["node"] | del(.roles.web, .certificate_targets.web)' "$tmp/node"
 entry_v2_reconcile "$tmp/node" "$ENTRY_STATE_ROOT" >/dev/null
 [[ "$(jq -r '.active_roles[0]' <"$ENTRY_STATE_ROOT/trojanpanelnext-combined.json")" == node ]] || fail 'web removal failed'
 FAIL_REMOVE=1 expect_fail entry_v2_remove "$tmp/node" "$ENTRY_STATE_ROOT" 0

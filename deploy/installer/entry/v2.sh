@@ -117,8 +117,11 @@ entry_v2_target_digest() {
 }
 
 entry_v2_error() {
-  jq -cn --arg code "$1" --arg phase "$2" --arg message "$3" \
-    '{schema_version:2,code:$code,phase:$phase,retryable:false,rollback_status:"not-needed",message:$message}'
+  local code="$1" phase="$2" message="$3" resource="${4:-trojanpanelnext-combined}" \
+    retryable="${5:-false}" rollback_status="${6:-not-needed}"
+  jq -cn --arg code "$code" --arg phase "$phase" --arg message "$message" \
+    --arg resource "$resource" --argjson retryable "$retryable" --arg rollback_status "$rollback_status" \
+    '{schema_version:2,code:$code,phase:$phase,resource:$resource,retryable:$retryable,rollback_status:$rollback_status,message:$message}'
 }
 
 entry_v2_adapter_available() {
@@ -158,7 +161,7 @@ entry_v2_plan() {
 # A v1 journal never proves ownership of a combined deployment. The same
 # revision is immutable; role expansion after removal needs an explicit intent.
 entry_v2_check_target() {
-  local spec="$1" state="$2" digest="$3" revision known old_digest added
+  local spec="$1" state="$2" digest="$3" revision known old_digest added committed_roles
   [[ "$(jq -r '.schema_version' <<<"$state")" == 2 ]] || {
     entry_v2_error ownership_conflict stable 'v1 resources require an explicit migration'; return 4;
   }
@@ -171,7 +174,8 @@ entry_v2_check_target() {
   if (( revision < known )) || { (( revision == known )) && [[ "$digest" != "$old_digest" ]]; }; then
     entry_v2_error invalid_spec stable 'Revision is stale or reuses a revision for a different target'; return 2
   fi
-  added="$(jq -cn --argjson spec "$(jq -c . "$spec")" --argjson state "$state" '$spec.active_roles - $state.active_roles')"
+  committed_roles="$(jq -c '.committed_target.spec.active_roles // .active_roles' <<<"$state")"
+  added="$(jq -cn --argjson spec "$(jq -c . "$spec")" --argjson committed_roles "$committed_roles" '$spec.active_roles - $committed_roles')"
   if [[ "$added" != '[]' ]]; then
     jq -e --argjson added "$added" --argjson state "$state" \
       '.restore_intent.roles == $added and .restore_intent.expected_committed_digest == $state.committed_target.digest' "$spec" >/dev/null || {
@@ -343,7 +347,8 @@ entry_v2_reconcile_locked() {
           $a.kind == $b.kind and $a.id == $b.id and
           $a.owner == $b.owner and $a.deployment_id == $b.deployment_id and
           $a.scope == $b.scope and ($a.role // null) == ($b.role // null) and
-          $a.identity.marker == $b.identity.marker;
+          $a.identity.marker == $b.identity.marker and
+          $a.identity.digest == $b.identity.digest;
         all($obs.resources[]; . as $seen | any($known[]; same_identity($seen;.)))
       ' <<<"$old" >/dev/null
     fi || {
@@ -357,7 +362,7 @@ entry_v2_reconcile_locked() {
     if ! entry_v2_rollback "$spec" "$state" >/dev/null; then
       state="$(jq -c '.phase="failed" | .health="unhealthy"' <<<"$state")"
       entry_v2_persist "$root" "$state" || return 12
-      entry_v2_error rollback_failed rolling_back 'Crash recovery failed'; return 8
+      entry_v2_error rollback_failed rolling_back 'Crash recovery failed' "$(jq -r '.deployment_id' <<<"$state")" true failed; return 8
     fi
     if [[ "$(jq -r '.committed_target == null' <<<"$state")" == true ]]; then
       rm -f -- "$(entry_state_path "$root" "$deployment")" || return 12
@@ -419,14 +424,20 @@ entry_v2_fail() {
     if [[ "$(jq -r '.committed_target == null' <<<"$state")" == true ]]; then
       state="$(jq -c --argjson err "$error" '.phase="failed" | .health="unhealthy" | .last_error=$err' <<<"$state")"
     else
-      state="$(jq -c --argjson err "$error" '.phase="stable" | .health="degraded" | .candidate_target=null | .candidate_resources=[] | .last_error=$err' <<<"$state")"
+      state="$(jq -c --argjson err "$error" '.phase="stable" | .health="degraded" | .active_roles=.committed_target.spec.active_roles | .candidate_target=null | .candidate_resources=[] | .last_error=$err' <<<"$state")"
     fi
   else
     error="$(jq -cn --arg code "$code" --arg phase "$failed_phase" '{code:$code,phase:$phase,retryable:true,rollback_status:"failed",message:"Combined Adapter transaction and rollback failed"}')"
     state="$(jq -c --argjson err "$error" '.phase="failed" | .health="unhealthy" | .last_error=$err' <<<"$state")"
   fi
   entry_v2_persist "$root" "$state" || return 12
-  entry_v2_error "$code" "$failed_phase" 'Combined Adapter transaction failed'
+  local resource
+  resource="$(jq -r '.deployment_id' <<<"$state")"
+  if [[ "$(jq -r '.last_error.rollback_status' <<<"$state")" == succeeded ]]; then
+    entry_v2_error "$code" "$failed_phase" 'Combined Adapter transaction failed' "$resource" true succeeded
+  else
+    entry_v2_error "$code" "$failed_phase" 'Combined Adapter transaction failed' "$resource" true failed
+  fi
 }
 
 entry_v2_remove() ( entry_v2_remove_locked "$@"; )
