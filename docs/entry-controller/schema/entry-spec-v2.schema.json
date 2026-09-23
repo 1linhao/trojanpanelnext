@@ -12,6 +12,7 @@
     "deployment_id": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,62}$"},
     "provider": {"const": "caddy-legacy"},
     "domains": {
+      "$comment": "The two domain values must differ; entry_v2_validate_spec enforces this cross-field constraint because standard Draft 2020-12 has no value-reference keyword.",
       "type": "object", "additionalProperties": false, "required": ["web", "node"],
       "properties": {"web": {"$ref": "#/$defs/domain"}, "node": {"$ref": "#/$defs/domain"}}
     },
@@ -36,7 +37,17 @@
     "certificate_target": {"type": "object", "additionalProperties": false, "required": ["managed_dir", "cert_path", "key_path", "renewal_owner"], "properties": {"managed_dir": {"$ref": "#/$defs/path"}, "cert_path": {"$ref": "#/$defs/path"}, "key_path": {"$ref": "#/$defs/path"}, "renewal_owner": {"const": "caddy-legacy"}}}
   },
   "allOf": [
-    {"if": {"properties": {"active_roles": {"contains": {"const": "web"}}}}, "then": {"properties": {"roles": {"required": ["web"]}, "certificate_targets": {"required": ["web"]}}}},
-    {"if": {"properties": {"active_roles": {"contains": {"const": "node"}}}}, "then": {"properties": {"roles": {"required": ["node"]}, "certificate_targets": {"required": ["node"]}}}}
+    {
+      "if": {"properties": {"active_roles": {"contains": {"const": "web"}, "not": {"contains": {"const": "node"}}}}},
+      "then": {"properties": {"roles": {"required": ["web"], "not": {"required": ["node"]}}, "certificate_targets": {"required": ["web"], "not": {"required": ["node"]}}}}
+    },
+    {
+      "if": {"properties": {"active_roles": {"contains": {"const": "node"}, "not": {"contains": {"const": "web"}}}}},
+      "then": {"properties": {"roles": {"required": ["node"], "not": {"required": ["web"]}}, "certificate_targets": {"required": ["node"], "not": {"required": ["web"]}}}}
+    },
+    {
+      "if": {"properties": {"active_roles": {"allOf": [{"contains": {"const": "web"}}, {"contains": {"const": "node"}}]}}},
+      "then": {"properties": {"roles": {"required": ["web", "node"]}, "certificate_targets": {"required": ["web", "node"]}}}
+    }
   ]
 }

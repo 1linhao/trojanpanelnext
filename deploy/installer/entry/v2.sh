@@ -85,9 +85,9 @@ entry_v2_validate_state() {
       (.candidate_target | type == "object" and keys == ["digest","spec"] and (.digest | hash) and
         .spec.schema_version == 2 and .spec.deployment_id == $state.deployment_id and
         .spec.domains == $state.domains and .spec.provider == $state.active_provider)) and
-    (.resources | type == "array" and all(.[]; resource($state.deployment_id))) and
+    (.resources | type == "array" and all(.[]; resource($state.deployment_id) and (if .scope == "role" then (.role as $r | $state.active_roles | index($r) != null) else true end))) and
     (.previous_resources | type == "array" and all(.[]; resource($state.deployment_id))) and
-    (.candidate_resources | type == "array" and all(.[]; resource($state.deployment_id))) and
+    (.candidate_resources | type == "array" and all(.[]; resource($state.deployment_id) and (if .scope == "role" then (.role as $r | $state.active_roles | index($r) != null) else true end))) and
     (.certificates | type == "object") and
     (.listeners | type == "array" and all(.[];
       type == "object" and
@@ -186,7 +186,10 @@ entry_v2_validate_observation() {
     .schema_version == 2 and .deployment_id == $spec.deployment_id and
     .provider == $spec.provider and .ownership_verified == true and
     (.resources | type == "array") and (.candidate_resources | type == "array") and
+    (.resources | all(.[]; .owner == "controller" or .owner == "provider")) and
     (.candidate_resources | all(.[]; .owner == "controller" or .owner == "provider")) and
+    (.resources | all(.[]; if $mode != "verify" and $mode != "prepare" or .scope != "role" then true else (.role as $r | $spec.active_roles | index($r) != null) end)) and
+    (.candidate_resources | all(.[]; if $mode != "verify" and $mode != "prepare" or .scope != "role" then true else (.role as $r | $spec.active_roles | index($r) != null) end)) and
     (.candidate_resources | map(.kind + ":" + .id) | length == (unique | length)) and
     (.listeners | type == "array") and (.capabilities | type == "array") and
     (.certificates | type == "object") and
@@ -208,9 +211,12 @@ entry_v2_validate_observation() {
        else true end)
      else true end)
   ' <<<"$observation" >/dev/null 2>&1 || return 1
+  if [[ "${mode}" == recovery ]]; then
+    return 0
+  fi
   # Reuse the state validator for all resource ownership and identity fields.
   jq -cn --argjson spec "$(jq -c . "$spec")" --argjson obs "$observation" \
-    '{schema_version:2,topology:"combined",deployment_id:$spec.deployment_id,desired_revision:$spec.revision,observed_revision:0,generation:0,active_provider:$spec.provider,phase:"preparing",health:"unknown",domains:$spec.domains,active_roles:$spec.active_roles,desired_digest:("0"*64),committed_target:null,candidate_target:{digest:("0"*64),spec:$spec},resources:$obs.resources,previous_resources:[],candidate_resources:$obs.candidate_resources,certificates:$obs.certificates,listeners:$obs.listeners,capabilities:$obs.capabilities}' | entry_v2_validate_state /dev/stdin
+    '{schema_version:2,topology:"combined",deployment_id:$spec.deployment_id,desired_revision:$spec.revision,observed_revision:0,generation:0,active_provider:$spec.provider,phase:"preparing",health:"unknown",domains:$spec.domains,active_roles:(([ $spec.active_roles[] ] + ([ $obs.resources[]?, $obs.candidate_resources[]? ] | map(select(type == "object" and .scope == "role") | .role)) | unique)),desired_digest:("0"*64),committed_target:null,candidate_target:{digest:("0"*64),spec:$spec},resources:$obs.resources,previous_resources:[],candidate_resources:$obs.candidate_resources,certificates:$obs.certificates,listeners:$obs.listeners,capabilities:$obs.capabilities}' | entry_v2_validate_state /dev/stdin
 }
 
 entry_v2_state() {
@@ -222,7 +228,10 @@ entry_v2_state() {
       desired_revision:$spec.revision,observed_revision:($old.observed_revision // 0),
       generation:($old.generation // 0),active_provider:$spec.provider,
       phase:$phase,health:$health,domains:$spec.domains,
-      active_roles:($old.active_roles // $spec.active_roles),desired_digest:$digest,
+      # Keep both the committed and requested role sets while a transaction is
+      # in flight. This lets a role removal retain its old resources for
+      # rollback and lets an explicit role restoration stage new resources.
+      active_roles:((($old.active_roles // []) + $spec.active_roles) | unique),desired_digest:$digest,
       committed_target:($old.committed_target // null),
       candidate_target:{digest:$digest,spec:$spec},
       resources:($old.resources // []),previous_resources:($old.resources // []),
@@ -243,6 +252,24 @@ entry_v2_persist() {
   return "$result"
 }
 
+entry_v2_rollback() {
+  local requested_spec="$1" state="$2" rollback_spec temporary=""
+  rollback_spec="${requested_spec}"
+  if [[ "$(jq -r '.committed_target == null' <<<"${state}")" == true ]]; then
+    ENTRY_V2_ROLLBACK_KIND=first-install
+  else
+    temporary="$(mktemp)" || return 1
+    chmod 0600 "${temporary}"
+    jq -c '.committed_target.spec' <<<"${state}" >"${temporary}" || { rm -f "${temporary}"; return 1; }
+    rollback_spec="${temporary}"
+    ENTRY_V2_ROLLBACK_KIND=committed-target
+  fi
+  entry_v2_adapter_rollback "${rollback_spec}" "${state}"
+  local status=$?
+  [[ -z "${temporary}" ]] || rm -f "${temporary}"
+  return "${status}"
+}
+
 entry_v2_locked_state() {
   local root="$1" deployment="$2" path
   path="$(entry_state_path "$root" "$deployment")" || return 2
@@ -259,7 +286,7 @@ entry_v2_locked_state() {
 entry_v2_reconcile() ( entry_v2_reconcile_locked "$@"; )
 
 entry_v2_reconcile_locked() {
-  local spec="$1" root="$2" deployment digest old state observation verified phase result
+  local spec="$1" root="$2" deployment digest old state observation verified phase result probe_mode
   entry_validate_mutating_spec_file "$spec" && entry_v2_validate_spec "$spec" || {
     entry_v2_error invalid_spec preparing 'Invalid or untrusted v2 EntrySpec'; return 2;
   }
@@ -292,7 +319,11 @@ entry_v2_reconcile_locked() {
   observation="$(entry_v2_adapter_probe "$spec" "$old")" || {
     entry_v2_error ownership_conflict preparing 'Adapter probe rejected host ownership'; return 4;
   }
-  entry_v2_validate_observation "$observation" "$spec" probe || {
+  probe_mode=probe
+  if [[ "$old" != null && "$(jq -r '.phase' <<<"$old")" != stable && "$(jq -r '.committed_target == null' <<<"$old")" == false ]]; then
+    probe_mode=recovery
+  fi
+  entry_v2_validate_observation "$observation" "$spec" "$probe_mode" || {
     entry_v2_error ownership_conflict preparing 'Adapter probe returned untrusted resource identity'; return 4;
   }
   if [[ "$old" == null ]]; then
@@ -303,11 +334,17 @@ entry_v2_reconcile_locked() {
     if [[ "$(jq -r '.phase' <<<"$old")" == stable ]]; then
       jq -e --argjson obs "$observation" '.resources == $obs.resources' <<<"$old" >/dev/null
     else
-      # A crash may leave any subset of the previous and candidate identities
-      # on the host. Unknown identities still block rollback.
+      # A crash may leave a changed digest for a known candidate identity. The
+      # marker and resource coordinates remain pinned by the journal; unknown
+      # identities still block rollback.
       jq -e --argjson obs "$observation" '
         (.previous_resources + .candidate_resources) as $known |
-        all($obs.resources[]; . as $seen | any($known[]; . == $seen))
+        def same_identity($a;$b):
+          $a.kind == $b.kind and $a.id == $b.id and
+          $a.owner == $b.owner and $a.deployment_id == $b.deployment_id and
+          $a.scope == $b.scope and ($a.role // null) == ($b.role // null) and
+          $a.identity.marker == $b.identity.marker;
+        all($obs.resources[]; . as $seen | any($known[]; same_identity($seen;.)))
       ' <<<"$old" >/dev/null
     fi || {
       entry_v2_error ownership_conflict preparing 'Observed resources differ from committed identities'; return 4;
@@ -315,9 +352,9 @@ entry_v2_reconcile_locked() {
   fi
   if [[ "$old" != null && "$(jq -r '.phase' <<<"$old")" != stable ]]; then
     # The old journal, not the current request, selects the rollback target.
-    state="$(jq -c '.phase="rolling_back" | .health="unknown"' <<<"$old")"
+    state="$(jq -c --argjson obs "$observation" '.phase="rolling_back" | .health="unknown" | .candidate_resources=$obs.resources' <<<"$old")"
     entry_v2_persist "$root" "$state" || return 12
-    if ! entry_v2_adapter_rollback "$spec" "$state" >/dev/null; then
+    if ! entry_v2_rollback "$spec" "$state" >/dev/null; then
       state="$(jq -c '.phase="failed" | .health="unhealthy"' <<<"$state")"
       entry_v2_persist "$root" "$state" || return 12
       entry_v2_error rollback_failed rolling_back 'Crash recovery failed'; return 8
@@ -375,7 +412,7 @@ entry_v2_fail() {
   local spec="$1" root="$2" state="$3" failed_phase="$4" code="$5" error
   state="$(jq -c '.phase="rolling_back" | .health="unknown"' <<<"$state")"
   entry_v2_persist "$root" "$state" || return 12
-  if entry_v2_adapter_rollback "$spec" "$state" >/dev/null; then
+  if entry_v2_rollback "$spec" "$state" >/dev/null; then
     error="$(jq -cn --arg code "$code" --arg phase "$failed_phase" '{code:$code,phase:$phase,retryable:true,rollback_status:"succeeded",message:"Combined Adapter transaction failed"}')"
     # First-install failure has no committed target; keep an explicit tombstone
     # rather than claiming stable ownership of an uncommitted deployment.
