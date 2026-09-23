@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trojanpanelnext.example/schema/entry-spec-v2.json",
+  "title": "Combined EntrySpec v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "topology", "revision", "deployment_id", "provider", "domains", "active_roles", "roles", "certificate_targets"],
+  "properties": {
+    "schema_version": {"const": 2},
+    "topology": {"const": "combined"},
+    "revision": {"type": "integer", "minimum": 1},
+    "deployment_id": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,62}$"},
+    "provider": {"const": "caddy-legacy"},
+    "domains": {
+      "type": "object", "additionalProperties": false, "required": ["web", "node"],
+      "properties": {"web": {"$ref": "#/$defs/domain"}, "node": {"$ref": "#/$defs/domain"}}
+    },
+    "active_roles": {"type": "array", "minItems": 1, "maxItems": 2, "uniqueItems": true, "items": {"enum": ["web", "node"]}},
+    "roles": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "web": {"type": "object", "additionalProperties": false, "required": ["web_upstream"], "properties": {"web_upstream": {"type": "string", "pattern": "^(127\\.0\\.0\\.1|\\[::1\\]):[0-9]{1,5}$"}}},
+        "node": {"type": "object", "additionalProperties": false, "required": ["node_exposure", "route_manifest", "certificate_consumer"], "properties": {"node_exposure": {"const": "direct"}, "route_manifest": {"$ref": "#/$defs/path"}, "certificate_consumer": {"$ref": "#/$defs/path"}}}
+      }
+    },
+    "certificate_targets": {
+      "type": "object", "additionalProperties": false,
+      "properties": {"web": {"$ref": "#/$defs/certificate_target"}, "node": {"$ref": "#/$defs/certificate_target"}}
+    },
+    "restore_intent": {"type": "object", "additionalProperties": false, "required": ["roles", "expected_committed_digest"], "properties": {"roles": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["web", "node"]}}, "expected_committed_digest": {"$ref": "#/$defs/hash"}}}
+  },
+  "$defs": {
+    "domain": {"type": "string", "maxLength": 253, "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$"},
+    "path": {"type": "string", "pattern": "^/[^/]"},
+    "hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "certificate_target": {"type": "object", "additionalProperties": false, "required": ["managed_dir", "cert_path", "key_path", "renewal_owner"], "properties": {"managed_dir": {"$ref": "#/$defs/path"}, "cert_path": {"$ref": "#/$defs/path"}, "key_path": {"$ref": "#/$defs/path"}, "renewal_owner": {"const": "caddy-legacy"}}}
+  },
+  "allOf": [
+    {"if": {"properties": {"active_roles": {"contains": {"const": "web"}}}}, "then": {"properties": {"roles": {"required": ["web"]}, "certificate_targets": {"required": ["web"]}}}},
+    {"if": {"properties": {"active_roles": {"contains": {"const": "node"}}}}, "then": {"properties": {"roles": {"required": ["node"]}, "certificate_targets": {"required": ["node"]}}}}
+  ]
+}

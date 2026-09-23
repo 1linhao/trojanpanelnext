@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trojanpanelnext.example/schema/observed-state-v2.json",
+  "title": "Combined ObservedState v2 journal",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "topology", "deployment_id", "desired_revision", "observed_revision", "desired_digest", "generation", "active_provider", "phase", "health", "domains", "active_roles", "committed_target", "candidate_target", "resources", "previous_resources", "candidate_resources", "certificates", "listeners", "capabilities"],
+  "properties": {
+    "schema_version": {"const": 2},
+    "topology": {"const": "combined"},
+    "deployment_id": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,62}$"},
+    "desired_revision": {"type": "integer", "minimum": 1},
+    "observed_revision": {"type": "integer", "minimum": 0},
+    "desired_digest": {"$ref": "#/$defs/hash"},
+    "generation": {"type": "integer", "minimum": 0},
+    "active_provider": {"const": "caddy-legacy"},
+    "phase": {"enum": ["stable", "preparing", "prepared", "activating", "verifying", "rolling_back", "failed"]},
+    "health": {"enum": ["healthy", "degraded", "unhealthy", "unknown"]},
+    "domains": {"type": "object", "additionalProperties": false, "required": ["web", "node"], "properties": {"web": {"type": "string"}, "node": {"type": "string"}}},
+    "active_roles": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["web", "node"]}},
+    "committed_target": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/target"}]},
+    "candidate_target": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/target"}]},
+    "resources": {"type": "array", "items": {"$ref": "#/$defs/resource"}},
+    "previous_resources": {"type": "array", "items": {"$ref": "#/$defs/resource"}},
+    "candidate_resources": {"type": "array", "items": {"$ref": "#/$defs/resource"}},
+    "certificates": {"type": "object", "additionalProperties": {"$ref": "#/$defs/certificate"}},
+    "listeners": {"type": "array", "items": {"$ref": "#/$defs/listener"}},
+    "capabilities": {"type": "array", "items": {"type": "string"}},
+    "last_error": {"type": "object"}
+  },
+  "$defs": {
+    "hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "target": {"type": "object", "additionalProperties": false, "required": ["digest", "spec"], "properties": {"digest": {"$ref": "#/$defs/hash"}, "spec": {"$ref": "entry-spec-v2.json"}}},
+    "resource": {"type": "object", "additionalProperties": false, "required": ["kind", "id", "owner", "deployment_id", "scope", "retention", "identity"], "properties": {"kind": {"type": "string", "minLength": 1}, "id": {"type": "string", "minLength": 1}, "owner": {"enum": ["controller", "provider", "external"]}, "deployment_id": {"type": "string"}, "scope": {"enum": ["shared", "role"]}, "role": {"enum": ["web", "node"]}, "retention": {"enum": ["managed", "preserve"]}, "identity": {"type": "object", "additionalProperties": false, "required": ["marker", "digest"], "properties": {"marker": {"type": "string", "minLength": 1}, "digest": {"$ref": "#/$defs/hash"}}}}},
+    "certificate": {"type": "object", "additionalProperties": false, "required": ["domain", "cert_path", "key_path", "fingerprint", "generation", "renewal_owner", "last_hook_status", "not_after"], "properties": {"domain": {"type": "string"}, "cert_path": {"type": "string", "pattern": "^/"}, "key_path": {"type": "string", "pattern": "^/"}, "fingerprint": {"type": "string", "minLength": 1}, "generation": {"type": "integer", "minimum": 1}, "renewal_owner": {"const": "caddy-legacy"}, "last_hook_status": {"enum": ["ok", "unchanged", "failed", "unknown"]}, "not_after": {"type": "string", "format": "date-time"}}},
+    "listener": {"type": "object", "additionalProperties": false, "required": ["transport", "address", "port", "purpose", "owner", "scope"], "properties": {"transport": {"const": "tcp"}, "address": {"type": "string"}, "port": {"type": "integer", "minimum": 1, "maximum": 65535}, "purpose": {"type": "string"}, "owner": {"enum": ["provider", "kernel"]}, "scope": {"enum": ["shared", "role"]}, "role": {"enum": ["web", "node"]}}}
+  },
+  "allOf": [{"if": {"properties": {"phase": {"const": "stable"}}}, "then": {"properties": {"candidate_target": {"type": "null"}}}}]
+}
