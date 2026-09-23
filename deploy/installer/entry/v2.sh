@@ -115,7 +115,9 @@ entry_v2_validate_state() {
       .renewal_owner == "caddy-legacy" and
       (.last_hook_status == "ok" or .last_hook_status == "unchanged" or
        .last_hook_status == "failed" or .last_hook_status == "unknown") and
-      (.not_after | type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T"));
+      (.not_after | type == "string" and
+        test("^[0-9]{4}-(0[1-9]|1[0-2])-([0-2][1-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\\.[0-9]+)?(Z|[+-]([01][0-9]|2[0-3]):[0-5][0-9])$") and
+        (try fromdateiso8601 catch null) != null);
     . as $state | .schema_version == 2 and .topology == "combined" and
     (keys - ["schema_version","topology","deployment_id","desired_revision","observed_revision","desired_digest","generation","active_provider","phase","health","domains","active_roles","committed_target","candidate_target","resources","previous_resources","candidate_resources","certificates","listeners","capabilities","last_error"] | length) == 0 and
     (.deployment_id | type == "string" and test("^[a-z][a-z0-9-]{0,62}$")) and
@@ -126,7 +128,7 @@ entry_v2_validate_state() {
     (.phase as $p | ["stable","preparing","prepared","activating","verifying","rolling_back","failed"] | index($p) != null) and
     (.health as $h | ["healthy","degraded","unhealthy","unknown"] | index($h) != null) and
     (.domains | type == "object" and keys == ["node","web"] and .node != .web) and
-    (.active_roles | type == "array" and length >= 1 and length == (unique | length)) and
+    (.active_roles | type == "array" and length >= 1 and length == (unique | length) and all(.[]; . == "web" or . == "node")) and
     (.desired_digest | hash) and
     (.committed_target == null or
       (.committed_target | type == "object" and keys == ["digest","spec"] and (.digest | hash) and

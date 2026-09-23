@@ -218,6 +218,14 @@ jq '.capabilities = [42]' "$tmp/valid-state" >"$snapshot"
 chmod 0600 "$snapshot"
 expect_fail main status --deployment trojanpanelnext-combined --state-root "$tmp/first-failure"
 [[ "$(jq -r '.code' <"$tmp/out")" == state_not_found_or_invalid ]] || fail 'non-string capability passed status'
+jq '.active_roles = ["web", "rogue"]' "$tmp/valid-state" >"$snapshot"
+chmod 0600 "$snapshot"
+expect_fail main status --deployment trojanpanelnext-combined --state-root "$tmp/first-failure"
+[[ "$(jq -r '.code' <"$tmp/out")" == state_not_found_or_invalid ]] || fail 'unknown active role passed status'
+jq '.certificates.web.not_after = "2026-99-99T99:99:99Z"' "$tmp/valid-state" >"$snapshot"
+chmod 0600 "$snapshot"
+expect_fail main status --deployment trojanpanelnext-combined --state-root "$tmp/first-failure"
+[[ "$(jq -r '.code' <"$tmp/out")" == state_not_found_or_invalid ]] || fail 'invalid certificate expiry passed status'
 jq '.committed_target.spec.unexpected = "field"' "$tmp/valid-state" >"$tmp/schema-tampered"
 schema_digest="$(jq -S -c '.committed_target.spec | del(.revision, .restore_intent) | .active_roles |= sort' "$tmp/schema-tampered" | sha256sum | awk '{print $1}')"
 jq --arg digest "$schema_digest" '.committed_target.digest = $digest | .desired_digest = $digest' "$tmp/schema-tampered" >"$tmp/schema-tampered-final"
