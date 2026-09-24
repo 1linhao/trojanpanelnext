@@ -187,6 +187,9 @@ test -f "${bundle}/entry/adapters/external.sh"
 test -x "${bundle}/entry/adapters/nginx_certbot.sh"
 test -x "${bundle}/entry/adapters/caddy.sh"
 "${bundle}/entry/entryctl.sh" --help | grep -q 'Usage:'
+grep -Fq 'install_entry_runtime_assets' "${bundle}/install.sh"
+grep -Fq 'CADDY_ADAPTER_ENTRYCTL_PATH=' "${bundle}/install.sh"
+grep -Fq 'CADDY_ADAPTER_IMAGE=' "${bundle}/install.sh"
 archive="${work}/trojanpanelnext-installer-1.2.3.tar.gz"
 "${PACKAGE}" --assets-dir "${bundle}" --output "${archive}" >/dev/null
 mkdir "${work}/extracted"

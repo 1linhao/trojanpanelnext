@@ -409,6 +409,11 @@ entry_v2_reconcile_locked() {
     entry_v2_error invalid_spec preparing 'Invalid or untrusted v2 EntrySpec'; return 2;
   }
   entry_v2_adapter_available || { entry_v2_error unsupported_capability preparing 'No combined v2 Adapter is connected'; return 3; }
+  if [[ "${CADDY_ADAPTER_FAKE:-0}" == 1 ]]; then
+    export CADDY_ADAPTER_REAL_CONNECTED=0
+  else
+    export CADDY_ADAPTER_REAL_CONNECTED=1
+  fi
   deployment="$(jq -r '.deployment_id' "$spec")"
   digest="$(entry_v2_target_digest "$spec")"
   if ! { mkdir -p "$root" && chmod 0700 "$root"; } 2>/dev/null; then
@@ -460,6 +465,12 @@ entry_v2_reconcile_locked() {
         if .certificates != $old.certificates then .generation += 1 else . end
       ' --argjson old "$old" <<<"$state")" || return 12
       entry_v2_persist "$root" "$result" || { entry_v2_infrastructure_error "$root" 'Unable to persist renewal result'; return 12; }
+      if [[ "${CADDY_ADAPTER_REAL_CONNECTED:-0}" == 1 ]] && ! caddy_adapter_enable_renewal_trigger; then
+        result="$(jq -c '.phase="stable" | .health="degraded" | .last_error={code:"dependency_missing",phase:"stable",message:"Unable to enable renewal trigger",retryable:true}' <<<"$result")"
+        entry_v2_persist "$root" "$result" || { entry_v2_infrastructure_error "$root" 'Unable to persist renewal trigger failure'; return 12; }
+        entry_v2_infrastructure_error "$root" 'Unable to enable renewal trigger'
+        return 12
+      fi
       if [[ "$(jq -c '.certificates' <<<"$old")" == "$(jq -c '.certificates' <<<"$result")" ]]; then
         jq -c '. + {result:"unchanged"}' <<<"$result"
       else
@@ -471,6 +482,12 @@ entry_v2_reconcile_locked() {
       if [[ "$(jq -r '.revision' "$spec")" != "$(jq -r '.desired_revision' <<<"$old")" ]]; then
         old="$(jq -c --argjson spec "$(jq -c . "$spec")" '.desired_revision=$spec.revision | .observed_revision=$spec.revision | .committed_target.spec=$spec' <<<"$old")"
         entry_v2_persist "$root" "$old" || { entry_v2_infrastructure_error "$root" 'Unable to persist state'; return 12; }
+      fi
+      if [[ "${CADDY_ADAPTER_REAL_CONNECTED:-0}" == 1 ]] && ! caddy_adapter_enable_renewal_trigger; then
+        old="$(jq -c '.phase="stable" | .health="degraded" | .last_error={code:"dependency_missing",phase:"stable",message:"Unable to enable renewal trigger",retryable:true}' <<<"$old")"
+        entry_v2_persist "$root" "$old" || { entry_v2_infrastructure_error "$root" 'Unable to persist renewal trigger failure'; return 12; }
+        entry_v2_infrastructure_error "$root" 'Unable to enable renewal trigger'
+        return 12
       fi
       jq -c '. + {result:"unchanged"}' <<<"$old"
       return 0
@@ -595,7 +612,12 @@ entry_v2_reconcile_locked() {
     .listeners=$obs.listeners | .capabilities=$obs.capabilities | del(.last_error)' <<<"$state")"
   entry_v2_persist "$root" "$result" || { entry_v2_infrastructure_error "$root" 'Unable to persist state'; return 12; }
   if [[ "${CADDY_ADAPTER_REAL_CONNECTED:-0}" == 1 ]]; then
-    caddy_adapter_enable_renewal_trigger || { entry_v2_infrastructure_error "$root" 'Unable to enable renewal trigger'; return 12; }
+    if ! caddy_adapter_enable_renewal_trigger; then
+      result="$(jq -c '.phase="stable" | .health="degraded" | .last_error={code:"dependency_missing",phase:"stable",message:"Unable to enable renewal trigger",retryable:true}' <<<"$result")"
+      entry_v2_persist "$root" "$result" || { entry_v2_infrastructure_error "$root" 'Unable to persist renewal trigger failure'; return 12; }
+      entry_v2_infrastructure_error "$root" 'Unable to enable renewal trigger'
+      return 12
+    fi
   fi
   printf '%s\n' "$result"
 }

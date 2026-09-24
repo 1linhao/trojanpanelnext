@@ -107,12 +107,19 @@ fi
 [[ "$(jq -r '.certificates | keys | join(",")' <<<"$created")" == node,web ]]
 [[ -x "$tmp/caddy/.entry-renew-hook" && -s "$tmp/caddy/.entry-spec.json" ]]
 [[ -s "$tmp/timers/trojanpanelnext-entry-renewal.service" && -s "$tmp/timers/trojanpanelnext-entry-renewal.timer" ]]
-if ! hook_result="$("$tmp/caddy/.entry-renew-hook" 2>"$tmp/hook.err")"; then
+if ! hook_result="$(env -i PATH="$PATH" HOME="$HOME" "$tmp/caddy/.entry-renew-hook" 2>"$tmp/hook.err")"; then
   cat "$tmp/hook.err" >&2
   printf 'Renewal hook returned: %s\n' "$hook_result" >&2
   exit 1
 fi
 [[ "$(jq -r '.result' <<<"$hook_result")" == unchanged ]]
+export CADDY_ADAPTER_TIMER_ENABLE_CMD='false'
+if entry_v2_reconcile "$tmp/spec" "$ENTRY_STATE_ROOT" >"$tmp/timer-failure"; then
+  echo 'Timer enable failure was reported as success' >&2; exit 1
+fi
+[[ "$(entryctl_status="$(entry_v2_locked_state "$ENTRY_STATE_ROOT" "$(jq -r '.deployment_id' "$tmp/spec")")"; jq -r '.health' <<<"$entryctl_status")" == degraded ]]
+export CADDY_ADAPTER_TIMER_ENABLE_CMD='test -f "$CADDY_ENTRY_TIMER_SERVICE"'
+[[ "$(entry_v2_reconcile "$tmp/spec" "$ENTRY_STATE_ROOT" | jq -r '.phase + ":" + .health')" == stable:healthy ]]
 cmp -s "$tmp/cert/node/fullchain.pem" "$tmp/consumer/fullchain.pem"
 cmp -s "$tmp/cert/node/privkey.pem" "$tmp/consumer/privkey.pem"
 ca="$CADDY_ADAPTER_ROOT/data/caddy/pki/authorities/local/root.crt"
@@ -170,14 +177,23 @@ if entry_v2_adapter_remove "$tmp/node-spec" "$node_only" 1; then
 fi
 [[ "$(docker inspect -f '{{.State.Running}}' "$container")" == true ]]
 docker stop "$core" >/dev/null
+node_consumer="$tmp/consumer"
+jq --arg digest "$(jq -r '.committed_target.digest' <<<"$node_only")" \
+  '.revision=4 | .active_roles=["web"] | del(.roles.node, .certificate_targets.node) |
+   .restore_intent={expected_committed_digest:$digest,roles:["web"]}' "$tmp/spec" >"$tmp/web-spec"
+chmod 0600 "$tmp/web-spec"
+web_only="$(entry_v2_reconcile "$tmp/web-spec" "$ENTRY_STATE_ROOT")"
+[[ "$(jq -r '.active_roles | join(",")' <<<"$web_only")" == web ]]
+[[ ! -e "$node_consumer/fullchain.pem" && ! -e "$node_consumer/privkey.pem" ]]
+[[ "$(jq -e 'any(.consumers[]; .role == "node" and .active == false and .removed == true)' "$tmp/caddy/.consumer-registry.json" >/dev/null; echo $?)" == 0 ]]
 cp "$tmp/caddy/.consumer-registry.json" "$tmp/registry-clean"
 jq '.consumers += [{deployment_id:"foreign",role:"node",path:"/tmp/foreign-consumer",owner:"provider",active:false}]' "$tmp/caddy/.consumer-registry.json" >"$tmp/registry-foreign"
 mv "$tmp/registry-foreign" "$tmp/caddy/.consumer-registry.json"
-if entry_v2_adapter_remove "$tmp/node-spec" "$node_only" 1; then
+if entry_v2_adapter_remove "$tmp/web-spec" "$web_only" 1; then
   echo 'Purge accepted an unknown consumer registry reference' >&2; exit 1
 fi
 cp "$tmp/registry-clean" "$tmp/caddy/.consumer-registry.json"
-entry_v2_adapter_remove "$tmp/node-spec" "$node_only" 1
+entry_v2_adapter_remove "$tmp/web-spec" "$web_only" 1
 [[ "$(docker inspect -f '{{.State.Running}}' "$container" 2>/dev/null || true)" == '' ]]
 [[ ! -e "$CADDY_ADAPTER_ROOT/data" && ! -e "$tmp/timers/trojanpanelnext-entry-renewal.timer" ]]
 printf 'foreign\n' >"$tmp/timers/trojanpanelnext-entry-renewal.service"

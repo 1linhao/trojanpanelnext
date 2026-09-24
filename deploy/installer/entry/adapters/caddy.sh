@@ -80,36 +80,152 @@ caddy_adapter_timer_dir() { printf '%s\n' "${CADDY_ADAPTER_TIMER_DIR:-/etc/syste
 caddy_adapter_timer_service() { printf '%s/trojanpanelnext-entry-renewal.service\n' "$(caddy_adapter_timer_dir)"; }
 caddy_adapter_timer_unit() { printf '%s/trojanpanelnext-entry-renewal.timer\n' "$(caddy_adapter_timer_dir)"; }
 
+caddy_adapter_validate_timer_dir() {
+  local dir="$(caddy_adapter_timer_dir)" probe
+  [[ "$dir" == /* && "$dir" != / && "$dir" != *'//' && "$dir" != */./* && "$dir" != */../* && "$dir" != */.. ]] || return 1
+  case "$dir" in
+    /etc/systemd/system|/run/systemd/system|/tmp/*) ;;
+    *) return 1 ;;
+  esac
+  [[ "$(realpath -m -- "$dir")" == "$dir" ]] || return 1
+  probe="$dir"
+  while [[ "$probe" != / ]]; do
+    [[ ! -L "$probe" ]] || return 1
+    probe="$(dirname -- "$probe")"
+  done
+}
+
+caddy_adapter_atomic_write() {
+  local path="$1" mode="$2" tmp
+  tmp="$(mktemp "${path}.tmp.XXXXXXXX")" || return 1
+  if ! cat >"$tmp" || ! chmod "$mode" "$tmp" || ! mv -f -- "$tmp" "$path"; then
+    rm -f -- "$tmp"
+    return 1
+  fi
+}
+
+caddy_adapter_validate_consumer_registry() {
+  local registry="$1"
+  jq -e '
+    type == "object" and (keys | sort) == ["consumers","domains"] and
+    (.consumers | type == "array" and all(.[];
+      type == "object" and (keys | sort) == ["active","deployment_id","owner","path","removed","role"] and
+      (.deployment_id | type == "string") and (.role | type == "string") and
+      (.path | type == "string" and startswith("/")) and (.owner == "provider") and
+      (.active | type == "boolean") and (.removed | type == "boolean"))) and
+    (.domains | type == "array" and all(.[];
+      type == "object" and (keys | sort) == ["active","deployment_id","domain","owner","role"] and
+      (.deployment_id | type == "string") and (.role | type == "string") and
+      (.domain | type == "string") and (.owner == "provider") and (.active | type == "boolean")))
+  ' "$registry" >/dev/null
+}
+
+caddy_adapter_backup_renewal_trigger() {
+  local root="$1" timer_dir backup path name
+  caddy_adapter_validate_timer_dir || return 1
+  timer_dir="$(caddy_adapter_timer_dir)"
+  backup="${root}/.rollback-renewal"
+  rm -rf -- "$backup" || return 1
+  mkdir -m 0700 "$backup" || return 1
+  local -a paths=(
+    "$(caddy_adapter_renewal_spec "$root")"
+    "$(caddy_adapter_renewal_hook "$root")"
+    "$(caddy_adapter_consumer_registry "$root")"
+    "$(caddy_adapter_timer_service)"
+    "$(caddy_adapter_timer_unit)"
+    "${timer_dir}/.tpn-renewal-owner"
+  )
+  for path in "${paths[@]}"; do
+    name="$(basename -- "$path")"
+    if [[ -e "$path" || -L "$path" ]]; then
+      [[ ! -L "$path" ]] || return 1
+      cp -p -- "$path" "${backup}/${name}" || return 1
+    else
+      : >"${backup}/.absent-${name}" || return 1
+    fi
+  done
+}
+
+caddy_adapter_restore_renewal_trigger() {
+  local root="$1" spec="$2" timer_dir backup path name
+  backup="${root}/.rollback-renewal"
+  [[ -d "$backup" && ! -L "$backup" ]] || return 1
+  caddy_adapter_validate_timer_dir || return 1
+  timer_dir="$(caddy_adapter_timer_dir)"
+  local deployment="$(jq -r '.deployment_id' "$spec")"
+  if [[ -e "${timer_dir}/.tpn-renewal-owner" ]]; then
+    [[ "$(cat "${timer_dir}/.tpn-renewal-owner" 2>/dev/null)" == "deployment=$deployment" ]] || return 1
+  fi
+  local -a paths=(
+    "$(caddy_adapter_renewal_spec "$root")"
+    "$(caddy_adapter_renewal_hook "$root")"
+    "$(caddy_adapter_consumer_registry "$root")"
+    "$(caddy_adapter_timer_service)"
+    "$(caddy_adapter_timer_unit)"
+    "${timer_dir}/.tpn-renewal-owner"
+  )
+  for path in "${paths[@]}"; do
+    [[ ! -L "$path" ]] || return 1
+    rm -f -- "$path" || return 1
+  done
+  for path in "${paths[@]}"; do
+    name="$(basename -- "$path")"
+    if [[ -e "${backup}/${name}" ]]; then
+      mv -f -- "${backup}/${name}" "$path" || return 1
+    elif [[ ! -e "${backup}/.absent-${name}" ]]; then
+      return 1
+    fi
+  done
+  caddy_adapter_validate_consumer_registry "$(caddy_adapter_consumer_registry "$root")" 2>/dev/null || {
+    [[ ! -e "$(caddy_adapter_consumer_registry "$root")" ]] || return 1
+  }
+  rm -rf -- "$backup"
+}
+
+caddy_adapter_commit_renewal_trigger() {
+  local root="$1"
+  [[ ! -e "${root}/.rollback-renewal" ]] || rm -rf -- "${root}/.rollback-renewal"
+}
+
 caddy_adapter_write_renewal_trigger() {
-  local spec="$1" root="$2" deployment entryctl state_root timer_dir service unit registry consumer
+  local spec="$1" root="$2" deployment entryctl state_root timer_dir service unit registry consumer image
   [[ "${CADDY_ADAPTER_FAKE:-0}" == 1 ]] && return 0
   deployment="$(jq -r '.deployment_id' "$spec")"
-  entryctl="${CADDY_ADAPTER_ENTRYCTL_PATH:-/usr/local/lib/trojanpanelnext/entry/entryctl.sh}"
+  entryctl="${CADDY_ADAPTER_ENTRYCTL_PATH:-${ENTRYCTL_PATH:-/usr/local/lib/trojanpanelnext/entry/entryctl.sh}}"
   state_root="${CADDY_ADAPTER_ENTRY_STATE_ROOT:-/tpdata/trojanpanelnext-entry/state}"
+  image="$(caddy_adapter_image)" || return 1
+  [[ -x "$entryctl" && ! -L "$entryctl" ]] || return 1
   timer_dir="$(caddy_adapter_timer_dir)"; service="$(caddy_adapter_timer_service)"; unit="$(caddy_adapter_timer_unit)"
+  caddy_adapter_validate_timer_dir || return 1
   mkdir -p "$root" "$timer_dir" || return 1
-  if [[ -e "$service" || -e "$unit" ]]; then
+  if [[ -e "$service" || -e "$unit" || -e "${timer_dir}/.tpn-renewal-owner" ]]; then
     [[ -f "${timer_dir}/.tpn-renewal-owner" && "$(cat "${timer_dir}/.tpn-renewal-owner" 2>/dev/null)" == "deployment=$deployment" ]] || return 1
   fi
+  [[ ! -L "$service" && ! -L "$unit" && ! -L "${timer_dir}/.tpn-renewal-owner" ]] || return 1
   local spec_tmp
   spec_tmp="$(mktemp)" || return 1
   jq -S . "$spec" >"$spec_tmp" || { rm -f "$spec_tmp"; return 1; }
   install -m 0600 "$spec_tmp" "$(caddy_adapter_renewal_spec "$root")" || { rm -f "$spec_tmp"; return 1; }
   rm -f "$spec_tmp"
   {
-    printf '#!/usr/bin/env bash\nset -Eeuo pipefail\n'
+    printf '#!/bin/bash\nset -Eeuo pipefail\n'
+    printf 'export CADDY_ADAPTER_IMAGE=%q\n' "$image"
+    printf 'export CADDY_ADAPTER_ENTRYCTL_PATH=%q\n' "$entryctl"
+    printf 'export CADDY_ADAPTER_TIMER_DIR=%q\n' "$timer_dir"
+    for var in CADDY_ADAPTER_ROOT CADDY_ADAPTER_DOCKER CADDY_ADAPTER_CONTAINER CADDY_ADAPTER_NODE_CONTAINER CADDY_ADAPTER_WEB_ROOT CADDY_ADAPTER_CA_FILE CADDY_ADAPTER_TEST_INTERNAL_TLS CADDY_ADAPTER_SKIP_DNS_CHECK CADDY_ADAPTER_CERT_WAIT_ATTEMPTS CADDY_ADAPTER_CERT_WAIT_SECONDS; do
+      [[ -n "${!var+x}" ]] && printf 'export %s=%q\n' "$var" "${!var}"
+    done
     printf 'exec %q reconcile --spec %q --state-root %q\n' "$entryctl" "$(caddy_adapter_renewal_spec "$root")" "$state_root"
-  } >"$(caddy_adapter_renewal_hook "$root")" || return 1
-  chmod 0700 "$(caddy_adapter_renewal_hook "$root")" || return 1
-  printf 'deployment=%s\n' "$deployment" >"${timer_dir}/.tpn-renewal-owner" || return 1
-  cat >"$service" <<EOF
+  } | caddy_adapter_atomic_write "$(caddy_adapter_renewal_hook "$root")" 0700 || return 1
+  printf 'deployment=%s\n' "$deployment" | caddy_adapter_atomic_write "${timer_dir}/.tpn-renewal-owner" 0600 || return 1
+  cat <<EOF | caddy_adapter_atomic_write "$service" 0644
 [Unit]
 Description=TrojanPanelNext Caddy certificate reconcile
 [Service]
 Type=oneshot
 ExecStart=$(caddy_adapter_renewal_hook "$root")
 EOF
-  cat >"$unit" <<EOF
+  cat <<EOF | caddy_adapter_atomic_write "$unit" 0644
 [Unit]
 Description=TrojanPanelNext Caddy certificate reconcile timer
 [Timer]
@@ -120,7 +236,12 @@ Persistent=true
 WantedBy=timers.target
 EOF
   registry="$(caddy_adapter_consumer_registry "$root")"
-  if [[ -e "$registry" ]]; then jq -e . "$registry" >/dev/null || return 1; else printf '{"consumers":[],"domains":[]}\n' >"$registry"; fi
+  if [[ -e "$registry" ]]; then
+    jq -c '.consumers |= map(. + {removed:(.removed // false)}) | .domains |= map(.)' "$registry" >"${registry}.tmp" && mv -f "${registry}.tmp" "$registry" || return 1
+    caddy_adapter_validate_consumer_registry "$registry" || return 1
+  else
+    printf '{"consumers":[],"domains":[]}\n' | caddy_adapter_atomic_write "$registry" 0600
+  fi
   jq -c --arg d "$deployment" --argjson domains "$(jq -c '.domains' "$spec")" --argjson roles "$(jq -c '.active_roles' "$spec")" '
     .domains |= ((. // []) | map(if .deployment_id == $d then .active = false else . end) +
       [$domains | to_entries[] | select(.key as $role | $roles | index($role) != null) |
@@ -129,15 +250,19 @@ EOF
   ' "$registry" >"${registry}.tmp" && mv -f "${registry}.tmp" "$registry" || return 1
   if jq -e '.active_roles | index("node") != null' "$spec" >/dev/null; then
     consumer="$(jq -r '.roles.node.certificate_consumer' "$spec")"
-    jq -c --arg d "$deployment" --arg p "$consumer" ' .consumers |= (map(select(.deployment_id != $d or .path != $p)) + [{deployment_id:$d,role:"node",path:$p,owner:"provider",active:true}]) ' "$registry" >"${registry}.tmp" && mv -f "${registry}.tmp" "$registry" || return 1
-    chmod 0600 "$registry"
+    jq -c --arg d "$deployment" --arg p "$consumer" ' .consumers |= (map(select(.deployment_id != $d or .role != "node")) + [{deployment_id:$d,role:"node",path:$p,owner:"provider",active:true,removed:false}]) ' "$registry" >"${registry}.tmp" && mv -f "${registry}.tmp" "$registry" || return 1
+  else
+    jq -c --arg d "$deployment" ' .consumers |= map(if .deployment_id == $d and .role == "node" then .active=false | .removed=true else . end) ' "$registry" >"${registry}.tmp" && mv -f "${registry}.tmp" "$registry" || return 1
   fi
+  caddy_adapter_validate_consumer_registry "$registry" || return 1
+  chmod 0600 "$registry"
 }
 
 caddy_adapter_enable_renewal_trigger() {
   local timer_dir service
   [[ "${CADDY_ADAPTER_FAKE:-0}" == 1 ]] && return 0
   timer_dir="$(caddy_adapter_timer_dir)"; service="$(caddy_adapter_timer_service)"
+  caddy_adapter_validate_timer_dir || return 1
   if [[ -n "${CADDY_ADAPTER_TIMER_ENABLE_CMD:-}" ]]; then
     CADDY_ENTRY_TIMER_SERVICE="$service" bash -c "$CADDY_ADAPTER_TIMER_ENABLE_CMD"
   elif [[ "$timer_dir" == /etc/systemd/system ]] && command -v systemctl >/dev/null 2>&1; then
@@ -150,6 +275,7 @@ caddy_adapter_remove_renewal_trigger() {
   [[ "${CADDY_ADAPTER_FAKE:-0}" == 1 ]] && return 0
   deployment="$(jq -r '.deployment_id' "$spec")"
   timer_dir="$(caddy_adapter_timer_dir)"; service="$(caddy_adapter_timer_service)"; unit="$(caddy_adapter_timer_unit)"
+  caddy_adapter_validate_timer_dir || return 1
   owner="${timer_dir}/.tpn-renewal-owner"
   if [[ -e "$service" || -e "$unit" ]]; then
     [[ -f "$owner" && "$(cat "$owner" 2>/dev/null)" == "deployment=$deployment" ]] || return 1
@@ -220,6 +346,7 @@ caddy_adapter_resource_json() {
 
 caddy_adapter_resource_list() {
   local spec="$1" root="$2" deployment="$3" roles="$4" include_files="${5:-1}" container
+  caddy_adapter_validate_timer_dir || return 1
   container="$(caddy_adapter_container)"
   if [[ "${include_files}" == 1 ]]; then
     [[ -f "${root%/}/Caddyfile" ]] && caddy_adapter_resource_json "$deployment" file "${root%/}/Caddyfile" shared managed '' "$root"
@@ -518,6 +645,8 @@ caddy_adapter_backup_certificates() {
     key="$(jq -r --arg role "$role" '.certificate_targets[$role].key_path' "$spec")"
     if [[ -f "$cert" && -f "$key" ]]; then
       cp -p -- "$cert" "$backup/${role}.crt" && cp -p -- "$key" "$backup/${role}.key" || return 1
+    else
+      : >"$backup/.absent-${role}.crt" && : >"$backup/.absent-${role}.key" || return 1
     fi
   done < <(jq -r '.active_roles[]' "$spec")
   if jq -e '.active_roles | index("node") != null' "$spec" >/dev/null; then
@@ -525,6 +654,8 @@ caddy_adapter_backup_certificates() {
     if [[ -f "$consumer/fullchain.pem" && -f "$consumer/privkey.pem" ]]; then
       cp -p -- "$consumer/fullchain.pem" "$backup/consumer.crt" &&
         cp -p -- "$consumer/privkey.pem" "$backup/consumer.key" || return 1
+    else
+      : >"$backup/.absent-consumer.crt" && : >"$backup/.absent-consumer.key" || return 1
     fi
   fi
   printf 'deployment=%s\n' "$(jq -r '.deployment_id' "$spec")" >"$backup/owner"
@@ -539,6 +670,8 @@ caddy_adapter_restore_certificates() {
     key="$(jq -r --arg role "$role" '.certificate_targets[$role].key_path' "$spec")"
     if [[ -f "$backup/${role}.crt" && -f "$backup/${role}.key" ]]; then
       cp -p -- "$backup/${role}.crt" "$cert" && cp -p -- "$backup/${role}.key" "$key" || return 1
+    elif [[ -e "$backup/.absent-${role}.crt" && -e "$backup/.absent-${role}.key" ]]; then
+      rm -f -- "$cert" "$key" "$(dirname "$cert")/.tpn-$(jq -r '.deployment_id' "$spec")-${role}.owner" || return 1
     fi
   done < <(jq -r '.active_roles[]' "$spec")
   if [[ -f "$backup/consumer.crt" && -f "$backup/consumer.key" ]]; then
@@ -559,8 +692,28 @@ caddy_adapter_restore_certificates() {
         fi
       fi
     fi
+  elif [[ -e "$backup/.absent-consumer.crt" && -e "$backup/.absent-consumer.key" ]]; then
+    consumer="$(jq -r '.roles.node.certificate_consumer // ""' "$spec")"
+    if [[ -n "$consumer" ]]; then
+      rm -f -- "$consumer/fullchain.pem" "$consumer/privkey.pem" "$consumer/.tpn-$(jq -r '.deployment_id' "$spec")-consumer.owner" || return 1
+    fi
   fi
   rm -rf -- "$backup"
+}
+
+caddy_adapter_retire_node_consumer() {
+  local old_spec="$1" new_spec="$2" consumer marker
+  [[ "${CADDY_ADAPTER_FAKE:-0}" == 1 ]] && return 0
+  jq -e '.active_roles | index("node") != null' "$old_spec" >/dev/null || return 0
+  jq -e '.active_roles | index("node") == null' "$new_spec" >/dev/null || return 0
+  consumer="$(jq -r '.roles.node.certificate_consumer' "$old_spec")"
+  caddy_adapter_safe_path "$consumer" || return 1
+  marker="$consumer/.tpn-$(jq -r '.deployment_id' "$old_spec")-consumer.owner"
+  if [[ -e "$consumer/fullchain.pem" || -e "$consumer/privkey.pem" || -e "$marker" ]]; then
+    [[ -f "$marker" && "$(cat "$marker" 2>/dev/null)" == "deployment=$(jq -r '.deployment_id' "$old_spec")" ]] || return 1
+    fuser -s "$consumer/fullchain.pem" "$consumer/privkey.pem" && return 1
+    rm -f -- "$consumer/fullchain.pem" "$consumer/privkey.pem" "$marker" || return 1
+  fi
 }
 
 caddy_adapter_refresh_node_consumer() {
@@ -734,6 +887,11 @@ entry_v2_adapter_probe() {
   caddy_adapter_check_node_runtime "$spec" 0 || return 1
   caddy_adapter_check_ports || return 1
   status="$(caddy_adapter_owner_status "$spec" "$root")"
+  if [[ "$status" == owned && "${CADDY_ADAPTER_FAKE:-0}" != 1 ]]; then
+    local registry="$(caddy_adapter_consumer_registry "$root")"
+    [[ -f "$registry" && ! -L "$registry" ]] || { [[ -z "$temporary" ]] || rm -f "$temporary"; return 1; }
+    caddy_adapter_validate_consumer_registry "$registry" || { [[ -z "$temporary" ]] || rm -f "$temporary"; return 1; }
+  fi
   # A role removal probes the last committed target so the controller can
   # compare every currently owned resource before staging the smaller target.
   if [[ "$state" != null && "$(jq -r '.committed_target == null' <<<"$state")" == false ]]; then
@@ -770,6 +928,9 @@ entry_v2_adapter_prepare() {
   fi
   mkdir -p "$root" "$root/data" || return 1
   chmod 0700 "$root" "$root/data" || return 1
+  if [[ "$(jq -r '.committed_target == null' <<<"$state")" == false ]]; then
+    caddy_adapter_backup_renewal_trigger "$root" || return 1
+  fi
   caddy_adapter_write_renewal_trigger "$spec" "$root" || return 1
   marker="$(caddy_adapter_marker "$root")"
   printf 'deployment=%s\n' "$(jq -r '.deployment_id' "$spec")" >"$marker" || return 1
@@ -790,7 +951,7 @@ entry_v2_adapter_prepare() {
 }
 
 entry_v2_adapter_activate() {
-  local spec="$1" state="$2" root config candidate docker container
+  local spec="$1" state="$2" root config candidate docker container old_spec
   root="$(caddy_adapter_root "$spec")"
   config="$(caddy_adapter_config "$root")"
   candidate="$(caddy_adapter_candidate "$root")"
@@ -812,7 +973,14 @@ entry_v2_adapter_activate() {
     "$docker" start "$container" >/dev/null || return 1
   fi
   caddy_adapter_wait_for_certificates "$spec" "$root" || return 1
-  caddy_adapter_refresh_node_consumer "$spec" || return 1
+  if jq -e '.active_roles | index("node") != null' "$spec" >/dev/null; then
+    caddy_adapter_refresh_node_consumer "$spec" || return 1
+  else
+    old_spec="$(mktemp)" || return 1
+    jq -c '.committed_target.spec' <<<"$state" >"$old_spec" || { rm -f "$old_spec"; return 1; }
+    caddy_adapter_retire_node_consumer "$old_spec" "$spec" || { rm -f "$old_spec"; return 1; }
+    rm -f "$old_spec"
+  fi
 }
 
 caddy_adapter_verify_runtime() {
@@ -870,7 +1038,10 @@ entry_v2_adapter_verify() {
   local observation
   observation="$(caddy_adapter_observation "$spec" "$root" 1)" || return 1
   rm -f -- "$(caddy_adapter_candidate "$root")" || return 1
-  caddy_adapter_apply_generations "$observation" "$state"
+  local result
+  result="$(caddy_adapter_apply_generations "$observation" "$state")" || return 1
+  caddy_adapter_commit_renewal_trigger "$root" || return 1
+  printf '%s\n' "$result"
 }
 
 entry_v2_adapter_refresh() {
@@ -897,8 +1068,12 @@ entry_v2_adapter_rollback() {
     fi
     return 1
   fi
-  caddy_adapter_owner_status "$spec" "$root" | grep -qx owned || return 1
-  caddy_adapter_check_container_owner "$spec" || return 1
+  if [[ "$(jq -r '.committed_target == null' <<<"$state")" == true ]]; then
+    caddy_adapter_check_container_owner "$spec" || return 1
+  else
+    caddy_adapter_owner_status "$spec" "$root" | grep -qx owned || return 1
+    caddy_adapter_check_container_owner "$spec" || return 1
+  fi
   rm -f "$candidate"
   if [[ "$(jq -r '.committed_target == null' <<<"$state")" == true ]]; then
     if [[ "${CADDY_ADAPTER_FAKE:-0}" == 1 ]]; then
@@ -939,7 +1114,11 @@ entry_v2_adapter_rollback() {
   jq -c '.committed_target.spec' <<<"$state" >"$old_spec" || { rm -f "$old_spec"; return 1; }
   local old_content
   old_content="$(caddy_adapter_render "$old_spec")" || { rm -f "$old_spec"; return 1; }
-  caddy_adapter_write_renewal_trigger "$old_spec" "$root" || { rm -f "$old_spec"; return 1; }
+  if [[ -d "${root}/.rollback-renewal" ]]; then
+    caddy_adapter_restore_renewal_trigger "$root" "$old_spec" || { rm -f "$old_spec"; return 1; }
+  else
+    caddy_adapter_write_renewal_trigger "$old_spec" "$root" || { rm -f "$old_spec"; return 1; }
+  fi
   caddy_adapter_install_config "$root" "$old_content" || { rm -f "$old_spec"; return 1; }
   caddy_adapter_restore_certificates "$old_spec" "$root" || { rm -f "$old_spec"; return 1; }
   if [[ "${CADDY_ADAPTER_FAKE:-0}" == 1 ]]; then rm -f "$old_spec"; return 0; fi
@@ -968,14 +1147,20 @@ entry_v2_adapter_remove() {
     # one-role spec cannot authorize deleting that role's Caddy storage.
     local storage_domain storage_dir registry
     registry="$(caddy_adapter_consumer_registry "$root")"
-    if [[ -e "$registry" ]]; then
-      jq -e --arg deployment "$(jq -r '.deployment_id' "$spec")" --arg consumer "$(jq -r '.roles.node.certificate_consumer // ""' "$spec")" '
-        (.consumers | type == "array") and
-        all(.consumers[]; .deployment_id == $deployment and .owner == "provider" and .path == $consumer)
-      ' "$registry" >/dev/null || return 1
-    elif jq -e '.active_roles | index("node") != null' "$spec" >/dev/null; then
-      return 1
-    fi
+    [[ -f "$registry" && ! -L "$registry" ]] || return 1
+    caddy_adapter_validate_consumer_registry "$registry" || return 1
+    jq -e --arg deployment "$(jq -r '.deployment_id' "$spec")" --arg consumer "$(jq -r '.roles.node.certificate_consumer // ""' "$spec")" '
+      all(.consumers[];
+        .deployment_id == $deployment and .owner == "provider" and
+        ((.active == true and .removed == false and .role == "node" and $consumer != "" and .path == $consumer) or
+         (.active == false and .removed == true)))
+    ' "$registry" >/dev/null || return 1
+    while IFS=$'\t' read -r consumer_path consumer_active consumer_removed; do
+      [[ "$consumer_active" == false && "$consumer_removed" == true ]] || continue
+      caddy_adapter_safe_path "$consumer_path" || return 1
+      [[ ! -e "$consumer_path/fullchain.pem" && ! -e "$consumer_path/privkey.pem" &&
+         ! -e "$consumer_path/.tpn-$(jq -r '.deployment_id' "$spec")-consumer.owner" ]] || return 1
+    done < <(jq -r --arg deployment "$(jq -r '.deployment_id' "$spec")" '.consumers[] | select(.deployment_id == $deployment) | [.path,.active,.removed] | @tsv' "$registry")
     for storage_dir in "${root}/data/caddy/certificates"/*/*; do
       [[ -d "$storage_dir" ]] || continue
       storage_domain="${storage_dir##*/}"

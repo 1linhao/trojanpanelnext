@@ -21,7 +21,7 @@
     {
       "name": "install",
       "path": "install.sh",
-      "sha256": "8fb5428ccf1d5cd6171407e4d68a1fadd8589cfb6ae9ee6c70571aa602e2afc9"
+      "sha256": "5ba54d49232d9da74e93a571fef1baa000a9e0fec94160df0ec9d46c5f34c1a8"
     },
     {
       "name": "secure-file",
@@ -61,7 +61,7 @@
     {
       "name": "entry/v2",
       "path": "entry/v2.sh",
-      "sha256": "1e0eec4880736b3a222e9598f747d884714aa5fa9f0eeedb99358c15b0789bc6"
+      "sha256": "944d46773522380d5ba5543a077ed2c16f41a4850aa23e5d2c8fe9123ccb07a4"
     },
     {
       "name": "entry/adapters/external",
@@ -76,7 +76,7 @@
     {
       "name": "entry/adapters/caddy",
       "path": "entry/adapters/caddy.sh",
-      "sha256": "362e61f51d4cda545df3bbd7df4413b212b68b744a2b580397d72c1a988b9521"
+      "sha256": "1ad9a58719a6e91917c64522ca8093bf655b9fbfc761fa31914a35e8a8543977"
     }
   ],
   "images": {
