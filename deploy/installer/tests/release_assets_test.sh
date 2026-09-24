@@ -19,6 +19,20 @@ assert_fails() {
   fi
 }
 
+assert_failure_contains() {
+  local expected="$1"
+  shift
+  local output
+  if output=$("$@" 2>&1); then
+    fail "command unexpectedly succeeded: $*"
+  fi
+  grep -Fq -- "${expected}" <<<"${output}" || {
+    printf '%s\n' "${output}" >&2
+    fail "failure output did not identify: ${expected}"
+  }
+  printf 'TRACE rejected=%s\n' "${expected}"
+}
+
 # Hermetic yq-compatible reader for direct release-installer validation. The
 # release preflight must reject unsafe images before dependency installation.
 yq() {
@@ -168,9 +182,14 @@ test -x "${bundle}/secure-file"
 test -x "${bundle}/node-bundle"
 test -x "${bundle}/entry/entryctl.sh"
 test -f "${bundle}/entry/controller.sh"
+test -f "${bundle}/entry/v2.sh"
 test -f "${bundle}/entry/adapters/external.sh"
 test -x "${bundle}/entry/adapters/nginx_certbot.sh"
+test -x "${bundle}/entry/adapters/caddy.sh"
 "${bundle}/entry/entryctl.sh" --help | grep -q 'Usage:'
+grep -Fq 'install_entry_runtime_assets' "${bundle}/install.sh"
+grep -Fq 'CADDY_ADAPTER_ENTRYCTL_PATH=' "${bundle}/install.sh"
+grep -Fq 'CADDY_ADAPTER_IMAGE=' "${bundle}/install.sh"
 archive="${work}/trojanpanelnext-installer-1.2.3.tar.gz"
 "${PACKAGE}" --assets-dir "${bundle}" --output "${archive}" >/dev/null
 mkdir "${work}/extracted"
@@ -196,7 +215,7 @@ for config in "${bundle}"/config-*.yaml; do
   grep -q '^  node_agent_image:' "${config}"
   ! grep -Eq '^  (purpose|panel_image|ui_image|core_image):' "${config}"
 done
-jq -e '.release_version == "1.2.3" and (.assets | length == 13)' \
+jq -e '.release_version == "1.2.3" and (.assets | length == 15)' \
   "${bundle}/release-manifest.json" >/dev/null
 EXPECTED_RELEASE_ASSET_PATHS=(
   bootstrap.sh
@@ -210,8 +229,10 @@ EXPECTED_RELEASE_ASSET_PATHS=(
   config-combined.yaml
   entry/entryctl.sh
   entry/controller.sh
+  entry/v2.sh
   entry/adapters/external.sh
   entry/adapters/nginx_certbot.sh
+  entry/adapters/caddy.sh
 )
 mapfile -t manifest_asset_paths < <(jq -r '.assets[].path' "${bundle}/release-manifest.json")
 cmp -s \
@@ -420,6 +441,18 @@ sed -i 's/asset_version: 1.2.3/asset_version: 1.2.4/' "${case_dir}/config-web.ya
 resign_asset "${case_dir}" config-web.yaml
 assert_fails "${VERIFY}" --assets-dir "${case_dir}" --config "${case_dir}/config-web.yaml"
 
+mixed_version_config="${work}/mixed-version-config.yaml"
+cp "${bundle}/config-web.yaml" "${mixed_version_config}"
+sed -i 's/asset_version: 1.2.3/asset_version: 9.9.9/' "${mixed_version_config}"
+assert_failure_contains 'configuration asset_version does not match release' \
+  "${VERIFY}" --assets-dir "${bundle}" --config "${mixed_version_config}"
+
+schema_mismatch_config="${work}/schema-mismatch-config.yaml"
+cp "${bundle}/config-web.yaml" "${schema_mismatch_config}"
+sed -i 's/schema_version: 1/schema_version: 2/' "${schema_mismatch_config}"
+assert_failure_contains 'configuration schema_version must be 1' \
+  "${VERIFY}" --assets-dir "${bundle}" --config "${schema_mismatch_config}"
+
 case_dir="$(copy_case invalid-manifest-semver)"
 jq '.release_version = "1.2.3-01"' "${case_dir}/release-manifest.json" >"${case_dir}/manifest.tmp"
 mv "${case_dir}/manifest.tmp" "${case_dir}/release-manifest.json"
@@ -449,6 +482,13 @@ jq '(.attestations[0].digest) = "sha256:ffffffffffffffffffffffffffffffffffffffff
 mv "${case_dir}/manifest.tmp" "${case_dir}/release-manifest.json"
 resign_manifest "${case_dir}"
 assert_fails "${VERIFY}" --assets-dir "${case_dir}" --config "${case_dir}/config-web.yaml"
+
+case_dir="$(copy_case manifest-schema-mismatch)"
+jq '.schema_version = 2' "${case_dir}/release-manifest.json" >"${case_dir}/manifest.tmp"
+mv "${case_dir}/manifest.tmp" "${case_dir}/release-manifest.json"
+resign_manifest "${case_dir}"
+assert_failure_contains 'manifest structure is invalid' \
+  "${VERIFY}" --assets-dir "${case_dir}" --config "${case_dir}/config-web.yaml"
 
 case_dir="$(copy_case duplicate-json-key)"
 sed -i '/"release_version":/a\  "release_version": "1.2.3",' "${case_dir}/release-manifest.json"
@@ -482,8 +522,11 @@ for image_env in API_IMAGE WEB_IMAGE NODE_AGENT_IMAGE; do
   grep -Fq 'subject-name: ${{ env.'"${image_env}"' }}' "${workflow}"
 done
 test "$(grep -Fxc '          subject-digest: ${{ steps.build.outputs.digest }}' "${workflow}")" = 3
+test "$(grep -Fxc '          sbom: true' "${workflow}")" = 3
+test "$(grep -Fxc '          provenance: mode=max' "${workflow}")" = 3
 grep -Fq 'subject-path: release-upload/*' "${workflow}"
 test "$(grep -Fc 'gh attestation verify' "${workflow}")" = 2
+grep -Fq -- '--signer-workflow' "${workflow}"
 grep -Fq 'deploy/installer/release/verify-attestation-results.sh "${verify_args[@]}"' "${workflow}"
 for bundle in api web node-agent; do
   grep -Fq "name: image-attestation-${bundle}" "${workflow}"

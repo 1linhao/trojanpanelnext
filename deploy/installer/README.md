@@ -215,6 +215,10 @@ MariaDB/Redis 等共享资源不会被单角色卸载误删；Node 移除会先�
 且不会在此之前 source 或执行其他随包程序。两条入口只有在完整校验 13 个资产（包括
 `secure-file` 和 `node-bundle`）后才首次执行 helper，并在安全快照后再次验证配置契约；全部通过后才越过宿主变更边界。
 
+发布流水线保留产品镜像的 SBOM 与最大级别 provenance，并为三张产品镜像和三个 Release
+文件（归档、manifest、SHA256SUMS）创建 GitHub artifact attestation。流水线用固定的发布工作流
+签名者重新验证这些 subject/digest；本地下载时也应指定相同签名者，而不是只校验仓库名：
+
 发布配置契约使用 `deployment_mode`、`api_image`、`web_image` 和 `node_agent_image`；旧的
 `purpose`、`panel_image`、`ui_image` 和 `core_image` 只供既有安装配置兼容读取，不会出现在新模板中。
 
@@ -225,7 +229,9 @@ MariaDB/Redis 等共享资源不会被单角色卸载误删；Node 移除会先�
 
 ```bash
 archive=trojanpanelnext-installer-<version>.tar.gz
-gh attestation verify "${archive}" --repo 1linhao/trojanpanelnext
+gh attestation verify "${archive}" \
+  --repo 1linhao/trojanpanelnext \
+  --signer-workflow 1linhao/trojanpanelnext/.github/workflows/publish-images.yml
 mkdir trojanpanelnext-installer
 tar -xzf "${archive}" -C trojanpanelnext-installer
 cd trojanpanelnext-installer

@@ -17,6 +17,7 @@ NODE_BUNDLE_HELPER_OVERRIDE="${NODE_BUNDLE_HELPER:-}"
 NODE_BUNDLE_HELPER="${NODE_BUNDLE_HELPER_OVERRIDE:-${INSTALLER_DIR}/node-bundle}"
 ENTRYCTL_PATH_OVERRIDE="${ENTRYCTL_PATH:-}"
 ENTRYCTL_PATH="${ENTRYCTL_PATH_OVERRIDE:-${INSTALLER_DIR}/entry/entryctl.sh}"
+ENTRY_RUNTIME_DIR="${ENTRY_RUNTIME_DIR:-/usr/local/lib/trojanpanelnext/entry}"
 ENTRY_SPEC_FILE="${ENTRY_SPEC_FILE:-}"
 EXTERNAL_MANAGED_DIR="${EXTERNAL_MANAGED_DIR:-${TP_DATA}/trojanpanelnext-external}"
 EXTERNAL_ROUTES_DIR="${EXTERNAL_ROUTES_DIR:-${TP_DATA}/trojan-panel-core/external}"
@@ -439,13 +440,16 @@ entry_controller() {
   }
   case "${action}" in
   reconcile)
-    "${ENTRYCTL_PATH}" reconcile --spec "${ENTRY_SPEC_FILE}"
+    CADDY_ADAPTER_IMAGE="${CADDY_IMAGE}" CADDY_ADAPTER_ENTRYCTL_PATH="${ENTRYCTL_PATH}" \
+      "${ENTRYCTL_PATH}" reconcile --spec "${ENTRY_SPEC_FILE}"
     ;;
   remove)
     if [[ "${TP_PURGE_DATA}" == 1 ]]; then
-      "${ENTRYCTL_PATH}" remove --spec "${ENTRY_SPEC_FILE}" --purge
+      CADDY_ADAPTER_IMAGE="${CADDY_IMAGE}" CADDY_ADAPTER_ENTRYCTL_PATH="${ENTRYCTL_PATH}" \
+        "${ENTRYCTL_PATH}" remove --spec "${ENTRY_SPEC_FILE}" --purge
     else
-      "${ENTRYCTL_PATH}" remove --spec "${ENTRY_SPEC_FILE}"
+      CADDY_ADAPTER_IMAGE="${CADDY_IMAGE}" CADDY_ADAPTER_ENTRYCTL_PATH="${ENTRYCTL_PATH}" \
+        "${ENTRYCTL_PATH}" remove --spec "${ENTRY_SPEC_FILE}"
     fi
     ;;
   *)
@@ -453,6 +457,27 @@ entry_controller() {
     return 1
     ;;
   esac
+}
+
+install_entry_runtime_assets() {
+  local target="${ENTRY_RUNTIME_DIR}" source
+  [[ "${target}" == /usr/local/lib/trojanpanelnext/entry ]] || return 1
+  for source in \
+    "${INSTALLER_DIR}/entry/entryctl.sh" \
+    "${INSTALLER_DIR}/entry/controller.sh" \
+    "${INSTALLER_DIR}/entry/v2.sh" \
+    "${INSTALLER_DIR}/entry/adapters/external.sh" \
+    "${INSTALLER_DIR}/entry/adapters/nginx_certbot.sh" \
+    "${INSTALLER_DIR}/entry/adapters/caddy.sh"; do
+    [[ -f "${source}" && ! -L "${source}" ]] || return 1
+  done
+  install -d -m 0755 "${target}" "${target}/adapters" || return 1
+  install -m 0755 "${INSTALLER_DIR}/entry/entryctl.sh" "${target}/entryctl.sh" || return 1
+  install -m 0644 "${INSTALLER_DIR}/entry/controller.sh" "${target}/controller.sh" || return 1
+  install -m 0644 "${INSTALLER_DIR}/entry/v2.sh" "${target}/v2.sh" || return 1
+  install -m 0644 "${INSTALLER_DIR}/entry/adapters/external.sh" "${target}/adapters/external.sh" || return 1
+  install -m 0755 "${INSTALLER_DIR}/entry/adapters/nginx_certbot.sh" "${target}/adapters/nginx_certbot.sh" || return 1
+  install -m 0755 "${INSTALLER_DIR}/entry/adapters/caddy.sh" "${target}/adapters/caddy.sh" || return 1
 }
 
 install_yq() {
@@ -2972,6 +2997,15 @@ main() {
     require_root
     if [[ "${command}" == install ]]; then
       preflight_install_dependencies
+      if [[ -n "${ENTRY_SPEC_FILE}" && "${INSTALLER_ASSET_VERSION}" != development ]]; then
+        install_entry_runtime_assets || {
+          echo_content red "Could not persist verified EntryController runtime assets"
+          exit 1
+        }
+      fi
+    fi
+    if [[ "${command}" != validate && -x "${ENTRY_RUNTIME_DIR}/entryctl.sh" && ! -L "${ENTRY_RUNTIME_DIR}/entryctl.sh" ]]; then
+      ENTRYCTL_PATH="${ENTRY_RUNTIME_DIR}/entryctl.sh"
     fi
     load_config "${mode}" "${TP_CONFIG_READ_FILE}" 1
   fi

@@ -2,6 +2,8 @@
 
 # Pure EntryController planning and transition helpers. Host mutations stay in
 # adapters; this file is intentionally sourceable by hermetic contract tests.
+# shellcheck source=v2.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/v2.sh"
 
 entry_normalize_provider() {
   local requested="${1:-}"
@@ -91,6 +93,10 @@ entry_validate_spec() {
   local spec="$1"
   command -v jq >/dev/null 2>&1 || return 10
   [[ -r "${spec}" ]] || return 11
+  if [[ "$(jq -r '.schema_version // empty' "${spec}" 2>/dev/null)" == 2 ]]; then
+    entry_v2_validate_spec "${spec}"
+    return $?
+  fi
   jq -e '
     .schema_version == 1 and
     (.revision | type == "number" and . >= 1 and floor == .) and
@@ -132,6 +138,10 @@ entry_validate_observed_state() {
   local state="$1"
   command -v jq >/dev/null 2>&1 || return 10
   [[ -r "${state}" ]] || return 11
+  if [[ "$(jq -r '.schema_version // empty' "${state}" 2>/dev/null)" == 2 ]]; then
+    entry_v2_validate_state "${state}" && entry_v2_verify_snapshot_file "${state}"
+    return $?
+  fi
   jq -e '
     .schema_version == 1 and
     (.deployment_id | type == "string" and test("^[a-z][a-z0-9-]{0,62}$")) and
@@ -154,6 +164,10 @@ entry_validate_observed_state() {
 entry_plan_spec() {
   local spec="$1"
   entry_validate_spec "${spec}" || return $?
+  if [[ "$(jq -r '.schema_version' "${spec}")" == 2 ]]; then
+    entry_v2_plan "${spec}" "${ENTRY_STATE_ROOT:-/tpdata/trojanpanelnext-entry/state}"
+    return $?
+  fi
 
   local provider purpose fallback_required available required missing actions
   provider="$(jq -r '.provider' "${spec}")"

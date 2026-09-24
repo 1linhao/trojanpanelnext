@@ -220,6 +220,11 @@ LF manifest bytes before sourcing or executing any other bundled program. Both e
 13 assets, including `secure-file` and `node-bundle`, before a helper can first execute, then verify the configuration
 contract again from the descriptor-safe snapshot before crossing the host mutation boundary.
 
+The publishing workflow retains an SBOM and maximum provenance for every product image, and creates
+GitHub artifact attestations for the three product images and the three Release files (archive,
+manifest, and SHA256SUMS). It re-verifies each subject/digest against the fixed publishing-workflow
+signer; downloaded assets should do the same rather than trusting the repository name alone:
+
 The release configuration contract uses `deployment_mode`, `api_image`, `web_image`, and
 `node_agent_image`. The legacy `purpose`, `panel_image`, `ui_image`, and `core_image` keys are
 accepted only when reading existing installer configurations and are not emitted in new templates.
@@ -233,7 +238,9 @@ SHA256SUMS. Verify its attestation before extracting and checking the bundled di
 
 ```bash
 archive=trojanpanelnext-installer-<version>.tar.gz
-gh attestation verify "${archive}" --repo 1linhao/trojanpanelnext
+gh attestation verify "${archive}" \
+  --repo 1linhao/trojanpanelnext \
+  --signer-workflow 1linhao/trojanpanelnext/.github/workflows/publish-images.yml
 mkdir trojanpanelnext-installer
 tar -xzf "${archive}" -C trojanpanelnext-installer
 cd trojanpanelnext-installer

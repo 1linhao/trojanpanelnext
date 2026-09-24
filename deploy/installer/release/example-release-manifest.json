@@ -11,17 +11,17 @@
     {
       "name": "release-contract",
       "path": "release-contract.sh",
-      "sha256": "6779c469ea7d9f6a397ffef130e89db1ba1bf6e0eed8b88827c93f30b273f5f9"
+      "sha256": "a4bc10033ea819fad4698e29a305828a1cc9e6e0b5cfe008cc4bf2e5aeac0613"
     },
     {
       "name": "verify-assets",
       "path": "verify-assets.sh",
-      "sha256": "639638c46c7f325320348d0e3b7c351ac21b7ae75da5e53898fc6980e10b0313"
+      "sha256": "297dedf4573e2417213542ddaec5c4881a70b279dfaf4d28f5228389c0938407"
     },
     {
       "name": "install",
       "path": "install.sh",
-      "sha256": "6bd2c2e20a07c532ccfd5dbe2e5f4e00cfafc501bec4396039f2d95c0c665537"
+      "sha256": "9122631a51b9f42dec2b030f903f5b05990a886a2bcabeb019b143fb15ad1410"
     },
     {
       "name": "secure-file",
@@ -46,17 +46,22 @@
     {
       "name": "config-combined",
       "path": "config-combined.yaml",
-      "sha256": "c74a34654fecbd53a3739f97ca1b6f45f4fa157c83589d998cbf7522b057ea37"
+      "sha256": "23bf60d633044fedc0ee0e92cce03adbb695bf9c9a1f7f2ebf88f998b8eaaf80"
     },
     {
       "name": "entry/entryctl",
       "path": "entry/entryctl.sh",
-      "sha256": "8a575d9e6397c7647c12817577ccec566335c2b6e11e4657d234bbf3a4c7d810"
+      "sha256": "e88a5843e9095fe12fed53c56c2da1653733f3dea86848d4ea871537833a01d8"
     },
     {
       "name": "entry/controller",
       "path": "entry/controller.sh",
-      "sha256": "21d384fb335e7a6809caed9f9779e7029d05d80d9d00a91500259aa045f00cf5"
+      "sha256": "0b9462159a051e836d2668e52f46e8991e9f2bbc015f374d39559f5055d24bad"
+    },
+    {
+      "name": "entry/v2",
+      "path": "entry/v2.sh",
+      "sha256": "982f720a93007dcf2fdf672515123db876e2b4eeaba205421ce9ecff051ef961"
     },
     {
       "name": "entry/adapters/external",
@@ -67,6 +72,11 @@
       "name": "entry/adapters/nginx_certbot",
       "path": "entry/adapters/nginx_certbot.sh",
       "sha256": "73a70fe68b47b5cd2631968287d3aa8641f1a1cd109c138511ff4f14c9c7efb2"
+    },
+    {
+      "name": "entry/adapters/caddy",
+      "path": "entry/adapters/caddy.sh",
+      "sha256": "fcd97ebbf1bebc347c82fb350925fd5197bf3bddbcaf54c09e6cdee5ecad03b3"
     }
   ],
   "images": {
