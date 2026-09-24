@@ -21,7 +21,7 @@
     {
       "name": "install",
       "path": "install.sh",
-      "sha256": "9122631a51b9f42dec2b030f903f5b05990a886a2bcabeb019b143fb15ad1410"
+      "sha256": "c0fbc0d9b2a7b9510fb01360183d5beb4df318418f4b13600aebde924ad8e9a7"
     },
     {
       "name": "secure-file",
@@ -46,7 +46,7 @@
     {
       "name": "config-combined",
       "path": "config-combined.yaml",
-      "sha256": "23bf60d633044fedc0ee0e92cce03adbb695bf9c9a1f7f2ebf88f998b8eaaf80"
+      "sha256": "c74a34654fecbd53a3739f97ca1b6f45f4fa157c83589d998cbf7522b057ea37"
     },
     {
       "name": "entry/entryctl",
