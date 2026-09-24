@@ -155,7 +155,7 @@ entry_v2_validate_state() {
     (.listeners | type == "array" and all(.[];
       type == "object" and
       (keys - ["transport","address","port","purpose","owner","scope","role"] | length) == 0 and
-      .transport == "tcp" and (.address | type == "string") and
+      (.transport == "tcp" or .transport == "udp") and (.address | type == "string") and
       (.port | type == "number" and floor == . and . >= 1 and . <= 65535) and
       (.purpose | type == "string" and length > 0) and
       (.owner == "provider" or .owner == "kernel") and
@@ -294,8 +294,17 @@ entry_v2_validate_observation() {
         $a.scope == $b.scope and ($a.role // null) == ($b.role // null) and
         $a.identity.marker == $b.identity.marker and
         $a.identity.digest == $b.identity.digest;
-      (all($observation.resources[]; . as $seen | any($known[]; same_identity($seen;.)))) and
-      (all($observation.candidate_resources[]; . as $seen | any($known[]; same_identity($seen;.))))
+      def issued_certificate($seen):
+        $seen.kind == "certificate" and $seen.owner == "provider" and
+        $seen.deployment_id == $journal.deployment_id and
+        any($journal.candidate_target.spec.active_roles[]; . as $role |
+          $seen.role == $role and
+          ($seen.id == $journal.candidate_target.spec.certificate_targets[$role].cert_path or
+           $seen.id == $journal.candidate_target.spec.certificate_targets[$role].key_path));
+      (all($observation.resources[]; . as $seen |
+        any($known[]; same_identity($seen;.)) or issued_certificate($seen))) and
+      (all($observation.candidate_resources[]; . as $seen |
+        any($known[]; same_identity($seen;.)) or issued_certificate($seen)))
     ' >/dev/null 2>&1 || return 1
     return 0
   fi
@@ -391,6 +400,48 @@ entry_v2_reconcile_locked() {
   if [[ "$old" != null ]]; then
     entry_v2_check_target "$spec" "$old" "$digest" || return $?
     phase="$(jq -r '.phase' <<<"$old")"
+    if [[ "$phase" == stable && "$digest" == "$(jq -r '.committed_target.digest // ""' <<<"$old")" ]] &&
+       declare -F entry_v2_adapter_refresh >/dev/null; then
+      observation="$(entry_v2_adapter_probe "$spec" "$old")" || {
+        entry_v2_error ownership_conflict stable 'Renewal probe rejected host ownership'; return 4;
+      }
+      jq -e --argjson obs "$observation" '.resources == $obs.resources' <<<"$old" >/dev/null || {
+        entry_v2_error ownership_conflict stable 'Renewal resource identity changed'; return 4;
+      }
+      state="$(entry_v2_state "$spec" verifying unknown "$digest" "$old" "$observation")"
+      entry_v2_persist "$root" "$state" || { entry_v2_infrastructure_error "$root" 'Unable to persist renewal journal'; return 12; }
+      if ! verified="$(entry_v2_adapter_refresh "$spec" "$old")" ||
+         ! entry_v2_validate_observation "$verified" "$spec" verify; then
+        entry_v2_fail "$spec" "$root" "$state" verifying renewal_failed || return $?
+        return 7
+      fi
+      jq -e --argjson obs "$verified" '
+        def same($a;$b): $a.kind == $b.kind and $a.id == $b.id and
+          $a.identity.marker == $b.identity.marker and
+          ($a.kind == "certificate" or $a.identity.digest == $b.identity.digest);
+        . as $journal |
+        all($journal.resources[]; . as $previous | any($obs.resources[]; same($previous;.))) and
+        all($obs.resources[]; . as $new | any($journal.resources[]; same($new;.)))
+      ' <<<"$old" >/dev/null || {
+        entry_v2_fail "$spec" "$root" "$state" verifying ownership_conflict || return $?
+        return 7
+      }
+      result="$(jq -c --argjson obs "$verified" --argjson spec "$(jq -c . "$spec")" '
+        .phase="stable" | .health="healthy" | .candidate_target=null |
+        .candidate_resources=[] | .previous_resources=[] | .resources=$obs.resources |
+        .certificates=$obs.certificates | .listeners=$obs.listeners |
+        .desired_revision=$spec.revision | .observed_revision=$spec.revision |
+        .committed_target.spec=$spec |
+        if .certificates != $old.certificates then .generation += 1 else . end
+      ' --argjson old "$old" <<<"$state")" || return 12
+      entry_v2_persist "$root" "$result" || { entry_v2_infrastructure_error "$root" 'Unable to persist renewal result'; return 12; }
+      if [[ "$(jq -c '.certificates' <<<"$old")" == "$(jq -c '.certificates' <<<"$result")" ]]; then
+        jq -c '. + {result:"unchanged"}' <<<"$result"
+      else
+        jq -c '. + {result:"renewed"}' <<<"$result"
+      fi
+      return 0
+    fi
     if [[ "$phase" == stable && "$(jq -r '.health' <<<"$old")" == healthy && "$digest" == "$(jq -r '.committed_target.digest // ""' <<<"$old")" ]]; then
       if [[ "$(jq -r '.revision' "$spec")" != "$(jq -r '.desired_revision' <<<"$old")" ]]; then
         old="$(jq -c --argjson spec "$(jq -c . "$spec")" '.desired_revision=$spec.revision | .observed_revision=$spec.revision | .committed_target.spec=$spec' <<<"$old")"
@@ -433,8 +484,17 @@ entry_v2_reconcile_locked() {
           $a.scope == $b.scope and ($a.role // null) == ($b.role // null) and
           $a.identity.marker == $b.identity.marker and
           $a.identity.digest == $b.identity.digest;
-        (all($obs.resources[]; . as $seen | any($known[]; same_identity($seen;.)))) and
-        (all($obs.candidate_resources[]; . as $seen | any($known[]; same_identity($seen;.))))
+        . as $journal |
+        def issued_certificate($seen):
+          $seen.kind == "certificate" and $seen.owner == "provider" and
+          any($journal.candidate_target.spec.active_roles[]; . as $role |
+            $seen.role == $role and
+            ($seen.id == $journal.candidate_target.spec.certificate_targets[$role].cert_path or
+             $seen.id == $journal.candidate_target.spec.certificate_targets[$role].key_path));
+        (all($obs.resources[]; . as $seen |
+          any($known[]; same_identity($seen;.)) or issued_certificate($seen))) and
+        (all($obs.candidate_resources[]; . as $seen |
+          any($known[]; same_identity($seen;.)) or issued_certificate($seen)))
       ' <<<"$old" >/dev/null
     fi || {
       entry_v2_error ownership_conflict preparing 'Observed resources differ from committed identities'; return 4;

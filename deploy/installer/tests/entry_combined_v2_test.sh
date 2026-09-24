@@ -82,6 +82,9 @@ entry_v2_adapter_verify() {
   [[ "${FAIL_AT:-}" != verify ]] || return 1
   fake_observation "$1" "$2" verify
 }
+entry_v2_adapter_refresh() {
+  fake_observation "$1" "$2" verify
+}
 entry_v2_adapter_rollback() {
   printf 'rollback\n' >>"$trace"
   printf 'rollback-spec-revision:%s\n' "$(jq -r '.revision' "$1")" >>"$trace"
@@ -131,7 +134,8 @@ created="$(entry_v2_reconcile "$tmp/spec" "$ENTRY_STATE_ROOT")"
 [[ "$(tr '\n' ' ' <"$trace")" == 'probe prepare activate verify ' ]] || fail 'stage order'
 : >"$trace"
 unchanged="$(entry_v2_reconcile "$tmp/spec" "$ENTRY_STATE_ROOT")"
-[[ "$(jq -r '.result' <<<"$unchanged")" == unchanged && ! -s "$trace" ]] || fail 'idempotency'
+[[ "$(jq -r '.result' <<<"$unchanged")" == unchanged && "$(cat "$trace")" == probe ]] || fail 'idempotency'
+: >"$trace"
 make_spec '.revision = 1 | .roles.web.web_upstream = "127.0.0.1:9999"' "$tmp/conflict"
 expect_fail entry_v2_reconcile "$tmp/conflict" "$ENTRY_STATE_ROOT"
 [[ "$(jq -r '.code' <"$tmp/out")" == invalid_spec && ! -s "$trace" ]] || fail 'revision conflict had side effects'
@@ -151,6 +155,14 @@ recovery_observation="$(FAKE_CANDIDATE_DIGEST=b fake_observation "$tmp/web" "$(c
 if entry_v2_validate_observation "$recovery_observation" "$tmp/web" recovery "$(cat "$ENTRY_STATE_ROOT/trojanpanelnext-combined.json")"; then
   fail 'recovery accepted an unknown candidate resource'
 fi
+issued_observation="$(FAKE_CANDIDATE_DIGEST=b fake_observation "$tmp/web" "$(cat "$ENTRY_STATE_ROOT/trojanpanelnext-combined.json")" probe |
+  jq --arg path "$(jq -r '.certificate_targets.web.cert_path' "$tmp/web")" '
+    {kind:"certificate",id:$path,owner:"provider",deployment_id:.deployment_id,
+     scope:"role",role:"web",retention:"managed",
+     identity:{marker:("owned:"+.deployment_id+":certificate:"+$path),digest:("d"*64)}} as $issued |
+    .resources += [$issued] | .candidate_resources += [$issued]')"
+entry_v2_validate_observation "$issued_observation" "$tmp/web" recovery \
+  "$(cat "$ENTRY_STATE_ROOT/trojanpanelnext-combined.json")" || fail 'recovery rejected a known candidate ACME certificate'
 FAKE_UNKNOWN_CANDIDATE=1 FAKE_CANDIDATE_DIGEST=b expect_fail entry_v2_reconcile "$tmp/web" "$ENTRY_STATE_ROOT"
 [[ "$(jq -r '.code' <"$tmp/out")" == ownership_conflict ]] || fail 'unknown recovery digest was accepted'
 [[ "$(tr '\n' ' ' <"$trace")" == 'probe ' ]] || fail 'unknown recovery digest caused side effects'

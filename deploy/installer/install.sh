@@ -429,13 +429,13 @@ entry_controller() {
   }
   case "${action}" in
   reconcile)
-    "${ENTRYCTL_PATH}" reconcile --spec "${ENTRY_SPEC_FILE}"
+    CADDY_ADAPTER_IMAGE="${CADDY_IMAGE}" "${ENTRYCTL_PATH}" reconcile --spec "${ENTRY_SPEC_FILE}"
     ;;
   remove)
     if [[ "${TP_PURGE_DATA}" == 1 ]]; then
-      "${ENTRYCTL_PATH}" remove --spec "${ENTRY_SPEC_FILE}" --purge
+      CADDY_ADAPTER_IMAGE="${CADDY_IMAGE}" "${ENTRYCTL_PATH}" remove --spec "${ENTRY_SPEC_FILE}" --purge
     else
-      "${ENTRYCTL_PATH}" remove --spec "${ENTRY_SPEC_FILE}"
+      CADDY_ADAPTER_IMAGE="${CADDY_IMAGE}" "${ENTRYCTL_PATH}" remove --spec "${ENTRY_SPEC_FILE}"
     fi
     ;;
   *)

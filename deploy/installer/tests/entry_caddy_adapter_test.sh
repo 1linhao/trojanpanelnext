@@ -23,11 +23,16 @@ for role in web node; do
     -keyout "$tmp/certs/$role/key.pem" -out "$tmp/certs/$role/cert.pem" \
     -days 2 -subj "/CN=${domain}" -addext "subjectAltName=DNS:${domain}" >/dev/null 2>&1
 done
+cat "$tmp/certs/web/cert.pem" "$tmp/certs/node/cert.pem" >"$tmp/test-ca.pem"
+export CADDY_ADAPTER_CA_FILE="$tmp/test-ca.pem"
+printf '{"routes":[{"network":"tcp","port":8443}]}' >"$tmp/routes.json"
 
 jq --arg root "$CADDY_ADAPTER_ROOT" \
+  --arg routes "$tmp/routes.json" \
   --arg wc "$tmp/certs/web/cert.pem" --arg wk "$tmp/certs/web/key.pem" \
   --arg nc "$tmp/certs/node/cert.pem" --arg nk "$tmp/certs/node/key.pem" \
   '.domains.web = "web.example.com" | .domains.node = "node.example.com" |
+   .roles.node.route_manifest=$routes |
    .certificate_targets.web.managed_dir = $root | .certificate_targets.node.managed_dir = $root |
    .certificate_targets.web.cert_path = $wc | .certificate_targets.web.key_path = $wk |
    .certificate_targets.node.cert_path = $nc | .certificate_targets.node.key_path = $nk' \
@@ -56,6 +61,26 @@ export CADDY_ADAPTER_PORT_CHECK_CMD='false'
 unchanged="$(entry_v2_reconcile "$tmp/spec" "$ENTRY_STATE_ROOT")"
 [[ "$(jq -r '.result' <<<"$unchanged")" == unchanged ]] || fail 'same target was not idempotent'
 unset CADDY_ADAPTER_PORT_CHECK_CMD
+
+# A renewal changes only the node CertificateRef and its generation.
+openssl req -x509 -newkey rsa:2048 -nodes -keyout "$tmp/new-node.key" \
+  -out "$tmp/new-node.crt" -days 3 -subj '/CN=node.example.com' \
+  -addext 'subjectAltName=DNS:node.example.com' >/dev/null 2>&1
+cat "$tmp/new-node.crt" >>"$tmp/test-ca.pem"
+original_refresh="$(declare -f entry_v2_adapter_refresh)"
+entry_v2_adapter_refresh() {
+  cp "$tmp/new-node.crt" "$tmp/certs/node/cert.pem"
+  cp "$tmp/new-node.key" "$tmp/certs/node/key.pem"
+  local observed
+  observed="$(caddy_adapter_observation "$1" "$CADDY_ADAPTER_ROOT" 1)" || return 1
+  caddy_adapter_apply_generations "$observed" "$2"
+}
+renewed="$(entry_v2_reconcile "$tmp/spec" "$ENTRY_STATE_ROOT")"
+[[ "$(jq -r '.result' <<<"$renewed")" == renewed ]] || fail 'renewal was not observed'
+[[ "$(jq -r '.certificates.node.generation' <<<"$renewed")" == 2 ]] || fail 'node certificate generation did not advance'
+[[ "$(jq -r '.certificates.web.generation' <<<"$renewed")" == 1 ]] || fail 'unchanged web certificate generation advanced'
+[[ "$(jq -r '.generation' <<<"$renewed")" == 2 ]] || fail 'deployment renewal generation did not advance'
+eval "$original_refresh"
 
 printf 'deployment=other\n' >"$CADDY_ADAPTER_ROOT/.trojanpanelnext-owner"
 jq '.revision = 2 | .roles.web.web_upstream = "127.0.0.1:8899"' "$tmp/spec" >"$tmp/changed"
@@ -96,6 +121,15 @@ jq '.revision = 4 | .active_roles = ["web"] | del(.roles.node, .certificate_targ
 chmod 0600 "$tmp/web"
 one_role="$(entry_v2_reconcile "$tmp/web" "$ENTRY_STATE_ROOT")"
 [[ "$(jq -r '.active_roles | join(",")' <<<"$one_role")" == web ]] || fail 'role removal did not commit'
+bash -c 'exec 9<"$1"; sleep 30' held-cert "$tmp/certs/web/cert.pem" &
+consumer_pid=$!
+sleep 1
+if entry_v2_adapter_remove "$tmp/web" "$one_role" 1 >/dev/null 2>&1; then
+  kill "$consumer_pid" 2>/dev/null || true
+  fail 'purge accepted an open certificate consumer'
+fi
+kill "$consumer_pid" 2>/dev/null || true
+wait "$consumer_pid" 2>/dev/null || true
 removed="$(entry_v2_remove "$tmp/web" "$ENTRY_STATE_ROOT" 1)"
 [[ "$(jq -r '.result' <<<"$removed")" == removed ]] || fail 'owned Caddy resources were not removed'
 [[ ! -e "$CADDY_ADAPTER_ROOT/Caddyfile" && ! -e "$tmp/certs/web/cert.pem" ]] || fail 'purge crossed ownership boundary'
