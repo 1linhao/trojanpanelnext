@@ -267,6 +267,8 @@ caddy_adapter_enable_renewal_trigger() {
     CADDY_ENTRY_TIMER_SERVICE="$service" bash -c "$CADDY_ADAPTER_TIMER_ENABLE_CMD"
   elif [[ "$timer_dir" == /etc/systemd/system ]] && command -v systemctl >/dev/null 2>&1; then
     systemctl daemon-reload && systemctl enable --now trojanpanelnext-entry-renewal.timer >/dev/null
+  else
+    return 1
   fi
 }
 
