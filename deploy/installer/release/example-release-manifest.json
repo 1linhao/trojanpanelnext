@@ -76,7 +76,7 @@
     {
       "name": "entry/adapters/caddy",
       "path": "entry/adapters/caddy.sh",
-      "sha256": "73ce30be6c1530024876130a69cea892a5be90fe020e7e58d267d64d38331d72"
+      "sha256": "add1d35901145757473239d002823292cee61062b36be9dee88ee6345533d603"
     }
   ],
   "images": {

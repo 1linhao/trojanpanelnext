@@ -315,6 +315,15 @@ caddy_adapter_check_node_runtime() {
   done < <(jq -r '.routes[] | [.network,(.port | tostring)] | @tsv' "$(jq -r '.roles.node.route_manifest' "$spec")")
 }
 
+caddy_adapter_wait_node_runtime() {
+  local spec="$1" attempts="${CADDY_ADAPTER_NODE_WAIT_ATTEMPTS:-20}" delay="${CADDY_ADAPTER_NODE_WAIT_SECONDS:-1}" i
+  for ((i = 0; i < attempts; i++)); do
+    caddy_adapter_check_node_runtime "$spec" && return 0
+    sleep "$delay"
+  done
+  return 1
+}
+
 entry_v2_adapter_plan_ready() {
   caddy_adapter_check_node_runtime "$1"
 }
@@ -493,7 +502,11 @@ caddy_adapter_refresh_node_consumer() {
     mount="$($docker inspect -f '{{range .Mounts}}{{if eq .Destination "'"$consumer"'"}}{{.Source}}{{end}}{{end}}' "$core" 2>/dev/null)" || return 1
     [[ "$mount" == "$consumer" ]] || return 1
     [[ "$($docker inspect -f '{{.State.Running}}' "$core" 2>/dev/null)" == true ]] || return 1
-    if [[ "$changed" == 1 ]]; then "$docker" restart "$core" >/dev/null || return 1; fi
+    if [[ "$changed" == 1 ]]; then
+      "$docker" restart "$core" >/dev/null || return 1
+      # Docker restart returns before the Node listener is necessarily bound.
+      caddy_adapter_wait_node_runtime "$spec" || return 1
+    fi
   else
     return 1
   fi

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -Eeuo pipefail
+set -euo pipefail
 
 repo="$(cd "$(dirname "$0")/../../.." && pwd)"
 source "$repo/deploy/installer/entry/controller.sh"
@@ -8,7 +8,9 @@ source "$repo/deploy/installer/entry/adapters/caddy.sh"
 on_error() {
   local status="$1" line="$2"
   printf 'Caddy Docker smoke failed at line %s (status %s)\n' "$line" "$status" >&2
-  [[ -z "${container:-}" ]] || docker logs --tail 20 "$container" >&2 || true
+  if [[ -n "${container:-}" ]] && docker inspect "$container" >/dev/null 2>&1; then
+    docker logs --tail 20 "$container" >&2 || true
+  fi
 }
 trap 'on_error "$?" "$LINENO"' ERR
 
@@ -92,7 +94,12 @@ fi
 [[ "$(docker inspect -f '{{.Id}}' "$container" 2>/dev/null || true)" == '' ]]
 mv "$tmp/webroot/held-index.html" "$tmp/webroot/index.html"
 
-created="$(entry_v2_reconcile "$tmp/spec" "$ENTRY_STATE_ROOT")"
+if ! created="$(entry_v2_reconcile "$tmp/spec" "$ENTRY_STATE_ROOT")"; then
+  printf 'First-install reconcile returned: %s\n' "$created" >&2
+  printf 'Core status: %s\n' "$(docker inspect -f '{{.State.Status}}' "$core" 2>/dev/null || true)" >&2
+  ss -Hlnpt '( sport = :80 or sport = :443 or sport = :8443 )' >&2 || true
+  exit 7
+fi
 [[ "$(jq -r '.phase + ":" + .health' <<<"$created")" == stable:healthy ]]
 [[ "$(jq -r '.certificates | keys | join(",")' <<<"$created")" == node,web ]]
 cmp -s "$tmp/cert/node/fullchain.pem" "$tmp/consumer/fullchain.pem"
