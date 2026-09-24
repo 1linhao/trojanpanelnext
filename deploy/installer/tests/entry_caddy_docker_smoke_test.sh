@@ -32,6 +32,7 @@ cleanup() {
 trap cleanup EXIT
 
 export ENTRY_SPEC_OWNER_UID=0 ENTRY_STATE_ROOT="$tmp/state"
+export ENTRY_V2_DEBUG=1
 export CADDY_ADAPTER_ROOT="$tmp/caddy" CADDY_ADAPTER_CONTAINER="$container"
 export CADDY_ADAPTER_NODE_CONTAINER="$core"
 export CADDY_ADAPTER_WEB_ROOT="$tmp/webroot" CADDY_ADAPTER_TEST_INTERNAL_TLS=1

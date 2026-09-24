@@ -582,6 +582,11 @@ entry_v2_reconcile_locked() {
     (all($obs.resources[]; . as $observed |
       any($journal.candidate_resources[]; same_identity($observed;.)) or allowed_certificate))
   ' <<<"$state" >/dev/null || {
+    if [[ "${ENTRY_V2_DEBUG:-0}" == 1 ]]; then
+      printf 'entry_v2 identity mismatch candidate=%s observed=%s\n' \
+        "$(jq -c '.candidate_resources' <<<"$state")" \
+        "$(jq -c '.resources' <<<"$verified")" >&2
+    fi
     entry_v2_fail "$spec" "$root" "$state" verifying ownership_conflict || return $?
     return 7;
   }
