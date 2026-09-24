@@ -146,6 +146,7 @@ chmod 0600 "$tmp/bad"
 if entry_v2_reconcile "$tmp/bad" "$ENTRY_STATE_ROOT" >"$tmp/failure"; then
   echo 'Broken web upstream was accepted' >&2; exit 1
 fi
+printf 'Broken-target reconcile failure: %s\n' "$(cat "$tmp/failure")" >&2
 [[ "$(jq -r '.code' "$tmp/failure")" == verification_failed ]]
 [[ "$(curl --silent --fail --noproxy '*' --cacert "$ca" --resolve 'web.entry-smoke.test:443:127.0.0.1' 'https://web.entry-smoke.test/')" == web-route-ok ]]
 jq '.revision=3 | .active_roles=["node"] | del(.roles.web, .certificate_targets.web)' "$tmp/spec" >"$tmp/node-spec"
