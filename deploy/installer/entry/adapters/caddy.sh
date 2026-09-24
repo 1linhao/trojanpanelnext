@@ -108,7 +108,9 @@ caddy_adapter_fact_digest() {
       label="$($docker inspect -f '{{ index .Config.Labels "io.trojanpanelnext.deployment" }}' "$id" 2>/dev/null)" || return 1
       image="$($docker inspect -f '{{.Config.Image}}' "$id" 2>/dev/null)" || return 1
       container_id="$($docker inspect -f '{{.Id}}' "$id" 2>/dev/null)" || return 1
-      mounts="$($docker inspect -f '{{range .Mounts}}{{.Source}}:{{.Destination}}:{{.RW}};{{end}}' "$id" 2>/dev/null)" || return 1
+      # Docker does not promise Mounts iteration order across daemon versions.
+      # Canonicalize it before hashing so a restart cannot look like a new owner.
+      mounts="$($docker inspect -f '{{range .Mounts}}{{.Source}}:{{.Destination}}:{{.RW}}{{println}}{{end}}' "$id" 2>/dev/null | sort | tr '\n' ';')" || return 1
       facts="${container_id}:${label}:${image}:${mounts}"
     fi
     ;;
