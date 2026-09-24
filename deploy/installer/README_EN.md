@@ -2,17 +2,17 @@
 
 [简体中文](README.md) | English
 
-The installer deploys a server non-interactively with one script, one YAML file, and one explicit deployment mode.
+The installer deploys TrojanPanel Next directly on a supported Linux host without an external VPS management system, control panel, or orchestration backend. Deployment uses one versioned Release, one YAML file, and one explicit deployment mode.
 
 ## Purpose modes
 
 | Mode | Purpose | Services |
 | --- | --- | --- |
-| `web` | Web control plane | API, Web UI, MariaDB, Redis, and Caddy |
+| `web` | Web control plane | API, Web UI, MariaDB, Redis, and public entry |
 | `node` | Node Agent | Node Agent, proxy runtimes, certificates, and camouflage site |
+| `combined` | Control plane and Node on one host | Web control plane, Node Agent, one shared entry, and local data services |
 
-Install the Web control plane first. Every Node Agent uses dedicated MariaDB and Redis identities
-issued by the Web control plane; it never reuses the Web root or default users.
+Deploy `web` and `node` on separate hosts by installing Web first, then registering each Node and issuing dedicated MariaDB and Redis identities; a Node never reuses the Web root or default users. `combined` runs both roles on one host and uses two different domains that resolve to that host's public IP. Standalone deployments use the installer-managed Caddy and ACME entry by default; use `tls_mode: external` only when an operator already owns and manages the entry. `--entry-spec` is an optional external-entry integration, not a standalone prerequisite.
 
 ## External TLS mode
 
@@ -49,6 +49,76 @@ fallback rendering. It is not an nginx `stream` configuration source. Only route
 | CPU | `linux/amd64` (x86_64) |
 | Memory | At least 1 GiB |
 | Network | DNS points to the target host and configured ports are open |
+
+The installer checks configuration, dependencies, and deployment health, but it does not configure DNS, cloud security groups, or the host firewall. The operator must confirm DNS, open ports, and the target host first; the default ACME entry needs public access to ports 80 and 443. Install, removal, and certificate changes modify the target host directly and require operator review before execution in production.
+
+## Versioned Releases and the candidate
+
+Production deployments should use one matching Release archive, `release-manifest.json`, `SHA256SUMS`, and `bootstrap.sh`. The archive provides `config-web.yaml`, `config-node.yaml`, and `config-combined.yaml`; copy the matching template for each deployment mode. Do not substitute `latest` images or an unfixed script from a Git branch. The current candidate tag is `v0.1.0-rc.1`; its asset version is `0.1.0-rc.1`, and its images and configuration are pinned to that version and their digests. An RC does not update Docker `latest`.
+
+Pushing a version tag runs `.github/workflows/publish-images.yml` and creates the GitHub Release. Only an authorised release maintainer should create and push a candidate tag from an approved commit:
+
+```bash
+TAG=v0.1.0-rc.1
+git tag -a "$TAG" -m "TrojanPanel Next $TAG"
+git push origin "refs/tags/$TAG"
+```
+
+The current workflow does not set GitHub's prerelease flag automatically. After the workflow succeeds and before distributing or installing the candidate, the release maintainer must inspect and mark the Release as a prerelease:
+
+```bash
+gh release view "$TAG" --repo 1linhao/trojanpanelnext --json tagName,isPrerelease
+gh release edit "$TAG" --repo 1linhao/trojanpanelnext --prerelease
+gh release view "$TAG" --repo 1linhao/trojanpanelnext --json tagName,isPrerelease
+```
+
+Distribute only after `tagName` is `v0.1.0-rc.1` and `isPrerelease` is `true`. A candidate is for isolated-environment acceptance and is not production approval; the release maintainer decides whether to publish a stable version after acceptance and review.
+
+From a trusted administration workstation, download and verify the three signed Release files, then extract and verify every asset digest:
+
+```bash
+TAG=v0.1.0-rc.1
+VERSION="${TAG#v}"
+WORKDIR="./trojanpanelnext-${VERSION}"
+ARCHIVE="trojanpanelnext-installer-${VERSION}.tar.gz"
+mkdir -m 700 "$WORKDIR"
+gh release download "$TAG" --repo 1linhao/trojanpanelnext \
+  --pattern "$ARCHIVE" --pattern release-manifest.json --pattern SHA256SUMS \
+  --dir "$WORKDIR"
+for file in "$ARCHIVE" release-manifest.json SHA256SUMS; do
+  gh attestation verify "$WORKDIR/$file" \
+    --repo 1linhao/trojanpanelnext \
+    --signer-workflow 1linhao/trojanpanelnext/.github/workflows/publish-images.yml
+done
+mkdir "$WORKDIR/assets"
+tar -xzf "$WORKDIR/$ARCHIVE" -C "$WORKDIR/assets"
+(cd "$WORKDIR/assets" && sha256sum -c SHA256SUMS)
+```
+
+Copy a versioned template to a mode-`0600` configuration file and edit domains and deployment values. Run the read-only validation first, review its output and the target host, then explicitly run the root-required install:
+
+```bash
+cd "$WORKDIR/assets"
+cp ./config-web.yaml ./web-site.yaml
+chmod 600 ./web-site.yaml
+# edit ./web-site.yaml
+./bootstrap.sh validate --mode web --config ./web-site.yaml
+sudo ./bootstrap.sh install --mode web --config ./web-site.yaml
+```
+
+`bootstrap.sh` verifies the version, fixed asset set, digests, image references, and configuration before invoking the installer. The installer verifies the secure configuration snapshot again before crossing the host mutation boundary. Attestations verify release provenance and SHA256 verifies archive contents; both must pass. Do not continue when the signer, version, or digest check fails.
+
+## Security and manual gates
+
+The following checks are human release points for every real deployment. The installer executes an approved local configuration and asset set; the operator owns these decisions:
+
+- **Release gate**: confirm the candidate tag, the GitHub Release `isPrerelease` state, the attestation signer, image digests in `release-manifest.json`, and a passing `sha256sum -c SHA256SUMS`.
+- **Host gate**: confirm a supported Debian 12 host with root access, no unauthorised existing containers or listeners, and operator-reviewed DNS, port 80/443, and Node-protocol firewall scope.
+- **Entry gate**: standalone deployments use the installer-managed Caddy; confirm that DNS records are live and Caddy may request and renew ACME certificates before running install. An external entry and `--entry-spec` are a separate integration path.
+- **Credential gate**: keep configuration and Node identity files at `0600`/root-only; transfer Node bootstrap bundles through a trusted channel, keep the password out of command arguments, and keep the CA and Web mTLS private keys on the Web control plane.
+- **Change gate**: run `validate` first and retain its secret-free output, then manually check Web, Node, and mTLS/gRPC health after installation. Confirm `--force`, `remove`, `--purge-data`, and stable-version transitions separately.
+
+Use a candidate only for isolated-environment acceptance. Complete acceptance, log review, certificate checks, and the production traffic decision before treating it as a stable release.
 
 ## Install the Web control plane
 
@@ -100,7 +170,7 @@ The password is read interactively and confirmed by default. Automation may set
 `TP_NODE_BUNDLE_PASSWORD`, but there is no password command-line option. The fixed inventory is only
 `config-node.yaml`, `manifest.json`, and `pki/client-ca.crt`. The public CA is parsed and validated;
 the bundle contains neither `client-ca.key`, the Web `client.key`, nor any other private key. Transfer
-only the `.age` file to the Node VPS through a trusted channel.
+only the `.age` file to the Node host through a trusted channel.
 
 Install on the Node with the same Release. After verifying the Release assets, the installer opens
 plaintext only in a private directory under `/dev/shm` and removes it on every success or failure exit.
@@ -108,10 +178,10 @@ The default is an interactive password prompt; explicitly pass the environment t
 non-interactive operation:
 
 ```bash
-sudo ./install.sh validate --mode node --bundle ./node-sg.g1.age
-sudo ./install.sh install --mode node --bundle ./node-sg.g1.age
+sudo ./bootstrap.sh validate --mode node --bundle ./node-sg.g1.age
+sudo ./bootstrap.sh install --mode node --bundle ./node-sg.g1.age
 # Non-interactive example: sudo env TP_NODE_BUNDLE_PASSWORD="$TP_NODE_BUNDLE_PASSWORD" \
-#   ./install.sh install --mode node --bundle ./node-sg.g1.age
+#   ./bootstrap.sh install --mode node --bundle ./node-sg.g1.age
 ```
 
 The installer first checks MariaDB, the Redis cache ACL, and the Redis auth ACL with the Node's own
@@ -134,7 +204,7 @@ old-generation Node stops. Generate and install a new bundle for the new generat
 A mode-`0600` `--config` remains available for development, removal, and certificate refresh, but use
 the encrypted `--bundle` for a production Node's initial install.
 
-When a host manager has generated a Protocol v1 EntrySpec, pass it explicitly:
+Only when an external host manager has generated a Protocol v1 EntrySpec should you pass it explicitly; a standalone deployment does not need this option:
 
 ```bash
 sudo ./install.sh install --mode node --config ./node-agent.yaml \
@@ -162,11 +232,16 @@ sudo ./install.sh remove --mode node --config ./node-agent.yaml --purge-data
 
 Combined mode requires two different domains that both resolve to the host's public IP. One shared
 Entry owns ports 80/443, while Node kernel protocol listeners remain direct. The local Node uses its
-own MariaDB and Redis identities issued by the Web control plane:
+own MariaDB and Redis identities issued by the Web control plane. Copy the Release archive's
+`config-combined.yaml` to a mode-`0600` working file before editing and running:
 
 ```bash
-sudo ./install.sh install --mode combined --config ./combined.yaml
-sudo ./install.sh refresh-cert --mode combined --config ./combined.yaml
+cp ./config-combined.yaml ./combined-site.yaml
+chmod 600 ./combined-site.yaml
+# edit ./combined-site.yaml
+./bootstrap.sh validate --mode combined --config ./combined-site.yaml
+sudo ./bootstrap.sh install --mode combined --config ./combined-site.yaml
+sudo ./bootstrap.sh refresh-cert --mode combined --config ./combined-site.yaml
 ```
 
 `refresh-cert` does not take over ACME; the shared Entry remains the certificate producer. It restarts
@@ -205,7 +280,7 @@ searched three levels deep. Several pairs without an explicit choice is an error
 
 Passwords are never printed. Treat populated configuration files as secrets and do not commit them to Git.
 
-## Versioned release assets
+## Release asset contents and trust boundary
 
 The release workflow uses `release/generate-assets.sh` to produce matching versions of
 `bootstrap.sh`, `install.sh`, `node-bundle`, the `secure-file` helper for descriptor-safe reads and atomic sensitive writes, the `web|node|combined` configuration templates,
@@ -217,7 +292,7 @@ mutation boundary. The verifier only depends on Bash, awk, grep, and coreutils f
 base system; it does not require a preinstalled `jq`. It checks `SHA256SUMS` against its fixed asset
 set, rejects symlink components in bundle paths, and accepts only the generator's printable ASCII +
 LF manifest bytes before sourcing or executing any other bundled program. Both entrypoints verify all
-13 assets, including `secure-file` and `node-bundle`, before a helper can first execute, then verify the configuration
+15 assets, including `secure-file` and `node-bundle`, before a helper can first execute, then verify the configuration
 contract again from the descriptor-safe snapshot before crossing the host mutation boundary.
 
 The publishing workflow retains an SBOM and maximum provenance for every product image, and creates
@@ -234,13 +309,9 @@ Entry with separate certificates for both domains. Node kernel listeners are nev
 a unified L4 entry. See
 [example-release-manifest.json](release/example-release-manifest.json) for a secret-free manifest
 example. The Release tar.gz preserves executable modes and is accompanied by the manifest and
-SHA256SUMS. Verify its attestation before extracting and checking the bundled digests:
+SHA256SUMS. As in the candidate procedure above, verify the three Release-file attestations before extracting and checking the bundled digests. Download RC and stable versions by their explicit tag; do not select a candidate through `latest`:
 
 ```bash
-archive=trojanpanelnext-installer-<version>.tar.gz
-gh attestation verify "${archive}" \
-  --repo 1linhao/trojanpanelnext \
-  --signer-workflow 1linhao/trojanpanelnext/.github/workflows/publish-images.yml
 mkdir trojanpanelnext-installer
 tar -xzf "${archive}" -C trojanpanelnext-installer
 cd trojanpanelnext-installer
@@ -252,8 +323,10 @@ then validate the deployment configuration:
 
 ```bash
 cp ./config-web.yaml ./deployment.yaml
-./verify-assets.sh --assets-dir . --config ./deployment.yaml
+./bootstrap.sh validate --mode web --config ./deployment.yaml
 ```
+
+`verify-assets.sh` can also inspect a downloaded bundle and configuration; use `bootstrap.sh` for normal installation so verification runs before the installer.
 
 ## Support
 

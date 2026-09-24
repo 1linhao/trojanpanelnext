@@ -2,17 +2,17 @@
 
 简体中文 | [English](README_EN.md)
 
-安装器使用一个脚本、一份 YAML 配置和一个明确的服务器用途完成部署，全程无交互。
+安装器可直接在受支持的 Linux 主机上部署 TrojanPanel Next，不依赖外部 VPS 管理系统、控制台或编排后台。部署使用一个版本化 Release、一份 YAML 配置和一个明确的部署模式，全程无交互。
 
 ## 用途模式
 
 | 模式 | 用途 | 部署内容 |
 | --- | --- | --- |
-| `web` | Web 主控 | API、Web UI、MariaDB、Redis、Caddy |
+| `web` | Web 主控 | API、Web UI、MariaDB、Redis、公开入口 |
 | `node` | Node Agent | 节点 Agent、代理内核运行环境、证书与伪装站 |
+| `combined` | 单机主控与节点 | Web 主控、Node Agent、共享入口及本机数据服务 |
 
-Web 主控应先安装。每个 Node Agent 使用 Web 主控签发的独立 MariaDB 与 Redis 身份，不复用
-Web 的 root 或 default 用户。
+`web` 与 `node` 可部署在不同主机，先部署 Web 主控，再为每个 Node 登记并签发独立 MariaDB/Redis 身份；Node 不复用 Web 的 root 或 default 用户。`combined` 在同一主机运行两种职责，使用两个不同且解析到该机公网 IP 的域名。独立部署默认由安装器管理 Caddy 与 ACME 入口；`tls_mode: external` 仅在操作者已有并自行管理入口时使用。`--entry-spec` 是可选的外部入口集成，不是安装前提。
 
 ## 外部 TLS 模式
 
@@ -47,6 +47,76 @@ nginx `stream` 动态配置源。只有标记 `external_fallback_listener_requir
 | CPU | `linux/amd64`（x86_64） |
 | 内存 | 至少 1 GiB |
 | 网络 | 域名已解析到目标服务器，防火墙放行所配置端口 |
+
+安装器会检查配置、依赖和部署健康状态，但不配置 DNS、云安全组或宿主防火墙。操作者须先确认域名解析、端口放行和目标主机；默认 ACME 入口需要可从公网访问的 80/443。安装、卸载及证书变更都直接修改目标主机，生产操作须由操作者审核并执行。
+
+## 版本化 Release 与候选版本
+
+生产部署应使用同一个版本的 Release 归档、`release-manifest.json`、`SHA256SUMS` 和 `bootstrap.sh`。归档提供 `config-web.yaml`、`config-node.yaml` 和 `config-combined.yaml`；三种部署模式都从对应模板复制配置副本。不要用 `latest` 镜像或从 Git 分支取未固定版本的安装脚本替代 Release。仓库当前的候选版本标签为 `v0.1.0-rc.1`；标签中的版本号为 `0.1.0-rc.1`，此版本生成的镜像和配置会固定到该版本及其摘要，RC 不会更新 Docker `latest`。
+
+推送版本标签会触发 `.github/workflows/publish-images.yml` 并自动创建 GitHub Release。只有获准的发布维护者才应在审核过的提交上创建并推送候选标签：
+
+```bash
+TAG=v0.1.0-rc.1
+git tag -a "$TAG" -m "TrojanPanel Next $TAG"
+git push origin "refs/tags/$TAG"
+```
+
+当前发布工作流创建 Release 时未自动设置 GitHub 的 prerelease 标记。流水线成功后、分发或安装候选版前，发布维护者必须检查并将 Release 标记为预发布：
+
+```bash
+gh release view "$TAG" --repo 1linhao/trojanpanelnext --json tagName,isPrerelease
+gh release edit "$TAG" --repo 1linhao/trojanpanelnext --prerelease
+gh release view "$TAG" --repo 1linhao/trojanpanelnext --json tagName,isPrerelease
+```
+
+确认 `tagName` 为 `v0.1.0-rc.1` 且 `isPrerelease` 为 `true` 后再分发。候选版本用于隔离环境验收，不代表已获生产批准；候选验收及人工审核通过后，才由发布维护者决定是否发布稳定版本。
+
+在可信的管理工作站下载并验证三个已签名 Release 文件，然后解包并检查归档内全部资产摘要：
+
+```bash
+TAG=v0.1.0-rc.1
+VERSION="${TAG#v}"
+WORKDIR="./trojanpanelnext-${VERSION}"
+ARCHIVE="trojanpanelnext-installer-${VERSION}.tar.gz"
+mkdir -m 700 "$WORKDIR"
+gh release download "$TAG" --repo 1linhao/trojanpanelnext \
+  --pattern "$ARCHIVE" --pattern release-manifest.json --pattern SHA256SUMS \
+  --dir "$WORKDIR"
+for file in "$ARCHIVE" release-manifest.json SHA256SUMS; do
+  gh attestation verify "$WORKDIR/$file" \
+    --repo 1linhao/trojanpanelnext \
+    --signer-workflow 1linhao/trojanpanelnext/.github/workflows/publish-images.yml
+done
+mkdir "$WORKDIR/assets"
+tar -xzf "$WORKDIR/$ARCHIVE" -C "$WORKDIR/assets"
+(cd "$WORKDIR/assets" && sha256sum -c SHA256SUMS)
+```
+
+复制版本化模板到权限为 `0600` 的配置副本，编辑域名和其他部署值；先运行只读的 `validate`，检查输出及目标主机后，再明确执行需要 root 的安装：
+
+```bash
+cd "$WORKDIR/assets"
+cp ./config-web.yaml ./web-site.yaml
+chmod 600 ./web-site.yaml
+# 编辑 ./web-site.yaml
+./bootstrap.sh validate --mode web --config ./web-site.yaml
+sudo ./bootstrap.sh install --mode web --config ./web-site.yaml
+```
+
+`bootstrap.sh` 会在执行安装器前校验版本、固定资产集、摘要、镜像引用及配置；安装器越过主机变更边界前还会再次验证安全配置快照。归档 attestation 验证发布来源，SHA256 校验归档内资产完整性，两者都应通过。不要在未核实签名者、版本或摘要失败时继续安装。
+
+## 安全与人工门禁
+
+以下检查是每次真实部署的人工放行点。安装器只在本机执行已审核的配置和资产，不替操作者决定这些门禁：
+
+- **发布门禁**：确认候选标签、GitHub Release 的 `isPrerelease` 状态、attestation 签名者、`release-manifest.json` 中的镜像 digest 以及 `sha256sum -c SHA256SUMS` 结果。
+- **主机门禁**：确认目标为受支持的 Debian 12、具有 root 权限、没有未授权的既有容器或监听者，并由操作者确认 DNS、80/443 及 Node 协议端口的防火墙范围。
+- **入口门禁**：独立部署使用安装器管理的 Caddy；确认域名记录已生效并允许 Caddy 申请/续订 ACME 证书后才运行安装。外部入口和 `--entry-spec` 属于另一条集成流程。
+- **凭据门禁**：配置文件和 Node 身份文件保持 `0600`/root-only；Node 引导包通过受信通道传输，口令不放在命令行，CA 私钥和 Web mTLS 私钥不离开 Web 主控。
+- **变更门禁**：先执行 `validate` 并保存无秘密输出，安装成功后人工检查 Web、Node 和 mTLS/gRPC 健康状态；`--force`、`remove`、`--purge-data` 以及稳定版切换都要单独确认。
+
+候选版只用于隔离环境验收。验收、日志检查、证书状态检查和生产流量切换完成前，不应把候选版当作稳定版使用。
 
 ## Web 主控安装
 
@@ -94,17 +164,17 @@ chmod 600 ./node-sg.yaml
 口令默认从终端交互读取并在创建时确认；自动化可设置 `TP_NODE_BUNDLE_PASSWORD`，但口令没有
 命令行参数。包固定且仅含 `config-node.yaml`、`manifest.json`、`pki/client-ca.crt`；公开 CA
 经过解析校验，包中不含 `client-ca.key`、Web `client.key` 或其他私钥。只需通过可信通道把
-`.age` 文件传到 Node VPS。
+`.age` 文件传到 Node 主机。
 
-在 Node VPS 上使用同一 Release 安装。安装器在校验 Release 资产后只把明文解到 `/dev/shm`
+在 Node 主机上使用与 Web 相同的 Release 安装。安装器在校验 Release 资产后只把明文解到 `/dev/shm`
 的私有目录，并在成功或失败退出时清理。默认交互输入口令；非交互场景可把环境变量显式传给
 `sudo`：
 
 ```bash
-sudo ./install.sh validate --mode node --bundle ./node-sg.g1.age
-sudo ./install.sh install --mode node --bundle ./node-sg.g1.age
+sudo ./bootstrap.sh validate --mode node --bundle ./node-sg.g1.age
+sudo ./bootstrap.sh install --mode node --bundle ./node-sg.g1.age
 # 非交互示例：sudo env TP_NODE_BUNDLE_PASSWORD="$TP_NODE_BUNDLE_PASSWORD" \
-#   ./install.sh install --mode node --bundle ./node-sg.g1.age
+#   ./bootstrap.sh install --mode node --bundle ./node-sg.g1.age
 ```
 
 安装器会先以 Node 的专用身份检查 MariaDB、Redis cache ACL 与 Redis auth ACL，然后等待
@@ -124,7 +194,7 @@ Node 服务端证书；Node 的 `/healthz` 只在身份 ID、代次、服务器 
 直接使用权限为 `0600` 的 `--config` 仍用于开发、移除和证书刷新，但正式 Node 首装应使用
 加密 `--bundle`。
 
-当宿主管理系统已经生成 Protocol v1 EntrySpec 时，通过 `--entry-spec` 把它交给安装器：
+仅当外部宿主管理系统已生成 Protocol v1 EntrySpec 时，才通过 `--entry-spec` 把它交给安装器；普通独立部署不需要此参数：
 
 ```bash
 sudo ./install.sh install --mode node --config ./node-agent.yaml \
@@ -162,11 +232,15 @@ sudo ./install.sh remove --mode node --config ./node-agent.yaml --purge-data
 
 combined 使用两个不同且都解析到本机公网 IP 的域名。单个共享入口拥有 80/443，Node 内核协议
 端口保持直连；Node 使用 Web 主控在本机签发的独立 MariaDB/Redis 身份。安装与证书续订后的消费方
-刷新命令为：
+刷新命令为（Release 归档中的 `config-combined.yaml` 应先复制成权限为 `0600` 的工作文件）：
 
 ```bash
-sudo ./install.sh install --mode combined --config ./combined.yaml
-sudo ./install.sh refresh-cert --mode combined --config ./combined.yaml
+cp ./config-combined.yaml ./combined-site.yaml
+chmod 600 ./combined-site.yaml
+# 编辑 ./combined-site.yaml
+./bootstrap.sh validate --mode combined --config ./combined-site.yaml
+sudo ./bootstrap.sh install --mode combined --config ./combined-site.yaml
+sudo ./bootstrap.sh refresh-cert --mode combined --config ./combined-site.yaml
 ```
 
 `refresh-cert` 不接管 ACME；共享入口仍负责续订。它只在 Node 证书代次变化时重启 Core。
@@ -203,7 +277,7 @@ MariaDB/Redis 等共享资源不会被单角色卸载误删；Node 移除会先�
 
 配置中的密码不会打印到终端。请将实际配置作为敏感文件保存，不要提交到 Git。
 
-## 版本化发布资产
+## 发布资产构成与校验边界
 
 正式发布工作流使用 `release/generate-assets.sh` 生成同一版本的 `bootstrap.sh`、
 `install.sh`、`node-bundle`、用于安全打开/原子写入敏感配置的 `secure-file`、`web|node|combined` 配置模板、`release-manifest.json` 和
@@ -212,7 +286,7 @@ MariaDB/Redis 等共享资源不会被单角色卸载误删；Node 移除会先�
 发布包内的 `install.sh` 在被直接调用时也会执行同一预检。验证器只依赖 Debian 12
 基础系统提供的 Bash、awk、grep 与 coreutils，不要求宿主预装 `jq`；它先依据固定资产集合校验
 `SHA256SUMS`，拒绝 bundle 路径中的符号链接，并只接受生成器输出的 printable ASCII + LF manifest；
-且不会在此之前 source 或执行其他随包程序。两条入口只有在完整校验 13 个资产（包括
+且不会在此之前 source 或执行其他随包程序。两条入口只有在完整校验 15 个资产（包括
 `secure-file` 和 `node-bundle`）后才首次执行 helper，并在安全快照后再次验证配置契约；全部通过后才越过宿主变更边界。
 
 发布流水线保留产品镜像的 SBOM 与最大级别 provenance，并为三张产品镜像和三个 Release
@@ -224,14 +298,10 @@ MariaDB/Redis 等共享资源不会被单角色卸载误删；Node 移除会先�
 
 `combined` 由安装器正式编排：Web 与 Node 复用本机数据服务和单一共享入口，并为两个域名维护
 独立证书；Node 内核监听不会转发到统一 L4 入口。无秘密的 manifest 结构示例见
-[example-release-manifest.json](release/example-release-manifest.json)。Release 使用 tar.gz 保留脚本可执行位，
-并同时附带 manifest 与 SHA256SUMS。下载后先验证归档 attestation，再解包并验证包内摘要：
+[example-release-manifest.json](release/example-release-manifest.json)。Release 使用 tar.gz 保留脚本可执行位，并同时附带 manifest 与 SHA256SUMS。按上一节先验证三个 Release 文件的 attestation，再解包并验证包内摘要；RC 与稳定版本必须按明确标签下载，不能从 `latest` 选择候选版：
 
 ```bash
 archive=trojanpanelnext-installer-<version>.tar.gz
-gh attestation verify "${archive}" \
-  --repo 1linhao/trojanpanelnext \
-  --signer-workflow 1linhao/trojanpanelnext/.github/workflows/publish-images.yml
 mkdir trojanpanelnext-installer
 tar -xzf "${archive}" -C trojanpanelnext-installer
 cd trojanpanelnext-installer
@@ -242,8 +312,10 @@ sha256sum -c SHA256SUMS
 
 ```bash
 cp ./config-web.yaml ./deployment.yaml
-./verify-assets.sh --assets-dir . --config ./deployment.yaml
+./bootstrap.sh validate --mode web --config ./deployment.yaml
 ```
+
+`verify-assets.sh` 也可单独检查下载包和配置；日常安装请通过 `bootstrap.sh`，使校验先于安装器执行。
 
 ## 支持
 
