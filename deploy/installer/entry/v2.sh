@@ -201,7 +201,7 @@ entry_v2_adapter_available() {
 }
 
 entry_v2_plan() {
-  local spec="$1" root="$2" existing="" digest phase=stable action=prepare_target
+  local spec="$1" root="$2" existing="" digest phase=stable action=prepare_target observation probe_mode=probe executable=true
   digest="$(entry_v2_target_digest "$spec")"
   local path
   path="$(entry_state_path "$root" "$(jq -r '.deployment_id' "$spec")")" || return 2
@@ -222,9 +222,33 @@ entry_v2_plan() {
   if [[ "$existing" == "" && "$(jq -r '.active_roles | length' "$spec")" != 2 ]]; then
     entry_v2_error invalid_spec stable 'Initial combined deployment requires both roles'; return 2
   fi
+  entry_v2_adapter_available || {
+    entry_v2_error unsupported_capability stable 'No combined v2 Adapter is connected'; return 3;
+  }
+  observation="$(entry_v2_adapter_probe "$spec" "${existing:-null}")" || {
+    entry_v2_error ownership_conflict stable 'Adapter plan probe rejected host ownership'; return 4;
+  }
+  if [[ -n "$existing" && "$phase" != stable ]]; then probe_mode=recovery; fi
+  entry_v2_validate_observation "$observation" "$spec" "$probe_mode" "$existing" || {
+    entry_v2_error ownership_conflict stable 'Adapter plan probe returned untrusted resource identity'; return 4;
+  }
+  if [[ -z "$existing" ]]; then
+    [[ "$(jq -c '.resources' <<<"$observation")" == '[]' ]] || {
+      entry_v2_error ownership_conflict stable 'Existing resources cannot be adopted'; return 4;
+    }
+  elif [[ "$phase" == stable ]]; then
+    jq -e --argjson obs "$observation" '.resources == $obs.resources' <<<"$existing" >/dev/null || {
+      entry_v2_error ownership_conflict stable 'Observed resources differ from journal'; return 4;
+    }
+  fi
+  if declare -F entry_v2_adapter_plan_ready >/dev/null &&
+     ! entry_v2_adapter_plan_ready "$spec"; then
+    executable=false
+  fi
   jq -cn --argjson spec "$(jq -c . "$spec")" --arg digest "$digest" \
-    --arg action "$action" --arg phase "$phase" \
-    '{schema_version:2,deployment_id:$spec.deployment_id,desired_revision:$spec.revision,target_digest:$digest,provider:$spec.provider,topology:"combined",active_roles:$spec.active_roles,actions:[$action],current_phase:$phase,mutation_enabled:false,executable:false}'
+    --arg action "$action" --arg phase "$phase" --argjson executable "$executable" \
+    '{schema_version:2,deployment_id:$spec.deployment_id,desired_revision:$spec.revision,target_digest:$digest,provider:$spec.provider,topology:"combined",active_roles:$spec.active_roles,actions:[$action],current_phase:$phase,mutation_enabled:true,executable:$executable} +
+     (if $executable then {} else {blocked_on:["node_runtime"]} end)'
 }
 
 # A v1 journal never proves ownership of a combined deployment. The same

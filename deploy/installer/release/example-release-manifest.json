@@ -61,7 +61,7 @@
     {
       "name": "entry/v2",
       "path": "entry/v2.sh",
-      "sha256": "b9c99a919b03b514f9e78c8207487323d3c2c907f397f01924f97cccba471b54"
+      "sha256": "7d5a6b6eadc713a74bf07aef6045599a3ae1069aac84126fc95f0c8d6c5ff0d2"
     },
     {
       "name": "entry/adapters/external",
@@ -76,7 +76,7 @@
     {
       "name": "entry/adapters/caddy",
       "path": "entry/adapters/caddy.sh",
-      "sha256": "ca97929187a5225fd6b9bcc87277694fb3e3d5e7cdcd3db292fd1930dc2f5b89"
+      "sha256": "73ce30be6c1530024876130a69cea892a5be90fe020e7e58d267d64d38331d72"
     }
   ],
   "images": {

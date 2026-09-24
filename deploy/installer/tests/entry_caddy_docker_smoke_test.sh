@@ -5,10 +5,17 @@ repo="$(cd "$(dirname "$0")/../../.." && pwd)"
 source "$repo/deploy/installer/entry/controller.sh"
 source "$repo/deploy/installer/entry/adapters/caddy.sh"
 
+on_error() {
+  local status="$1" line="$2"
+  printf 'Caddy Docker smoke failed at line %s (status %s)\n' "$line" "$status" >&2
+  [[ -z "${container:-}" ]] || docker logs --tail 20 "$container" >&2 || true
+}
+trap 'on_error "$?" "$LINENO"' ERR
+
 [[ "$(id -u)" == 0 ]] || { echo 'Run this isolated host-network smoke as root' >&2; exit 2; }
 command -v ss >/dev/null 2>&1 || { echo 'ss is required for listener ownership checks' >&2; exit 2; }
-[[ -z "$(ss -Hlnpt '( sport = :80 or sport = :443 or sport = :8888 )')" ]] || {
-  echo 'Ports 80, 443 or 8888 are already in use' >&2; exit 2;
+[[ -z "$(ss -Hlnpt '( sport = :80 or sport = :443 or sport = :8443 or sport = :8888 )')" ]] || {
+  echo 'Ports 80, 443, 8443 or 8888 are already in use' >&2; exit 2;
 }
 tmp="$(mktemp -d)"
 container="tpn-entry-smoke-$$"
@@ -48,6 +55,16 @@ jq --arg root "$CADDY_ADAPTER_ROOT" --arg tmp "$tmp" '
   "$repo/docs/entry-controller/examples/combined-caddy-v2.json" >"$tmp/spec"
 chmod 0600 "$tmp/spec"
 printf '{"routes":[{"network":"tcp","port":8443}]}' >"$tmp/routes.json"
+[[ "$(entry_v2_adapter_probe "$tmp/spec" null | jq -r '.resources | length')" == 0 ]]
+bootstrap_plan="$(entry_v2_plan "$tmp/spec" "$ENTRY_STATE_ROOT")"
+[[ "$(jq -r '.executable' <<<"$bootstrap_plan")" == false ]]
+[[ "$(jq -r '.blocked_on | join(",")' <<<"$bootstrap_plan")" == node_runtime ]]
+docker run -d --name "$core" --network host \
+  -v "$tmp/consumer:$tmp/consumer:ro" \
+  -e "crt_path=$tmp/consumer/fullchain.pem" -e "key_path=$tmp/consumer/privkey.pem" \
+  "$CADDY_ADAPTER_IMAGE" caddy file-server --listen 127.0.0.1:8443 --root /srv >/dev/null
+sleep 1
+[[ "$(entry_v2_plan "$tmp/spec" "$ENTRY_STATE_ROOT" | jq -r '.executable')" == true ]]
 
 cp "$tmp/routes.json" "$tmp/routes-valid.json"
 jq '.routes[0].port=443' "$tmp/routes-valid.json" >"$tmp/routes.json"
@@ -83,15 +100,11 @@ cmp -s "$tmp/cert/node/privkey.pem" "$tmp/consumer/privkey.pem"
 ca="$CADDY_ADAPTER_ROOT/data/caddy/pki/authorities/local/root.crt"
 [[ -s "$ca" ]]
 for role in web node; do
-  content="$(curl --silent --show-error --fail --cacert "$ca" --resolve "${role}.entry-smoke.test:443:127.0.0.1" "https://${role}.entry-smoke.test/")"
+  content="$(curl --silent --show-error --fail --noproxy '*' --cacert "$ca" --resolve "${role}.entry-smoke.test:443:127.0.0.1" "https://${role}.entry-smoke.test/")"
   [[ "$content" == "${role}-route-ok" ]]
 done
 [[ "$(docker inspect -f '{{.State.Running}}' "$container")" == true ]]
 [[ "$(entry_v2_reconcile "$tmp/spec" "$ENTRY_STATE_ROOT" | jq -r '.result')" == unchanged ]]
-docker run -d --name "$core" --network none \
-  -v "$tmp/consumer:$tmp/consumer:ro" \
-  -e "crt_path=$tmp/consumer/fullchain.pem" -e "key_path=$tmp/consumer/privkey.pem" \
-  "$CADDY_ADAPTER_IMAGE" sleep 3600 >/dev/null
 core_before="$(docker inspect -f '{{.State.StartedAt}}' "$core")"
 
 # Simulate a Caddy storage renewal with a fresh leaf from this isolated CA.
@@ -127,12 +140,12 @@ if entry_v2_reconcile "$tmp/bad" "$ENTRY_STATE_ROOT" >"$tmp/failure"; then
   echo 'Broken web upstream was accepted' >&2; exit 1
 fi
 [[ "$(jq -r '.code' "$tmp/failure")" == verification_failed ]]
-[[ "$(curl --silent --fail --cacert "$ca" --resolve 'web.entry-smoke.test:443:127.0.0.1' 'https://web.entry-smoke.test/')" == web-route-ok ]]
+[[ "$(curl --silent --fail --noproxy '*' --cacert "$ca" --resolve 'web.entry-smoke.test:443:127.0.0.1' 'https://web.entry-smoke.test/')" == web-route-ok ]]
 jq '.revision=3 | .active_roles=["node"] | del(.roles.web, .certificate_targets.web)' "$tmp/spec" >"$tmp/node-spec"
 chmod 0600 "$tmp/node-spec"
 node_only="$(entry_v2_reconcile "$tmp/node-spec" "$ENTRY_STATE_ROOT")"
 [[ "$(jq -r '.active_roles | join(",")' <<<"$node_only")" == node ]]
-[[ "$(curl --silent --fail --cacert "$ca" --resolve 'node.entry-smoke.test:443:127.0.0.1' 'https://node.entry-smoke.test/')" == node-route-ok ]]
+[[ "$(curl --silent --fail --noproxy '*' --cacert "$ca" --resolve 'node.entry-smoke.test:443:127.0.0.1' 'https://node.entry-smoke.test/')" == node-route-ok ]]
 if entry_v2_adapter_remove "$tmp/node-spec" "$node_only" 1; then
   echo 'Purge removed a certificate still consumed by running Core' >&2; exit 1
 fi

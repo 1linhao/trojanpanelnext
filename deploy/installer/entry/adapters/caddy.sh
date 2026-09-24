@@ -277,6 +277,48 @@ caddy_adapter_check_manifest() {
   ' "$manifest" >/dev/null 2>&1
 }
 
+caddy_adapter_check_node_runtime() {
+  local spec="$1" require_all="${2:-1}" docker core pids network port out line pid found consumer envs mount running
+  [[ "${CADDY_ADAPTER_FAKE:-0}" == 1 ]] && return 0
+  jq -e '.active_roles | index("node") != null' "$spec" >/dev/null || return 0
+  docker="$(caddy_adapter_docker)"; core="${CADDY_ADAPTER_NODE_CONTAINER:-trojan-panel-core}"
+  running="$($docker inspect -f '{{.State.Running}}' "$core" 2>/dev/null || true)"
+  if [[ "$running" == true ]]; then
+    consumer="$(jq -r '.roles.node.certificate_consumer' "$spec")"
+    caddy_adapter_safe_path "$consumer" || return 1
+    envs="$($docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$core" 2>/dev/null)" || return 1
+    grep -Fxq "crt_path=$consumer/fullchain.pem" <<<"$envs" || return 1
+    grep -Fxq "key_path=$consumer/privkey.pem" <<<"$envs" || return 1
+    mount="$($docker inspect -f '{{range .Mounts}}{{if eq .Destination "'"$consumer"'"}}{{.Source}}{{end}}{{end}}' "$core" 2>/dev/null)" || return 1
+    [[ "$mount" == "$consumer" ]] || return 1
+    pids="$("$docker" top "$core" -eo pid 2>/dev/null | tail -n +2 | tr '\n' ' ')" || return 1
+    [[ -n "$pids" ]] || return 1
+  else
+    [[ "$require_all" == 0 ]] || return 1
+    pids=''
+  fi
+  while IFS=$'\t' read -r network port; do
+    [[ -n "$network" ]] || continue
+    case "$network" in tcp) out="$(ss -Hlnpt "( sport = :${port} )" 2>/dev/null)" ;; udp) out="$(ss -Hlnpu "( sport = :${port} )" 2>/dev/null)" ;; *) return 1 ;; esac
+    if [[ -z "$out" ]]; then [[ "$require_all" == 0 ]] && continue; return 1; fi
+    [[ -n "$pids" ]] || return 1
+    while IFS= read -r line; do
+      found=0
+      while [[ "$line" =~ pid=([0-9]+), ]]; do
+        pid="${BASH_REMATCH[1]}"
+        [[ " $pids " == *" $pid "* ]] || return 1
+        line="${line#*pid=$pid,}"
+        found=1
+      done
+      [[ "$found" == 1 ]] || return 1
+    done <<<"$out"
+  done < <(jq -r '.routes[] | [.network,(.port | tostring)] | @tsv' "$(jq -r '.roles.node.route_manifest' "$spec")")
+}
+
+entry_v2_adapter_plan_ready() {
+  caddy_adapter_check_node_runtime "$1"
+}
+
 caddy_adapter_check_container_owner() {
   local spec="$1" docker container deployment label
   [[ "${CADDY_ADAPTER_FAKE:-0}" == 1 ]] && return 0
@@ -452,6 +494,8 @@ caddy_adapter_refresh_node_consumer() {
     [[ "$mount" == "$consumer" ]] || return 1
     [[ "$($docker inspect -f '{{.State.Running}}' "$core" 2>/dev/null)" == true ]] || return 1
     if [[ "$changed" == 1 ]]; then "$docker" restart "$core" >/dev/null || return 1; fi
+  else
+    return 1
   fi
 }
 
@@ -576,6 +620,7 @@ entry_v2_adapter_probe() {
   caddy_adapter_check_container_owner "$spec" || return 1
   caddy_adapter_check_dns "$spec" || return 1
   caddy_adapter_check_manifest "$spec" || return 1
+  caddy_adapter_check_node_runtime "$spec" 0 || return 1
   caddy_adapter_check_ports || return 1
   status="$(caddy_adapter_owner_status "$spec" "$root")"
   # A role removal probes the last committed target so the controller can
@@ -668,6 +713,7 @@ caddy_adapter_verify_runtime() {
   [[ "$running" == true ]] || return 1
   health="$($docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$container" 2>/dev/null)" || return 1
   [[ "$health" != unhealthy ]] || return 1
+  caddy_adapter_check_node_runtime "$spec" || return 1
   if jq -e '.active_roles | index("web") != null' "$spec" >/dev/null; then
     upstream="$(jq -r '.roles.web.web_upstream' "$spec")"
     grep -Fqx "    reverse_proxy ${upstream}" "$(caddy_adapter_config "$(caddy_adapter_root "$spec")")" || return 1

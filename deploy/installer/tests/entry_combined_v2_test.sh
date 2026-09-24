@@ -85,6 +85,7 @@ entry_v2_adapter_verify() {
 entry_v2_adapter_refresh() {
   fake_observation "$1" "$2" verify
 }
+entry_v2_adapter_plan_ready() { return 0; }
 entry_v2_adapter_rollback() {
   printf 'rollback\n' >>"$trace"
   printf 'rollback-spec-revision:%s\n' "$(jq -r '.revision' "$1")" >>"$trace"
@@ -100,7 +101,7 @@ entry_v2_adapter_remove() {
 
 plan="$(main plan --spec "$tmp/spec" --state-root "$ENTRY_STATE_ROOT")"
 [[ "$(jq -r '.schema_version' <<<"$plan")" == 2 ]] || fail 'v2 plan did not dispatch'
-[[ "$(jq -r '.executable' <<<"$plan")" == false ]] || fail 'production plan enabled mutation'
+[[ "$(jq -r '.executable' <<<"$plan")" == true ]] || fail 'connected Adapter plan did not probe executable target'
 # The Caddy Adapter is now connected. Without certificate material it must
 # still fail closed during verification and leave a rollback journal.
 expect_fail env CADDY_ADAPTER_ROOT="$tmp/caddy" CADDY_ADAPTER_FAKE=1 \
