@@ -35,6 +35,9 @@ export ENTRY_SPEC_OWNER_UID=0 ENTRY_STATE_ROOT="$tmp/state"
 export CADDY_ADAPTER_ROOT="$tmp/caddy" CADDY_ADAPTER_CONTAINER="$container"
 export CADDY_ADAPTER_NODE_CONTAINER="$core"
 export CADDY_ADAPTER_WEB_ROOT="$tmp/webroot" CADDY_ADAPTER_TEST_INTERNAL_TLS=1
+export CADDY_ADAPTER_TIMER_DIR="$tmp/timers" CADDY_ADAPTER_ENTRYCTL_PATH="$repo/deploy/installer/entry/entryctl.sh"
+export CADDY_ADAPTER_TIMER_ENABLE_CMD='test -f "$CADDY_ENTRY_TIMER_SERVICE"'
+export CADDY_ADAPTER_TIMER_DISABLE_CMD='true'
 export CADDY_ADAPTER_SKIP_DNS_CHECK=1 CADDY_ADAPTER_CERT_WAIT_ATTEMPTS=20 CADDY_ADAPTER_CERT_WAIT_SECONDS=1
 export CADDY_ADAPTER_IMAGE='caddy@sha256:226d1f059b75399fe19182893c7184591c07b97afc8dfcf44eeb80c9a77a530f'
 docker image inspect "$CADDY_ADAPTER_IMAGE" >/dev/null 2>&1 || docker pull "$CADDY_ADAPTER_IMAGE" >/dev/null
@@ -102,6 +105,14 @@ if ! created="$(entry_v2_reconcile "$tmp/spec" "$ENTRY_STATE_ROOT")"; then
 fi
 [[ "$(jq -r '.phase + ":" + .health' <<<"$created")" == stable:healthy ]]
 [[ "$(jq -r '.certificates | keys | join(",")' <<<"$created")" == node,web ]]
+[[ -x "$tmp/caddy/.entry-renew-hook" && -s "$tmp/caddy/.entry-spec.json" ]]
+[[ -s "$tmp/timers/trojanpanelnext-entry-renewal.service" && -s "$tmp/timers/trojanpanelnext-entry-renewal.timer" ]]
+if ! hook_result="$("$tmp/caddy/.entry-renew-hook" 2>"$tmp/hook.err")"; then
+  cat "$tmp/hook.err" >&2
+  printf 'Renewal hook returned: %s\n' "$hook_result" >&2
+  exit 1
+fi
+[[ "$(jq -r '.result' <<<"$hook_result")" == unchanged ]]
 cmp -s "$tmp/cert/node/fullchain.pem" "$tmp/consumer/fullchain.pem"
 cmp -s "$tmp/cert/node/privkey.pem" "$tmp/consumer/privkey.pem"
 ca="$CADDY_ADAPTER_ROOT/data/caddy/pki/authorities/local/root.crt"
@@ -158,6 +169,19 @@ if entry_v2_adapter_remove "$tmp/node-spec" "$node_only" 1; then
   echo 'Purge removed a certificate still consumed by running Core' >&2; exit 1
 fi
 [[ "$(docker inspect -f '{{.State.Running}}' "$container")" == true ]]
-[[ "$(entry_v2_remove "$tmp/node-spec" "$ENTRY_STATE_ROOT" 0 | jq -r '.result')" == removed ]]
+docker stop "$core" >/dev/null
+cp "$tmp/caddy/.consumer-registry.json" "$tmp/registry-clean"
+jq '.consumers += [{deployment_id:"foreign",role:"node",path:"/tmp/foreign-consumer",owner:"provider",active:false}]' "$tmp/caddy/.consumer-registry.json" >"$tmp/registry-foreign"
+mv "$tmp/registry-foreign" "$tmp/caddy/.consumer-registry.json"
+if entry_v2_adapter_remove "$tmp/node-spec" "$node_only" 1; then
+  echo 'Purge accepted an unknown consumer registry reference' >&2; exit 1
+fi
+cp "$tmp/registry-clean" "$tmp/caddy/.consumer-registry.json"
+entry_v2_adapter_remove "$tmp/node-spec" "$node_only" 1
 [[ "$(docker inspect -f '{{.State.Running}}' "$container" 2>/dev/null || true)" == '' ]]
+[[ ! -e "$CADDY_ADAPTER_ROOT/data" && ! -e "$tmp/timers/trojanpanelnext-entry-renewal.timer" ]]
+printf 'foreign\n' >"$tmp/timers/trojanpanelnext-entry-renewal.service"
+if caddy_adapter_write_renewal_trigger "$tmp/node-spec" "$CADDY_ADAPTER_ROOT"; then
+  echo 'Provider adopted a pre-existing foreign renewal timer' >&2; exit 1
+fi
 echo 'PASS real Caddy isolated Docker HTTPS, renewal consumer, rollback, role removal and remove'

@@ -73,6 +73,96 @@ caddy_adapter_candidate() {
   printf '%s/.Caddyfile.candidate\n' "${root%/}"
 }
 
+caddy_adapter_consumer_registry() { printf '%s/.consumer-registry.json\n' "${1%/}"; }
+caddy_adapter_renewal_spec() { printf '%s/.entry-spec.json\n' "${1%/}"; }
+caddy_adapter_renewal_hook() { printf '%s/.entry-renew-hook\n' "${1%/}"; }
+caddy_adapter_timer_dir() { printf '%s\n' "${CADDY_ADAPTER_TIMER_DIR:-/etc/systemd/system}"; }
+caddy_adapter_timer_service() { printf '%s/trojanpanelnext-entry-renewal.service\n' "$(caddy_adapter_timer_dir)"; }
+caddy_adapter_timer_unit() { printf '%s/trojanpanelnext-entry-renewal.timer\n' "$(caddy_adapter_timer_dir)"; }
+
+caddy_adapter_write_renewal_trigger() {
+  local spec="$1" root="$2" deployment entryctl state_root timer_dir service unit registry consumer
+  [[ "${CADDY_ADAPTER_FAKE:-0}" == 1 ]] && return 0
+  deployment="$(jq -r '.deployment_id' "$spec")"
+  entryctl="${CADDY_ADAPTER_ENTRYCTL_PATH:-/usr/local/lib/trojanpanelnext/entry/entryctl.sh}"
+  state_root="${CADDY_ADAPTER_ENTRY_STATE_ROOT:-/tpdata/trojanpanelnext-entry/state}"
+  timer_dir="$(caddy_adapter_timer_dir)"; service="$(caddy_adapter_timer_service)"; unit="$(caddy_adapter_timer_unit)"
+  mkdir -p "$root" "$timer_dir" || return 1
+  if [[ -e "$service" || -e "$unit" ]]; then
+    [[ -f "${timer_dir}/.tpn-renewal-owner" && "$(cat "${timer_dir}/.tpn-renewal-owner" 2>/dev/null)" == "deployment=$deployment" ]] || return 1
+  fi
+  local spec_tmp
+  spec_tmp="$(mktemp)" || return 1
+  jq -S . "$spec" >"$spec_tmp" || { rm -f "$spec_tmp"; return 1; }
+  install -m 0600 "$spec_tmp" "$(caddy_adapter_renewal_spec "$root")" || { rm -f "$spec_tmp"; return 1; }
+  rm -f "$spec_tmp"
+  {
+    printf '#!/usr/bin/env bash\nset -Eeuo pipefail\n'
+    printf 'exec %q reconcile --spec %q --state-root %q\n' "$entryctl" "$(caddy_adapter_renewal_spec "$root")" "$state_root"
+  } >"$(caddy_adapter_renewal_hook "$root")" || return 1
+  chmod 0700 "$(caddy_adapter_renewal_hook "$root")" || return 1
+  printf 'deployment=%s\n' "$deployment" >"${timer_dir}/.tpn-renewal-owner" || return 1
+  cat >"$service" <<EOF
+[Unit]
+Description=TrojanPanelNext Caddy certificate reconcile
+[Service]
+Type=oneshot
+ExecStart=$(caddy_adapter_renewal_hook "$root")
+EOF
+  cat >"$unit" <<EOF
+[Unit]
+Description=TrojanPanelNext Caddy certificate reconcile timer
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=15min
+Persistent=true
+[Install]
+WantedBy=timers.target
+EOF
+  registry="$(caddy_adapter_consumer_registry "$root")"
+  if [[ -e "$registry" ]]; then jq -e . "$registry" >/dev/null || return 1; else printf '{"consumers":[],"domains":[]}\n' >"$registry"; fi
+  jq -c --arg d "$deployment" --argjson domains "$(jq -c '.domains' "$spec")" --argjson roles "$(jq -c '.active_roles' "$spec")" '
+    .domains |= ((. // []) | map(if .deployment_id == $d then .active = false else . end) +
+      [$domains | to_entries[] | select(.key as $role | $roles | index($role) != null) |
+       {deployment_id:$d,role:.key,domain:.value,owner:"provider",active:true}] |
+      group_by(.deployment_id,.role,.domain) | map(last))
+  ' "$registry" >"${registry}.tmp" && mv -f "${registry}.tmp" "$registry" || return 1
+  if jq -e '.active_roles | index("node") != null' "$spec" >/dev/null; then
+    consumer="$(jq -r '.roles.node.certificate_consumer' "$spec")"
+    jq -c --arg d "$deployment" --arg p "$consumer" ' .consumers |= (map(select(.deployment_id != $d or .path != $p)) + [{deployment_id:$d,role:"node",path:$p,owner:"provider",active:true}]) ' "$registry" >"${registry}.tmp" && mv -f "${registry}.tmp" "$registry" || return 1
+    chmod 0600 "$registry"
+  fi
+}
+
+caddy_adapter_enable_renewal_trigger() {
+  local timer_dir service
+  [[ "${CADDY_ADAPTER_FAKE:-0}" == 1 ]] && return 0
+  timer_dir="$(caddy_adapter_timer_dir)"; service="$(caddy_adapter_timer_service)"
+  if [[ -n "${CADDY_ADAPTER_TIMER_ENABLE_CMD:-}" ]]; then
+    CADDY_ENTRY_TIMER_SERVICE="$service" bash -c "$CADDY_ADAPTER_TIMER_ENABLE_CMD"
+  elif [[ "$timer_dir" == /etc/systemd/system ]] && command -v systemctl >/dev/null 2>&1; then
+    systemctl daemon-reload && systemctl enable --now trojanpanelnext-entry-renewal.timer >/dev/null
+  fi
+}
+
+caddy_adapter_remove_renewal_trigger() {
+  local root="$1" spec="$2" timer_dir service unit owner deployment
+  [[ "${CADDY_ADAPTER_FAKE:-0}" == 1 ]] && return 0
+  deployment="$(jq -r '.deployment_id' "$spec")"
+  timer_dir="$(caddy_adapter_timer_dir)"; service="$(caddy_adapter_timer_service)"; unit="$(caddy_adapter_timer_unit)"
+  owner="${timer_dir}/.tpn-renewal-owner"
+  if [[ -e "$service" || -e "$unit" ]]; then
+    [[ -f "$owner" && "$(cat "$owner" 2>/dev/null)" == "deployment=$deployment" ]] || return 1
+  fi
+  if [[ -n "${CADDY_ADAPTER_TIMER_ENABLE_CMD:-}" ]]; then
+    CADDY_ENTRY_TIMER_SERVICE="$service" bash -c "${CADDY_ADAPTER_TIMER_DISABLE_CMD:-true}" || return 1
+  elif [[ "$timer_dir" == /etc/systemd/system ]] && command -v systemctl >/dev/null 2>&1; then
+    systemctl disable --now trojanpanelnext-entry-renewal.timer >/dev/null 2>&1 || true
+    systemctl daemon-reload || return 1
+  fi
+  rm -f "$service" "$unit" "$owner" "$(caddy_adapter_renewal_hook "$root")" "$(caddy_adapter_renewal_spec "$root")"
+}
+
 caddy_adapter_install_config() {
   local root="$1" content="$2" temp
   temp="$(mktemp "${root}/.Caddyfile.XXXXXXXX")" || return 1
@@ -134,6 +224,11 @@ caddy_adapter_resource_list() {
   if [[ "${include_files}" == 1 ]]; then
     [[ -f "${root%/}/Caddyfile" ]] && caddy_adapter_resource_json "$deployment" file "${root%/}/Caddyfile" shared managed '' "$root"
     [[ -d "${root%/}/data" ]] && caddy_adapter_resource_json "$deployment" directory "${root%/}/data" shared managed '' "$root"
+    [[ -f "$(caddy_adapter_renewal_spec "$root")" ]] && caddy_adapter_resource_json "$deployment" file "$(caddy_adapter_renewal_spec "$root")" shared managed '' "$root"
+    [[ -f "$(caddy_adapter_renewal_hook "$root")" ]] && caddy_adapter_resource_json "$deployment" file "$(caddy_adapter_renewal_hook "$root")" shared managed '' "$root"
+    [[ -f "$(caddy_adapter_consumer_registry "$root")" ]] && caddy_adapter_resource_json "$deployment" file "$(caddy_adapter_consumer_registry "$root")" shared managed '' "$root"
+    [[ -f "$(caddy_adapter_timer_service)" ]] && caddy_adapter_resource_json "$deployment" file "$(caddy_adapter_timer_service)" shared managed '' "$root"
+    [[ -f "$(caddy_adapter_timer_unit)" ]] && caddy_adapter_resource_json "$deployment" file "$(caddy_adapter_timer_unit)" shared managed '' "$root"
   fi
   if [[ "${CADDY_ADAPTER_FAKE:-0}" == 1 ]]; then
     [[ -f "${root}/.active" ]] && caddy_adapter_resource_json "$deployment" container "$container" shared managed '' "$root"
@@ -629,6 +724,7 @@ caddy_adapter_observation() {
 
 entry_v2_adapter_probe() {
   local spec="$1" state="${2:-null}" root status observation_spec="$1" temporary=""
+  export CADDY_ADAPTER_REAL_CONNECTED=1
   root="$(caddy_adapter_root "$spec")"
   caddy_adapter_safe_path "$root" || return 1
   caddy_adapter_owner_status "$spec" "$root" >/dev/null || return 1
@@ -674,6 +770,7 @@ entry_v2_adapter_prepare() {
   fi
   mkdir -p "$root" "$root/data" || return 1
   chmod 0700 "$root" "$root/data" || return 1
+  caddy_adapter_write_renewal_trigger "$spec" "$root" || return 1
   marker="$(caddy_adapter_marker "$root")"
   printf 'deployment=%s\n' "$(jq -r '.deployment_id' "$spec")" >"$marker" || return 1
   chmod 0600 "$marker" || return 1
@@ -831,7 +928,8 @@ entry_v2_adapter_rollback() {
         rm -f -- "$consumer/fullchain.pem" "$consumer/privkey.pem" "$consumer_marker" || return 1
       fi
     fi
-    rm -f "$config" "$(caddy_adapter_marker "$root")"
+    caddy_adapter_remove_renewal_trigger "$root" "$spec" || return 1
+    rm -f "$config" "$(caddy_adapter_marker "$root")" "$(caddy_adapter_consumer_registry "$root")"
     rm -rf -- "${root}/data" || return 1
     rmdir "$root" 2>/dev/null || true
     return 0
@@ -841,6 +939,7 @@ entry_v2_adapter_rollback() {
   jq -c '.committed_target.spec' <<<"$state" >"$old_spec" || { rm -f "$old_spec"; return 1; }
   local old_content
   old_content="$(caddy_adapter_render "$old_spec")" || { rm -f "$old_spec"; return 1; }
+  caddy_adapter_write_renewal_trigger "$old_spec" "$root" || { rm -f "$old_spec"; return 1; }
   caddy_adapter_install_config "$root" "$old_content" || { rm -f "$old_spec"; return 1; }
   caddy_adapter_restore_certificates "$old_spec" "$root" || { rm -f "$old_spec"; return 1; }
   if [[ "${CADDY_ADAPTER_FAKE:-0}" == 1 ]]; then rm -f "$old_spec"; return 0; fi
@@ -867,12 +966,21 @@ entry_v2_adapter_remove() {
   if [[ "$purge" == 1 ]]; then
     # A removed role may still have a CertificateRef consumer. The current
     # one-role spec cannot authorize deleting that role's Caddy storage.
-    local storage_domain active_domain storage_dir
+    local storage_domain storage_dir registry
+    registry="$(caddy_adapter_consumer_registry "$root")"
+    if [[ -e "$registry" ]]; then
+      jq -e --arg deployment "$(jq -r '.deployment_id' "$spec")" --arg consumer "$(jq -r '.roles.node.certificate_consumer // ""' "$spec")" '
+        (.consumers | type == "array") and
+        all(.consumers[]; .deployment_id == $deployment and .owner == "provider" and .path == $consumer)
+      ' "$registry" >/dev/null || return 1
+    elif jq -e '.active_roles | index("node") != null' "$spec" >/dev/null; then
+      return 1
+    fi
     for storage_dir in "${root}/data/caddy/certificates"/*/*; do
       [[ -d "$storage_dir" ]] || continue
       storage_domain="${storage_dir##*/}"
-      active_domain="$(jq -r '.active_roles[] as $role | .domains[$role]' "$spec")"
-      grep -Fxq "$storage_domain" <<<"$active_domain" || return 1
+      jq -e --arg deployment "$(jq -r '.deployment_id' "$spec")" --arg domain "$storage_domain" \
+        'any(.domains[]; .deployment_id == $deployment and .owner == "provider" and .domain == $domain)' "$registry" >/dev/null || return 1
     done
     command -v fuser >/dev/null 2>&1 || return 1
     while IFS= read -r role; do
@@ -914,9 +1022,11 @@ entry_v2_adapter_remove() {
     caddy_adapter_check_container_owner "$spec" || return 1
     "$docker" rm -f "$container" >/dev/null 2>&1 || return 1
   fi
+  caddy_adapter_remove_renewal_trigger "$root" "$spec" || return 1
   rm -f "$config" "$(caddy_adapter_candidate "$root")" "$marker" || return 1
   [[ ! -e "$backup" ]] || rm -rf -- "$backup" || return 1
   if [[ "$purge" == 1 ]]; then rm -rf -- "${root}/data" || return 1; fi
+  rm -f "$(caddy_adapter_consumer_registry "$root")"
   if [[ "$purge" == 1 ]]; then
     while IFS= read -r role; do
       [[ -n "$role" ]] || continue

@@ -415,6 +415,7 @@ entry_v2_reconcile_locked() {
     entry_v2_infrastructure_error "$root" 'Unable to prepare state root'
     return 12
   fi
+  export CADDY_ADAPTER_ENTRY_STATE_ROOT="$root"
   local lock_fd
   exec {lock_fd}>"$root/.lock" 2>/dev/null || { entry_v2_infrastructure_error "$root" 'Unable to open state lock'; return 12; }
   flock -x "$lock_fd" || { entry_v2_infrastructure_error "$root" 'Unable to acquire state lock'; return 12; }
@@ -593,6 +594,9 @@ entry_v2_reconcile_locked() {
     .candidate_resources=[] | .certificates=$obs.certificates |
     .listeners=$obs.listeners | .capabilities=$obs.capabilities | del(.last_error)' <<<"$state")"
   entry_v2_persist "$root" "$result" || { entry_v2_infrastructure_error "$root" 'Unable to persist state'; return 12; }
+  if [[ "${CADDY_ADAPTER_REAL_CONNECTED:-0}" == 1 ]]; then
+    caddy_adapter_enable_renewal_trigger || { entry_v2_infrastructure_error "$root" 'Unable to enable renewal trigger'; return 12; }
+  fi
   printf '%s\n' "$result"
 }
 
