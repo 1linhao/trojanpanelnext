@@ -277,8 +277,8 @@ caddy_adapter_remove_renewal_trigger() {
   timer_dir="$(caddy_adapter_timer_dir)"; service="$(caddy_adapter_timer_service)"; unit="$(caddy_adapter_timer_unit)"
   caddy_adapter_validate_timer_dir || return 1
   owner="${timer_dir}/.tpn-renewal-owner"
-  if [[ -e "$service" || -e "$unit" ]]; then
-    [[ -f "$owner" && "$(cat "$owner" 2>/dev/null)" == "deployment=$deployment" ]] || return 1
+  if [[ -e "$service" || -e "$unit" || -e "$owner" ]]; then
+    [[ -f "$owner" && ! -L "$owner" && "$(cat "$owner" 2>/dev/null)" == "deployment=$deployment" ]] || return 1
   fi
   if [[ -n "${CADDY_ADAPTER_TIMER_ENABLE_CMD:-}" ]]; then
     CADDY_ENTRY_TIMER_SERVICE="$service" bash -c "${CADDY_ADAPTER_TIMER_DISABLE_CMD:-true}" || return 1
