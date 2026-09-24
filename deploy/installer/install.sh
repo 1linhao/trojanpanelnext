@@ -2430,15 +2430,6 @@ main() {
     verify_release_assets_before_host_change "${config_file}"
   fi
   apply_executable_asset_policy
-  if [[ "${command}" == install && -n "${ENTRY_SPEC_FILE}" && "${INSTALLER_ASSET_VERSION}" != development ]]; then
-    install_entry_runtime_assets || {
-      echo_content red "Could not persist verified EntryController runtime assets"
-      exit 1
-    }
-  fi
-  if [[ "${command}" != validate && -x "${ENTRY_RUNTIME_DIR}/entryctl.sh" && ! -L "${ENTRY_RUNTIME_DIR}/entryctl.sh" ]]; then
-    ENTRYCTL_PATH="${ENTRY_RUNTIME_DIR}/entryctl.sh"
-  fi
   if [[ -n "${bundle_file}" ]]; then
     prepare_node_bundle "${bundle_file}"
     config_file="${TP_NODE_BUNDLE_DIR}/config-node.yaml"
@@ -2455,6 +2446,15 @@ main() {
     require_root
     if [[ "${command}" == install ]]; then
       preflight_install_dependencies
+      if [[ -n "${ENTRY_SPEC_FILE}" && "${INSTALLER_ASSET_VERSION}" != development ]]; then
+        install_entry_runtime_assets || {
+          echo_content red "Could not persist verified EntryController runtime assets"
+          exit 1
+        }
+      fi
+    fi
+    if [[ "${command}" != validate && -x "${ENTRY_RUNTIME_DIR}/entryctl.sh" && ! -L "${ENTRY_RUNTIME_DIR}/entryctl.sh" ]]; then
+      ENTRYCTL_PATH="${ENTRY_RUNTIME_DIR}/entryctl.sh"
     fi
     load_config "${mode}" "${TP_CONFIG_READ_FILE}" 1
   fi
