@@ -128,6 +128,7 @@ jobs:
           bash deploy/installer/tests/node_runtime_container_test.sh
           bash deploy/installer/tests/entry_controller_test.sh
           bash deploy/installer/tests/entry_combined_v2_test.sh
+          bash deploy/installer/tests/entry_caddy_adapter_test.sh
           bash deploy/installer/tests/dependency_preflight_test.sh
           bash deploy/installer/tests/secure_file_test.sh
           bash deploy/installer/tests/web_bare_install_test.sh
@@ -169,6 +170,8 @@ jobs:
             deploy/installer/securefile/go.sum
       - name: Smoke released installer entrypoints without credentials in output
         run: bash deploy/installer/tests/docker_smoke_test.sh
+      - name: Smoke combined EntryController with real Caddy and local HTTPS
+        run: sudo -n bash deploy/installer/tests/entry_caddy_docker_smoke_test.sh
 
   gate:
     name: gate

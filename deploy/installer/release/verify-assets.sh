@@ -73,6 +73,7 @@ EXPECTED_RELEASE_ASSET_PATHS=(
   entry/v2.sh
   entry/adapters/external.sh
   entry/adapters/nginx_certbot.sh
+  entry/adapters/caddy.sh
 )
 
 manifest="${assets_dir}/release-manifest.json"

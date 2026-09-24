@@ -11,17 +11,17 @@
     {
       "name": "release-contract",
       "path": "release-contract.sh",
-      "sha256": "9fa7ec64e21ccc1469f81254b40d5b7f8cee3f6f458563c037ec1d21d667f21d"
+      "sha256": "a4bc10033ea819fad4698e29a305828a1cc9e6e0b5cfe008cc4bf2e5aeac0613"
     },
     {
       "name": "verify-assets",
       "path": "verify-assets.sh",
-      "sha256": "1cbc8b2a631af4e3775475b4975bf2b65b7370e46decd817a4c1be25b214f13e"
+      "sha256": "297dedf4573e2417213542ddaec5c4881a70b279dfaf4d28f5228389c0938407"
     },
     {
       "name": "install",
       "path": "install.sh",
-      "sha256": "8a75337f5120e3762b157449851cf5e3c02f8dd13ebb9949a047819cc9ac5418"
+      "sha256": "9122631a51b9f42dec2b030f903f5b05990a886a2bcabeb019b143fb15ad1410"
     },
     {
       "name": "secure-file",
@@ -51,7 +51,7 @@
     {
       "name": "entry/entryctl",
       "path": "entry/entryctl.sh",
-      "sha256": "7c51e802b1e8d31bd7264dbe08351b7c054626d858d3ed61325b2f2ccfc6be8d"
+      "sha256": "e88a5843e9095fe12fed53c56c2da1653733f3dea86848d4ea871537833a01d8"
     },
     {
       "name": "entry/controller",
@@ -61,7 +61,7 @@
     {
       "name": "entry/v2",
       "path": "entry/v2.sh",
-      "sha256": "ad15b8bec58d0a9c2e232a7e8898b971be9854841ce5ed96bbbe03342e2e832d"
+      "sha256": "982f720a93007dcf2fdf672515123db876e2b4eeaba205421ce9ecff051ef961"
     },
     {
       "name": "entry/adapters/external",
@@ -72,6 +72,11 @@
       "name": "entry/adapters/nginx_certbot",
       "path": "entry/adapters/nginx_certbot.sh",
       "sha256": "73a70fe68b47b5cd2631968287d3aa8641f1a1cd109c138511ff4f14c9c7efb2"
+    },
+    {
+      "name": "entry/adapters/caddy",
+      "path": "entry/adapters/caddy.sh",
+      "sha256": "fcd97ebbf1bebc347c82fb350925fd5197bf3bddbcaf54c09e6cdee5ecad03b3"
     }
   ],
   "images": {

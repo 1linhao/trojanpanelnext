@@ -155,7 +155,7 @@ entry_v2_validate_state() {
     (.listeners | type == "array" and all(.[];
       type == "object" and
       (keys - ["transport","address","port","purpose","owner","scope","role"] | length) == 0 and
-      .transport == "tcp" and (.address | type == "string") and
+      (.transport == "tcp" or .transport == "udp") and (.address | type == "string") and
       (.port | type == "number" and floor == . and . >= 1 and . <= 65535) and
       (.purpose | type == "string" and length > 0) and
       (.owner == "provider" or .owner == "kernel") and
@@ -201,7 +201,7 @@ entry_v2_adapter_available() {
 }
 
 entry_v2_plan() {
-  local spec="$1" root="$2" existing="" digest phase=stable action=prepare_target
+  local spec="$1" root="$2" existing="" digest phase=stable action=prepare_target observation probe_mode=probe executable=true
   digest="$(entry_v2_target_digest "$spec")"
   local path
   path="$(entry_state_path "$root" "$(jq -r '.deployment_id' "$spec")")" || return 2
@@ -222,9 +222,33 @@ entry_v2_plan() {
   if [[ "$existing" == "" && "$(jq -r '.active_roles | length' "$spec")" != 2 ]]; then
     entry_v2_error invalid_spec stable 'Initial combined deployment requires both roles'; return 2
   fi
+  entry_v2_adapter_available || {
+    entry_v2_error unsupported_capability stable 'No combined v2 Adapter is connected'; return 3;
+  }
+  observation="$(entry_v2_adapter_probe "$spec" "${existing:-null}")" || {
+    entry_v2_error ownership_conflict stable 'Adapter plan probe rejected host ownership'; return 4;
+  }
+  if [[ -n "$existing" && "$phase" != stable ]]; then probe_mode=recovery; fi
+  entry_v2_validate_observation "$observation" "$spec" "$probe_mode" "$existing" || {
+    entry_v2_error ownership_conflict stable 'Adapter plan probe returned untrusted resource identity'; return 4;
+  }
+  if [[ -z "$existing" ]]; then
+    [[ "$(jq -c '.resources' <<<"$observation")" == '[]' ]] || {
+      entry_v2_error ownership_conflict stable 'Existing resources cannot be adopted'; return 4;
+    }
+  elif [[ "$phase" == stable ]]; then
+    jq -e --argjson obs "$observation" '.resources == $obs.resources' <<<"$existing" >/dev/null || {
+      entry_v2_error ownership_conflict stable 'Observed resources differ from journal'; return 4;
+    }
+  fi
+  if declare -F entry_v2_adapter_plan_ready >/dev/null &&
+     ! entry_v2_adapter_plan_ready "$spec"; then
+    executable=false
+  fi
   jq -cn --argjson spec "$(jq -c . "$spec")" --arg digest "$digest" \
-    --arg action "$action" --arg phase "$phase" \
-    '{schema_version:2,deployment_id:$spec.deployment_id,desired_revision:$spec.revision,target_digest:$digest,provider:$spec.provider,topology:"combined",active_roles:$spec.active_roles,actions:[$action],current_phase:$phase,mutation_enabled:false,executable:false}'
+    --arg action "$action" --arg phase "$phase" --argjson executable "$executable" \
+    '{schema_version:2,deployment_id:$spec.deployment_id,desired_revision:$spec.revision,target_digest:$digest,provider:$spec.provider,topology:"combined",active_roles:$spec.active_roles,actions:[$action],current_phase:$phase,mutation_enabled:true,executable:$executable} +
+     (if $executable then {} else {blocked_on:["node_runtime"]} end)'
 }
 
 # A v1 journal never proves ownership of a combined deployment. The same
@@ -294,8 +318,17 @@ entry_v2_validate_observation() {
         $a.scope == $b.scope and ($a.role // null) == ($b.role // null) and
         $a.identity.marker == $b.identity.marker and
         $a.identity.digest == $b.identity.digest;
-      (all($observation.resources[]; . as $seen | any($known[]; same_identity($seen;.)))) and
-      (all($observation.candidate_resources[]; . as $seen | any($known[]; same_identity($seen;.))))
+      def issued_certificate($seen):
+        $seen.kind == "certificate" and $seen.owner == "provider" and
+        $seen.deployment_id == $journal.deployment_id and
+        any($journal.candidate_target.spec.active_roles[]; . as $role |
+          $seen.role == $role and
+          ($seen.id == $journal.candidate_target.spec.certificate_targets[$role].cert_path or
+           $seen.id == $journal.candidate_target.spec.certificate_targets[$role].key_path));
+      (all($observation.resources[]; . as $seen |
+        any($known[]; same_identity($seen;.)) or issued_certificate($seen))) and
+      (all($observation.candidate_resources[]; . as $seen |
+        any($known[]; same_identity($seen;.)) or issued_certificate($seen)))
     ' >/dev/null 2>&1 || return 1
     return 0
   fi
@@ -376,12 +409,22 @@ entry_v2_reconcile_locked() {
     entry_v2_error invalid_spec preparing 'Invalid or untrusted v2 EntrySpec'; return 2;
   }
   entry_v2_adapter_available || { entry_v2_error unsupported_capability preparing 'No combined v2 Adapter is connected'; return 3; }
+  # The Caddy adapter is only a real host integration when its persisted
+  # image contract is present.  Contract tests may source entryctl and replace
+  # the v2 adapter callbacks while leaving the Caddy helper functions loaded;
+  # those callbacks must not accidentally try to enable a host timer.
+  if [[ "${CADDY_ADAPTER_FAKE:-0}" != 1 && -n "${CADDY_ADAPTER_IMAGE:-}" ]]; then
+    export CADDY_ADAPTER_REAL_CONNECTED=1
+  else
+    export CADDY_ADAPTER_REAL_CONNECTED=0
+  fi
   deployment="$(jq -r '.deployment_id' "$spec")"
   digest="$(entry_v2_target_digest "$spec")"
   if ! { mkdir -p "$root" && chmod 0700 "$root"; } 2>/dev/null; then
     entry_v2_infrastructure_error "$root" 'Unable to prepare state root'
     return 12
   fi
+  export CADDY_ADAPTER_ENTRY_STATE_ROOT="$root"
   local lock_fd
   exec {lock_fd}>"$root/.lock" 2>/dev/null || { entry_v2_infrastructure_error "$root" 'Unable to open state lock'; return 12; }
   flock -x "$lock_fd" || { entry_v2_infrastructure_error "$root" 'Unable to acquire state lock'; return 12; }
@@ -391,10 +434,64 @@ entry_v2_reconcile_locked() {
   if [[ "$old" != null ]]; then
     entry_v2_check_target "$spec" "$old" "$digest" || return $?
     phase="$(jq -r '.phase' <<<"$old")"
+    if [[ "$phase" == stable && "$digest" == "$(jq -r '.committed_target.digest // ""' <<<"$old")" ]] &&
+       declare -F entry_v2_adapter_refresh >/dev/null; then
+      observation="$(entry_v2_adapter_probe "$spec" "$old")" || {
+        entry_v2_error ownership_conflict stable 'Renewal probe rejected host ownership'; return 4;
+      }
+      jq -e --argjson obs "$observation" '.resources == $obs.resources' <<<"$old" >/dev/null || {
+        entry_v2_error ownership_conflict stable 'Renewal resource identity changed'; return 4;
+      }
+      state="$(entry_v2_state "$spec" verifying unknown "$digest" "$old" "$observation")"
+      entry_v2_persist "$root" "$state" || { entry_v2_infrastructure_error "$root" 'Unable to persist renewal journal'; return 12; }
+      if ! verified="$(entry_v2_adapter_refresh "$spec" "$old")" ||
+         ! entry_v2_validate_observation "$verified" "$spec" verify; then
+        entry_v2_fail "$spec" "$root" "$state" verifying renewal_failed || return $?
+        return 7
+      fi
+      jq -e --argjson obs "$verified" '
+        def same($a;$b): $a.kind == $b.kind and $a.id == $b.id and
+          $a.identity.marker == $b.identity.marker and
+          ($a.kind == "certificate" or $a.identity.digest == $b.identity.digest);
+        . as $journal |
+        all($journal.resources[]; . as $previous | any($obs.resources[]; same($previous;.))) and
+        all($obs.resources[]; . as $new | any($journal.resources[]; same($new;.)))
+      ' <<<"$old" >/dev/null || {
+        entry_v2_fail "$spec" "$root" "$state" verifying ownership_conflict || return $?
+        return 7
+      }
+      result="$(jq -c --argjson obs "$verified" --argjson spec "$(jq -c . "$spec")" '
+        .phase="stable" | .health="healthy" | .candidate_target=null |
+        .candidate_resources=[] | .previous_resources=[] | .resources=$obs.resources |
+        .certificates=$obs.certificates | .listeners=$obs.listeners |
+        .desired_revision=$spec.revision | .observed_revision=$spec.revision |
+        .committed_target.spec=$spec |
+        if .certificates != $old.certificates then .generation += 1 else . end
+      ' --argjson old "$old" <<<"$state")" || return 12
+      entry_v2_persist "$root" "$result" || { entry_v2_infrastructure_error "$root" 'Unable to persist renewal result'; return 12; }
+      if [[ "${CADDY_ADAPTER_REAL_CONNECTED:-0}" == 1 ]] && ! caddy_adapter_enable_renewal_trigger; then
+        result="$(jq -c '.phase="stable" | .health="degraded" | .last_error={code:"dependency_missing",phase:"stable",message:"Unable to enable renewal trigger",retryable:true}' <<<"$result")"
+        entry_v2_persist "$root" "$result" || { entry_v2_infrastructure_error "$root" 'Unable to persist renewal trigger failure'; return 12; }
+        entry_v2_infrastructure_error "$root" 'Unable to enable renewal trigger'
+        return 12
+      fi
+      if [[ "$(jq -c '.certificates' <<<"$old")" == "$(jq -c '.certificates' <<<"$result")" ]]; then
+        jq -c '. + {result:"unchanged"}' <<<"$result"
+      else
+        jq -c '. + {result:"renewed"}' <<<"$result"
+      fi
+      return 0
+    fi
     if [[ "$phase" == stable && "$(jq -r '.health' <<<"$old")" == healthy && "$digest" == "$(jq -r '.committed_target.digest // ""' <<<"$old")" ]]; then
       if [[ "$(jq -r '.revision' "$spec")" != "$(jq -r '.desired_revision' <<<"$old")" ]]; then
         old="$(jq -c --argjson spec "$(jq -c . "$spec")" '.desired_revision=$spec.revision | .observed_revision=$spec.revision | .committed_target.spec=$spec' <<<"$old")"
         entry_v2_persist "$root" "$old" || { entry_v2_infrastructure_error "$root" 'Unable to persist state'; return 12; }
+      fi
+      if [[ "${CADDY_ADAPTER_REAL_CONNECTED:-0}" == 1 ]] && ! caddy_adapter_enable_renewal_trigger; then
+        old="$(jq -c '.phase="stable" | .health="degraded" | .last_error={code:"dependency_missing",phase:"stable",message:"Unable to enable renewal trigger",retryable:true}' <<<"$old")"
+        entry_v2_persist "$root" "$old" || { entry_v2_infrastructure_error "$root" 'Unable to persist renewal trigger failure'; return 12; }
+        entry_v2_infrastructure_error "$root" 'Unable to enable renewal trigger'
+        return 12
       fi
       jq -c '. + {result:"unchanged"}' <<<"$old"
       return 0
@@ -433,8 +530,17 @@ entry_v2_reconcile_locked() {
           $a.scope == $b.scope and ($a.role // null) == ($b.role // null) and
           $a.identity.marker == $b.identity.marker and
           $a.identity.digest == $b.identity.digest;
-        (all($obs.resources[]; . as $seen | any($known[]; same_identity($seen;.)))) and
-        (all($obs.candidate_resources[]; . as $seen | any($known[]; same_identity($seen;.))))
+        . as $journal |
+        def issued_certificate($seen):
+          $seen.kind == "certificate" and $seen.owner == "provider" and
+          any($journal.candidate_target.spec.active_roles[]; . as $role |
+            $seen.role == $role and
+            ($seen.id == $journal.candidate_target.spec.certificate_targets[$role].cert_path or
+             $seen.id == $journal.candidate_target.spec.certificate_targets[$role].key_path));
+        (all($obs.resources[]; . as $seen |
+          any($known[]; same_identity($seen;.)) or issued_certificate($seen))) and
+        (all($obs.candidate_resources[]; . as $seen |
+          any($known[]; same_identity($seen;.)) or issued_certificate($seen)))
       ' <<<"$old" >/dev/null
     fi || {
       entry_v2_error ownership_conflict preparing 'Observed resources differ from committed identities'; return 4;
@@ -483,7 +589,21 @@ entry_v2_reconcile_locked() {
     return 7
   fi
   # Adapter must identify exactly the candidate resources committed by this run.
-  jq -e --argjson obs "$verified" '.candidate_resources == $obs.resources' <<<"$state" >/dev/null || {
+  jq -e --argjson obs "$verified" --argjson spec "$(jq -c . "$spec")" '
+    def same_identity($a;$b):
+      $a.kind == $b.kind and $a.id == $b.id and $a.owner == $b.owner and
+      $a.deployment_id == $b.deployment_id and $a.scope == $b.scope and
+      ($a.role // null) == ($b.role // null) and
+      $a.identity.marker == $b.identity.marker and $a.identity.digest == $b.identity.digest;
+    def allowed_certificate:
+      .kind == "certificate" and
+      ((.role == "web" and (.id == $spec.certificate_targets.web.cert_path or .id == $spec.certificate_targets.web.key_path)) or
+       (.role == "node" and (.id == $spec.certificate_targets.node.cert_path or .id == $spec.certificate_targets.node.key_path)));
+    . as $journal |
+    (all($journal.candidate_resources[]; . as $candidate | any($obs.resources[]; same_identity($candidate;.)))) and
+    (all($obs.resources[]; . as $observed |
+      any($journal.candidate_resources[]; same_identity($observed;.)) or allowed_certificate))
+  ' <<<"$state" >/dev/null || {
     entry_v2_fail "$spec" "$root" "$state" verifying ownership_conflict || return $?
     return 7;
   }
@@ -495,6 +615,14 @@ entry_v2_reconcile_locked() {
     .candidate_resources=[] | .certificates=$obs.certificates |
     .listeners=$obs.listeners | .capabilities=$obs.capabilities | del(.last_error)' <<<"$state")"
   entry_v2_persist "$root" "$result" || { entry_v2_infrastructure_error "$root" 'Unable to persist state'; return 12; }
+  if [[ "${CADDY_ADAPTER_REAL_CONNECTED:-0}" == 1 ]]; then
+    if ! caddy_adapter_enable_renewal_trigger; then
+      result="$(jq -c '.phase="stable" | .health="degraded" | .last_error={code:"dependency_missing",phase:"stable",message:"Unable to enable renewal trigger",retryable:true}' <<<"$result")"
+      entry_v2_persist "$root" "$result" || { entry_v2_infrastructure_error "$root" 'Unable to persist renewal trigger failure'; return 12; }
+      entry_v2_infrastructure_error "$root" 'Unable to enable renewal trigger'
+      return 12
+    fi
+  fi
   printf '%s\n' "$result"
 }
 

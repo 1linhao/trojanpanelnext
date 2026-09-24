@@ -185,7 +185,11 @@ test -f "${bundle}/entry/controller.sh"
 test -f "${bundle}/entry/v2.sh"
 test -f "${bundle}/entry/adapters/external.sh"
 test -x "${bundle}/entry/adapters/nginx_certbot.sh"
+test -x "${bundle}/entry/adapters/caddy.sh"
 "${bundle}/entry/entryctl.sh" --help | grep -q 'Usage:'
+grep -Fq 'install_entry_runtime_assets' "${bundle}/install.sh"
+grep -Fq 'CADDY_ADAPTER_ENTRYCTL_PATH=' "${bundle}/install.sh"
+grep -Fq 'CADDY_ADAPTER_IMAGE=' "${bundle}/install.sh"
 archive="${work}/trojanpanelnext-installer-1.2.3.tar.gz"
 "${PACKAGE}" --assets-dir "${bundle}" --output "${archive}" >/dev/null
 mkdir "${work}/extracted"
@@ -211,7 +215,7 @@ for config in "${bundle}"/config-*.yaml; do
   grep -q '^  node_agent_image:' "${config}"
   ! grep -Eq '^  (purpose|panel_image|ui_image|core_image):' "${config}"
 done
-jq -e '.release_version == "1.2.3" and (.assets | length == 14)' \
+jq -e '.release_version == "1.2.3" and (.assets | length == 15)' \
   "${bundle}/release-manifest.json" >/dev/null
 EXPECTED_RELEASE_ASSET_PATHS=(
   bootstrap.sh
@@ -228,6 +232,7 @@ EXPECTED_RELEASE_ASSET_PATHS=(
   entry/v2.sh
   entry/adapters/external.sh
   entry/adapters/nginx_certbot.sh
+  entry/adapters/caddy.sh
 )
 mapfile -t manifest_asset_paths < <(jq -r '.assets[].path' "${bundle}/release-manifest.json")
 cmp -s \
