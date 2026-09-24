@@ -356,6 +356,8 @@ caddy_adapter_resource_list() {
     [[ -f "$(caddy_adapter_consumer_registry "$root")" ]] && caddy_adapter_resource_json "$deployment" file "$(caddy_adapter_consumer_registry "$root")" shared managed '' "$root"
     [[ -f "$(caddy_adapter_timer_service)" ]] && caddy_adapter_resource_json "$deployment" file "$(caddy_adapter_timer_service)" shared managed '' "$root"
     [[ -f "$(caddy_adapter_timer_unit)" ]] && caddy_adapter_resource_json "$deployment" file "$(caddy_adapter_timer_unit)" shared managed '' "$root"
+    [[ -f "$(caddy_adapter_timer_dir)/.tpn-renewal-owner" ]] &&
+      caddy_adapter_resource_json "$deployment" file "$(caddy_adapter_timer_dir)/.tpn-renewal-owner" shared managed '' "$root"
   fi
   if [[ "${CADDY_ADAPTER_FAKE:-0}" == 1 ]]; then
     [[ -f "${root}/.active" ]] && caddy_adapter_resource_json "$deployment" container "$container" shared managed '' "$root"
@@ -876,7 +878,7 @@ caddy_adapter_observation() {
 }
 
 entry_v2_adapter_probe() {
-  local spec="$1" state="${2:-null}" root status observation_spec="$1" temporary=""
+  local spec="$1" state="${2:-null}" root status timer_owner observation_spec="$1" temporary=""
   export CADDY_ADAPTER_REAL_CONNECTED=1
   root="$(caddy_adapter_root "$spec")"
   caddy_adapter_safe_path "$root" || return 1
@@ -888,6 +890,12 @@ entry_v2_adapter_probe() {
   caddy_adapter_check_ports || return 1
   status="$(caddy_adapter_owner_status "$spec" "$root")"
   if [[ "$status" == owned && "${CADDY_ADAPTER_FAKE:-0}" != 1 ]]; then
+    timer_owner="$(caddy_adapter_timer_dir)/.tpn-renewal-owner"
+    [[ -f "$timer_owner" && ! -L "$timer_owner" &&
+       "$(cat "$timer_owner" 2>/dev/null)" == "deployment=$(jq -r '.deployment_id' "$spec")" ]] || {
+      [[ -z "$temporary" ]] || rm -f "$temporary"
+      return 1
+    }
     local registry="$(caddy_adapter_consumer_registry "$root")"
     [[ -f "$registry" && ! -L "$registry" ]] || { [[ -z "$temporary" ]] || rm -f "$temporary"; return 1; }
     caddy_adapter_validate_consumer_registry "$registry" || { [[ -z "$temporary" ]] || rm -f "$temporary"; return 1; }
@@ -1146,27 +1154,29 @@ entry_v2_adapter_remove() {
     # A removed role may still have a CertificateRef consumer. The current
     # one-role spec cannot authorize deleting that role's Caddy storage.
     local storage_domain storage_dir registry
-    registry="$(caddy_adapter_consumer_registry "$root")"
-    [[ -f "$registry" && ! -L "$registry" ]] || return 1
-    caddy_adapter_validate_consumer_registry "$registry" || return 1
-    jq -e --arg deployment "$(jq -r '.deployment_id' "$spec")" --arg consumer "$(jq -r '.roles.node.certificate_consumer // ""' "$spec")" '
-      all(.consumers[];
-        .deployment_id == $deployment and .owner == "provider" and
-        ((.active == true and .removed == false and .role == "node" and $consumer != "" and .path == $consumer) or
-         (.active == false and .removed == true)))
-    ' "$registry" >/dev/null || return 1
-    while IFS=$'\t' read -r consumer_path consumer_active consumer_removed; do
-      [[ "$consumer_active" == false && "$consumer_removed" == true ]] || continue
-      caddy_adapter_safe_path "$consumer_path" || return 1
-      [[ ! -e "$consumer_path/fullchain.pem" && ! -e "$consumer_path/privkey.pem" &&
-         ! -e "$consumer_path/.tpn-$(jq -r '.deployment_id' "$spec")-consumer.owner" ]] || return 1
-    done < <(jq -r --arg deployment "$(jq -r '.deployment_id' "$spec")" '.consumers[] | select(.deployment_id == $deployment) | [.path,.active,.removed] | @tsv' "$registry")
-    for storage_dir in "${root}/data/caddy/certificates"/*/*; do
-      [[ -d "$storage_dir" ]] || continue
-      storage_domain="${storage_dir##*/}"
-      jq -e --arg deployment "$(jq -r '.deployment_id' "$spec")" --arg domain "$storage_domain" \
-        'any(.domains[]; .deployment_id == $deployment and .owner == "provider" and .domain == $domain)' "$registry" >/dev/null || return 1
-    done
+    if [[ "${CADDY_ADAPTER_FAKE:-0}" != 1 ]]; then
+      registry="$(caddy_adapter_consumer_registry "$root")"
+      [[ -f "$registry" && ! -L "$registry" ]] || return 1
+      caddy_adapter_validate_consumer_registry "$registry" || return 1
+      jq -e --arg deployment "$(jq -r '.deployment_id' "$spec")" --arg consumer "$(jq -r '.roles.node.certificate_consumer // ""' "$spec")" '
+        all(.consumers[];
+          .deployment_id == $deployment and .owner == "provider" and
+          ((.active == true and .removed == false and .role == "node" and $consumer != "" and .path == $consumer) or
+           (.active == false and .removed == true)))
+      ' "$registry" >/dev/null || return 1
+      while IFS=$'\t' read -r consumer_path consumer_active consumer_removed; do
+        [[ "$consumer_active" == false && "$consumer_removed" == true ]] || continue
+        caddy_adapter_safe_path "$consumer_path" || return 1
+        [[ ! -e "$consumer_path/fullchain.pem" && ! -e "$consumer_path/privkey.pem" &&
+           ! -e "$consumer_path/.tpn-$(jq -r '.deployment_id' "$spec")-consumer.owner" ]] || return 1
+      done < <(jq -r --arg deployment "$(jq -r '.deployment_id' "$spec")" '.consumers[] | select(.deployment_id == $deployment) | [.path,.active,.removed] | @tsv' "$registry")
+      for storage_dir in "${root}/data/caddy/certificates"/*/*; do
+        [[ -d "$storage_dir" ]] || continue
+        storage_domain="${storage_dir##*/}"
+        jq -e --arg deployment "$(jq -r '.deployment_id' "$spec")" --arg domain "$storage_domain" \
+          'any(.domains[]; .deployment_id == $deployment and .owner == "provider" and .domain == $domain)' "$registry" >/dev/null || return 1
+      done
+    fi
     command -v fuser >/dev/null 2>&1 || return 1
     while IFS= read -r role; do
       cert="$(jq -r --arg role "$role" '.certificate_targets[$role].cert_path' "$spec")"

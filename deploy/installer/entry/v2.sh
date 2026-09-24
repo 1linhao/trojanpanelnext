@@ -409,10 +409,14 @@ entry_v2_reconcile_locked() {
     entry_v2_error invalid_spec preparing 'Invalid or untrusted v2 EntrySpec'; return 2;
   }
   entry_v2_adapter_available || { entry_v2_error unsupported_capability preparing 'No combined v2 Adapter is connected'; return 3; }
-  if [[ "${CADDY_ADAPTER_FAKE:-0}" == 1 ]]; then
-    export CADDY_ADAPTER_REAL_CONNECTED=0
-  else
+  # The Caddy adapter is only a real host integration when its persisted
+  # image contract is present.  Contract tests may source entryctl and replace
+  # the v2 adapter callbacks while leaving the Caddy helper functions loaded;
+  # those callbacks must not accidentally try to enable a host timer.
+  if [[ "${CADDY_ADAPTER_FAKE:-0}" != 1 && -n "${CADDY_ADAPTER_IMAGE:-}" ]]; then
     export CADDY_ADAPTER_REAL_CONNECTED=1
+  else
+    export CADDY_ADAPTER_REAL_CONNECTED=0
   fi
   deployment="$(jq -r '.deployment_id' "$spec")"
   digest="$(entry_v2_target_digest "$spec")"
