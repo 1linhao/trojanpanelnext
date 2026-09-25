@@ -160,11 +160,31 @@ sudo ./install.sh remove --mode node --config ./node-agent.yaml --purge-data
 `--keep-data` overrides `purge_data` in the config for a recoverable removal;
 `--purge-data` explicitly deletes generated data.
 
+Combined mode requires two different domains that both resolve to the host's public IP. One shared
+Entry owns ports 80/443, while Node kernel protocol listeners remain direct. The local Node uses its
+own MariaDB and Redis identities issued by the Web control plane:
+
+```bash
+sudo ./install.sh install --mode combined --config ./combined.yaml
+sudo ./install.sh refresh-cert --mode combined --config ./combined.yaml
+```
+
+`refresh-cert` does not take over ACME; the shared Entry remains the certificate producer. It restarts
+Core only after the Node certificate generation changes. With a combined config,
+`remove --mode web|node` removes one role, rewrites the shared Entry for the surviving domain, and
+preserves shared MariaDB/Redis resources. Node removal revokes its control-plane identity first.
+If Web was removed first, a one-shot control-plane CLI revokes the remaining Node identity.
+Combined installation rejects an existing standalone Node Entry and verifies Web-to-Node mTLS/gRPC before success.
+
 ## Configuration files
 
 [Web control-plane template](examples/web.yaml) contains the hostname, images, ports, mTLS identity directory, and internal credentials.
 
 [Node Agent template](examples/node-agent.yaml) contains the node hostname, control-plane database and Redis connections, gRPC settings, public CA directory, and certificate paths.
+
+[Combined template](examples/combined.yaml) contains both domains, the local Node public IP, its
+dedicated identity credential path, and shared Entry ports. `node_identity_credential_file` must remain
+under `/tpdata/trojan-panel/config/node-identities/` and root-only.
 
 External TLS mode uses [external-web.yaml](examples/external-web.yaml) and
 [external-node.yaml](examples/external-node.yaml), which add these keys:
@@ -209,9 +229,9 @@ The release configuration contract uses `deployment_mode`, `api_image`, `web_ima
 `node_agent_image`. The legacy `purpose`, `panel_image`, `ui_image`, and `core_image` keys are
 accepted only when reading existing installer configurations and are not emitted in new templates.
 
-`combined` is valid in the unified configuration contract, but its container orchestration is
-outside this ticket. Release validation accepts a combined configuration while the existing
-installer continues to execute only `web` and `node`. See
+The installer fully orchestrates `combined`: Web and Node share local data services and one shared
+Entry with separate certificates for both domains. Node kernel listeners are never forwarded through
+a unified L4 entry. See
 [example-release-manifest.json](release/example-release-manifest.json) for a secret-free manifest
 example. The Release tar.gz preserves executable modes and is accompanied by the manifest and
 SHA256SUMS. Verify its attestation before extracting and checking the bundled digests:

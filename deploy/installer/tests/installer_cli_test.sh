@@ -58,6 +58,12 @@ assert_fails "${INSTALLER}" remove --mode web --config /dev/null --purge-data --
   --config "$(dirname "${INSTALLER}")/examples/web.yaml" | grep -q 'valid for web deployment mode'
 "${INSTALLER}" validate --mode node \
   --config "$(dirname "${INSTALLER}")/examples/node-agent.yaml" | grep -q 'valid for node deployment mode'
+"${INSTALLER}" validate --mode combined \
+  --config "$(dirname "${INSTALLER}")/examples/combined.yaml" | grep -q 'valid for combined deployment mode'
+assert_fails "${INSTALLER}" validate --mode web \
+  --config "$(dirname "${INSTALLER}")/examples/combined.yaml"
+assert_fails "${INSTALLER}" validate --mode node \
+  --config "$(dirname "${INSTALLER}")/examples/combined.yaml"
 assert_fails "${INSTALLER}" validate --mode node \
   --config "$(dirname "${INSTALLER}")/examples/web.yaml"
 

@@ -30,6 +30,14 @@ UI_CONTAINER="${UI_CONTAINER:-trojan-panel-ui}"
 CORE_CONTAINER="${CORE_CONTAINER:-trojan-panel-core}"
 WEB_CADDY_CONTAINER="${WEB_CADDY_CONTAINER:-trojan-panel-web-caddy}"
 NODE_CADDY_CONTAINER="${NODE_CADDY_CONTAINER:-trojan-panel-node-caddy}"
+COMBINED_ENTRY_DEPLOYMENT_ID="${COMBINED_ENTRY_DEPLOYMENT_ID:-trojanpanelnext-combined-entry}"
+COMBINED_ENTRY_ROOT="${COMBINED_ENTRY_ROOT:-${TP_DATA}/custom/web-caddy}"
+COMBINED_ENTRY_STATE_ROOT="${COMBINED_ENTRY_STATE_ROOT:-${TP_DATA}/trojanpanelnext-entry/state}"
+COMBINED_ENTRY_SPEC="${COMBINED_ENTRY_SPEC:-${TP_DATA}/trojanpanelnext-entry/combined-spec.json}"
+COMBINED_ENTRY_CONTAINER="${COMBINED_ENTRY_CONTAINER:-${WEB_CADDY_CONTAINER}}"
+COMBINED_OWNER_TOKEN="${COMBINED_OWNER_TOKEN:-}"
+COMBINED_OWNER_MARKER="${COMBINED_OWNER_MARKER:-${COMBINED_ENTRY_ROOT}/.trojanpanelnext-owner}"
+COMBINED_RESTORE_ROLE="${COMBINED_RESTORE_ROLE:-}"
 
 CADDY_IMAGE="${CADDY_IMAGE:-caddy:2.8.4}"
 MARIADB_IMAGE="${MARIADB_IMAGE:-mariadb:10.7.3}"
@@ -63,6 +71,12 @@ GRPC_SERVER_CA_PATH="${GRPC_SERVER_CA_PATH:-}"
 KERNEL_RUNTIME_PATH="${KERNEL_RUNTIME_PATH:-${TP_DATA}/trojan-panel-core/runtime}"
 NODE_CADDY_HTTP_PORT="${NODE_CADDY_HTTP_PORT:-80}"
 NODE_CADDY_HTTPS_PORT="${NODE_CADDY_HTTPS_PORT:-8863}"
+TP_NODE_NAME="${TP_NODE_NAME:-}"
+TP_NODE_PUBLIC_IP="${TP_NODE_PUBLIC_IP:-}"
+NODE_IDENTITY_CREDENTIAL_FILE="${NODE_IDENTITY_CREDENTIAL_FILE:-}"
+WEB_MARIADB_USER="${WEB_MARIADB_USER:-}"
+WEB_MARIADB_PASSWORD="${WEB_MARIADB_PASSWORD:-}"
+WEB_REDIS_PASSWORD="${WEB_REDIS_PASSWORD:-}"
 TLS_MODE="${TLS_MODE:-acme}"
 TLS_CERT_DIR="${TLS_CERT_DIR:-}"
 TLS_CERT_FILE="${TLS_CERT_FILE:-}"
@@ -85,6 +99,7 @@ TP_CONFIG_ROOT="${TP_CONFIG_ROOT:-}"
 TP_CONFIG_FILE=""
 TP_CONFIG_READ_FILE=""
 TP_CONFIG_IDENTITY=""
+TP_REQUEST_COMMAND=""
 INSTALLER_ASSET_VERSION="development"
 TP_ASSET_VERSION=""
 TP_TEMP_TOOLS_DIR=""
@@ -128,17 +143,18 @@ echo_content() {
 }
 
 usage() {
-  local mode="${1:-web|node}"
+  local mode="${1:-web|node|combined}"
   cat <<EOF
 Usage:
   $0 install  --mode $mode (--config <file>|--bundle <encrypted.age>) [--entry-spec <0600-file>]
   $0 remove   --mode $mode --config <file> [--entry-spec <0600-file>] [--purge-data|--keep-data]
   $0 validate --mode $mode (--config <file>|--bundle <encrypted.age>) [--entry-spec <file>]
-  $0 refresh-cert --mode node --config <file>
+  $0 refresh-cert --mode node|combined --config <file>
 
 Options:
-  --mode <mode>      Deployment mode: Web control plane or Node Agent
+  --mode <mode>      Deployment mode: Web control plane, Node Agent, or combined
   --entry-spec <file>  Versioned EntrySpec consumed by EntryController
+  --restore-role <role> Explicitly restore a removed combined role (web|node)
   --config <file>    YAML configuration file
   --bundle <file>    Encrypted Node bootstrap bundle (node install/validate only)
   --force            Recreate existing containers during installation
@@ -159,6 +175,8 @@ trojanpanelnext.purpose remains accepted as compatibility input.
 TLS ownership:
   tls_mode: acme      (default) the installer runs a Caddy container that
                       listens on 80/443 and obtains its own ACME certificate.
+                      In combined mode one shared Caddy deployment owns both
+                      domains and both certificates.
   tls_mode: external  no Caddy container is created. The external entry
                       point owns Web 80/443, ACME and required plain-HTTP
                       fallback listeners. Node protocol ports stay direct.
@@ -638,6 +656,15 @@ prepare_node_bundle() {
 }
 
 initialize_node_bootstrap_challenge() {
+  local runtime_config="${TP_DATA}/trojan-panel-core/config/config.ini" previous
+  if [[ "${TP_DEPLOYMENT_MODE}" == combined && -f "${runtime_config}" && ! -L "${runtime_config}" &&
+    "$(stat -c %a "${runtime_config}")" == 600 ]]; then
+    previous="$(sed -n 's/^bootstrap_challenge=//p' "${runtime_config}" | head -n 1)"
+    if [[ "${previous}" =~ ^[0-9a-f]{64}$ ]]; then
+      NODE_BOOTSTRAP_CHALLENGE="${previous}"
+      return
+    fi
+  fi
   NODE_BOOTSTRAP_CHALLENGE="$(openssl rand -hex 32)"
   if [[ ! "${NODE_BOOTSTRAP_CHALLENGE}" =~ ^[0-9a-f]{64}$ ]]; then
     echo_content red "Could not create a fresh Node installation challenge"
@@ -743,8 +770,14 @@ load_config() {
   cfg_apply "${file}" MANAGED_CERT_DIR managed_cert_dir
   cfg_apply "${file}" EXTERNAL_MANAGED_DIR external_managed_dir
   cfg_apply "${file}" EXTERNAL_ROUTES_DIR external_routes_dir
+  cfg_apply "${file}" NODE_IDENTITY_CREDENTIAL_FILE node_identity_credential_file
   cfg_apply "${file}" TP_FORCE force
   cfg_apply "${file}" TP_PURGE_DATA purge_data
+  # A combined configuration is also accepted by role-scoped removal. Load
+  # the complete shared configuration before deciding which role to remove.
+  if [[ "${TP_DEPLOYMENT_MODE}" == combined ]]; then
+    action=combined
+  fi
   case "${action}" in
   web)
     TP_WEB_DOMAIN=""
@@ -780,6 +813,25 @@ load_config() {
     cfg_apply "${file}" REDIS_PASSWORD redis_password
     cfg_apply "${file}" REDIS_AUTH_USERNAME redis_auth_username
     cfg_apply "${file}" REDIS_AUTH_PASSWORD redis_auth_password
+    ;;
+  combined)
+    TP_WEB_DOMAIN=""
+    TP_NODE_DOMAIN=""
+    TP_EMAIL=""
+    TP_NODE_NAME=""
+    TP_NODE_PUBLIC_IP=""
+    MARIADB_PASSWORD=""
+    REDIS_PASSWORD=""
+    SYSADMIN_PASSWORD=""
+    cfg_apply "${file}" TP_WEB_DOMAIN web_hostname
+    cfg_apply "${file}" TP_NODE_DOMAIN node_hostname
+    cfg_apply "${file}" TP_EMAIL email
+    cfg_apply "${file}" TP_NODE_NAME node_name
+    cfg_apply "${file}" TP_NODE_PUBLIC_IP node_public_ip
+    cfg_apply "${file}" MARIADB_USER mariadb_user
+    cfg_apply "${file}" MARIADB_PASSWORD mariadb_password
+    cfg_apply "${file}" REDIS_PASSWORD redis_password
+    cfg_apply "${file}" SYSADMIN_PASSWORD sysadmin_password
     ;;
   esac
 }
@@ -859,12 +911,520 @@ require_sysadmin_password() {
   fi
 }
 
+require_domain() {
+  local name="$1"
+  local value="${!name:-}"
+  if [[ ! "${value}" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$ ]]; then
+    echo_content red "${name} must be a lowercase DNS hostname with valid labels"
+    exit 1
+  fi
+}
+
+require_public_ip() {
+  local name="$1"
+  local value="${!name:-}"
+  [[ -n "${value}" ]] || {
+    echo_content red "${name} is required for a combined Node identity"
+    exit 1
+  }
+  local valid=0
+  local -a parts=()
+  if [[ "${value}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+    local part first second
+    IFS=. read -r -a parts <<<"${value}"
+    valid=1
+    for part in "${parts[@]}"; do
+      if [[ ! "${part}" =~ ^[0-9]+$ ]] || ((10#${part} > 255)); then
+        valid=0
+        break
+      fi
+    done
+    first=$((10#${parts[0]})); second=$((10#${parts[1]}))
+    if [[ "${valid}" == 1 ]] && {
+      ((first == 0 || first == 10 || first == 127 || first >= 224)) ||
+      ((first == 169 && second == 254)) ||
+      ((first == 172 && second >= 16 && second <= 31)) ||
+      ((first == 192 && second == 168));
+    }; then
+      valid=0
+    fi
+  elif [[ "${value}" == *:* && "${value}" =~ ^[0-9a-fA-F:]+$ ]]; then
+    valid=1
+    [[ "${value}" != *:::* && "${value}" != "::" ]] || valid=0
+    if [[ "${valid}" == 1 ]]; then
+      local compressed=0 count=0 part left right left_count right_count gap
+      local -a left_parts=() right_parts=() full_parts=()
+      [[ "${value}" == *::* ]] && compressed=1
+      if [[ "${compressed}" == 0 && ( "${value}" == :* || "${value}" == *: ) ]]; then valid=0; fi
+      if [[ "${compressed}" == 1 ]]; then
+        left="${value%%::*}"
+        right="${value#*::}"
+        [[ -z "${left}" ]] || IFS=: read -r -a left_parts <<<"${left}"
+        [[ -z "${right}" ]] || IFS=: read -r -a right_parts <<<"${right}"
+        left_count="${#left_parts[@]}"
+        right_count="${#right_parts[@]}"
+        gap=$((8 - left_count - right_count))
+        ((gap > 0)) || valid=0
+        full_parts+=("${left_parts[@]}")
+        for ((count = 0; count < gap; count++)); do full_parts+=(0000); done
+        full_parts+=("${right_parts[@]}")
+      else
+        IFS=: read -r -a full_parts <<<"${value}"
+      fi
+      count=0
+      for part in "${full_parts[@]}"; do
+        [[ "${part}" =~ ^[0-9a-fA-F]{1,4}$ ]] || { valid=0; break; }
+        count=$((count + 1))
+      done
+      ((count == 8)) || valid=0
+      if [[ "${valid}" == 1 ]]; then
+        local group_value all_zero=1 all_but_last_zero=1 first_group last_group mapped_group
+        for part in "${full_parts[@]}"; do
+          group_value=$((16#${part}))
+          ((group_value == 0)) || all_zero=0
+        done
+        count=0
+        while ((count < 7)); do
+          group_value=$((16#${full_parts[count]}))
+          ((group_value == 0)) || all_but_last_zero=0
+          count=$((count + 1))
+        done
+        first_group=$((16#${full_parts[0]}))
+        last_group=$((16#${full_parts[7]}))
+        mapped_group=$((16#${full_parts[5]}))
+        # Reject ULA, link-local, multicast, unspecified, loopback and
+        # IPv4-mapped forms anywhere in the normalized 8-group address.
+        ((first_group != 0)) || valid=0
+        ((first_group < 0xfc00 || first_group > 0xfdff)) || valid=0
+        ((first_group < 0xfe80 || first_group > 0xfebf)) || valid=0
+        ((first_group < 0xff00)) || valid=0
+        ((all_zero == 0 && (all_but_last_zero == 0 || last_group != 1))) || valid=0
+        if ((all_but_last_zero == 1 && mapped_group == 65535)); then valid=0; fi
+      fi
+    fi
+  fi
+  if [[ "${valid}" != 1 ]]; then
+    echo_content red "${name} must be an IP address"
+    exit 1
+  fi
+}
+
+require_node_name() {
+  local value="${TP_NODE_NAME:-}"
+  [[ "${value}" =~ ^[A-Za-z0-9._\ -]{1,64}$ ]] || {
+    echo_content red "node_name must be 1 to 64 ASCII letters, digits, spaces, dots, underscores, or hyphens"
+    exit 1
+  }
+}
+
+validate_combined_entry_preconditions() {
+  require_domain TP_WEB_DOMAIN
+  require_domain TP_NODE_DOMAIN
+  if [[ "${TP_WEB_DOMAIN,,}" == "${TP_NODE_DOMAIN,,}" ]]; then
+    echo_content red "combined deployment requires two different domains (web_hostname and node_hostname)"
+    exit 1
+  fi
+  require_value TP_NODE_NAME
+  require_node_name
+  require_public_ip TP_NODE_PUBLIC_IP
+  require_one_of tls_mode "${TLS_MODE}" acme
+  if [[ "${NODE_CADDY_HTTP_PORT}" != 80 || "${NODE_CADDY_HTTPS_PORT}" != 443 ]]; then
+    echo_content red "combined shared Entry must own ports 80 and 443"
+    exit 1
+  fi
+  local name port
+  for name in UI_PORT PANEL_PORT MARIADB_PORT REDIS_PORT CORE_PORT GRPC_PORT; do
+    port="${!name}"
+    if [[ "${port}" == 80 || "${port}" == 443 ]]; then
+      echo_content red "${name} must not compete with the shared Entry ports 80/443"
+      exit 1
+    fi
+  done
+  if [[ -z "${NODE_IDENTITY_CREDENTIAL_FILE}" ]]; then
+    NODE_IDENTITY_CREDENTIAL_FILE="${TP_DATA}/trojan-panel/config/node-identities/combined-node.json"
+  fi
+  local identity_root="${TP_DATA%/}/trojan-panel/config/node-identities"
+  [[ "${NODE_IDENTITY_CREDENTIAL_FILE}" == "${identity_root}/"* &&
+    "${NODE_IDENTITY_CREDENTIAL_FILE}" != *$'\n'* &&
+    "${NODE_IDENTITY_CREDENTIAL_FILE}" != *'/../'* ]] || {
+    echo_content red "node_identity_credential_file must be below ${identity_root}"
+    exit 1
+  }
+}
+
+check_combined_host_preconditions() {
+  if container_exists "${NODE_CADDY_CONTAINER}"; then
+    echo_content red "A standalone Node Entry already exists: ${NODE_CADDY_CONTAINER}; remove it explicitly before combined installation"
+    exit 1
+  fi
+  if container_exists "${WEB_CADDY_CONTAINER}"; then
+    local entry_owner
+    entry_owner="$(docker inspect -f '{{ index .Config.Labels "io.trojanpanelnext.deployment" }}' "${WEB_CADDY_CONTAINER}" 2>/dev/null || true)"
+    if [[ "${entry_owner}" != "${COMBINED_ENTRY_DEPLOYMENT_ID}" ]]; then
+      echo_content red "Shared Entry ownership conflict: ${WEB_CADDY_CONTAINER} is not owned by ${COMBINED_ENTRY_DEPLOYMENT_ID}"
+      exit 1
+    fi
+  fi
+  combined_owner_prepare || exit 1
+  combined_owner_check_data_paths || exit 1
+  combined_resource_check || exit 1
+  combined_entry_target_guard
+  [[ "${TP_SKIP_NETWORK_PRECHECK:-0}" != 1 ]] || return 0
+  command -v getent >/dev/null 2>&1 || {
+    echo_content red "getent is required to verify combined DNS prerequisites"
+    exit 1
+  }
+  local domain
+  for domain in "${TP_WEB_DOMAIN}" "${TP_NODE_DOMAIN}"; do
+    if ! getent ahosts "${domain}" 2>/dev/null |
+      awk -v expected="${TP_NODE_PUBLIC_IP}" '$1 == expected {found=1} END {exit !found}'; then
+      echo_content red "combined DNS prerequisite failed: ${domain} does not resolve to ${TP_NODE_PUBLIC_IP}"
+      exit 1
+    fi
+  done
+
+  # Replays may encounter the installer-owned shared Entry. A running Caddy
+  # must account for exactly one listener per shared port; any additional
+  # listener is still a hard ownership conflict before containers change.
+  command -v ss >/dev/null 2>&1 || {
+    echo_content red "ss is required to verify combined port ownership"
+    exit 1
+  }
+  local expected_listeners=0 count port owned_pid=0 listeners line pid
+  if container_running "${COMBINED_ENTRY_CONTAINER}"; then
+    expected_listeners=1
+    owned_pid="$(docker inspect -f '{{.State.Pid}}' "${COMBINED_ENTRY_CONTAINER}" 2>/dev/null || true)"
+    [[ "${owned_pid}" =~ ^[1-9][0-9]*$ ]] || {
+      echo_content red "combined shared Entry has no verifiable process owner"
+      exit 1
+    }
+  fi
+  for port in 80 443; do
+    listeners="$(ss -Hlnpt "( sport = :${port} )" 2>/dev/null)" || return 1
+    if [[ "${expected_listeners}" == 0 ]]; then
+      if [[ -n "${listeners}" ]]; then
+        echo_content red "combined shared Entry cannot own 80/443 because another listener is active"
+        exit 1
+      fi
+      continue
+    fi
+    [[ -n "${listeners}" ]] || { echo_content red "combined shared Entry has no listener on port ${port}"; exit 1; }
+    while IFS= read -r line; do
+      [[ "${line}" == *"pid=${owned_pid},"* ]] || {
+        echo_content red "combined shared Entry has a foreign listener on port ${port}"
+        exit 1
+      }
+      while [[ "${line}" =~ pid=([0-9]+), ]]; do
+        pid="${BASH_REMATCH[1]}"
+        [[ "${pid}" == "${owned_pid}" ]] || { echo_content red "combined shared Entry has a foreign listener on port ${port}"; exit 1; }
+        line="${line#*pid=${pid},}"
+      done
+    done <<<"${listeners}"
+  done
+}
+
+combined_entry_target_guard() {
+  local state="${COMBINED_ENTRY_STATE_ROOT}/${COMBINED_ENTRY_DEPLOYMENT_ID}.json" old_web old_node roles missing
+  [[ -f "${state}" && ! -L "${state}" ]] || return 0
+  old_web="$(jq -r '.domains.web // empty' "${state}")" || return 1
+  old_node="$(jq -r '.domains.node // empty' "${state}")" || return 1
+  if [[ "${old_web}" != "${TP_WEB_DOMAIN}" || "${old_node}" != "${TP_NODE_DOMAIN}" ]]; then
+    echo_content red "Same-version combined domain changes require an explicit migration"
+    return 1
+  fi
+  roles="$(jq -r '.committed_target.spec.active_roles // [] | sort | join(",")' "${state}")" || return 1
+  if [[ -n "${roles}" && "${roles}" != node,web ]]; then
+    [[ "${TP_REQUEST_COMMAND}" == install && -n "${COMBINED_RESTORE_ROLE}" ]] || {
+      echo_content red "Restoring a removed combined role requires explicit --restore-role web|node"
+      return 1
+    }
+    [[ "${roles}" == node && "${COMBINED_RESTORE_ROLE}" == web ||
+      "${roles}" == web && "${COMBINED_RESTORE_ROLE}" == node ]] || {
+      echo_content red "--restore-role must name the inactive combined role"
+      return 1
+    }
+    missing="$(jq -r '.committed_target.digest // empty' "${state}")"
+    [[ "${missing}" =~ ^[a-f0-9]{64}$ ]] || {
+      echo_content red "Combined journal has no valid committed digest for explicit restore"
+      return 1
+    }
+  elif [[ -n "${COMBINED_RESTORE_ROLE}" ]]; then
+    echo_content red "--restore-role is only valid when restoring an inactive combined role"
+    return 1
+  fi
+}
+
+combined_owner_token_generate() {
+  COMBINED_OWNER_TOKEN="$(openssl rand -hex 32)"
+  [[ "${COMBINED_OWNER_TOKEN}" =~ ^[0-9a-f]{64}$ ]] || {
+    echo_content red "Could not create a combined deployment owner token"
+    return 1
+  }
+}
+
+combined_owner_prepare() {
+  local root="${COMBINED_ENTRY_ROOT}" marker="${COMBINED_OWNER_MARKER}" token
+  [[ "$(realpath -m -- "${root}")" == "${root}" ]] || {
+    echo_content red "Combined Entry root contains a symlink or non-canonical component"
+    return 1
+  }
+  if [[ -e "${root}" || -L "${root}" ]]; then
+    [[ -d "${root}" && ! -L "${root}" ]] || {
+      echo_content red "Combined Entry root is not a safe directory"
+      return 1
+    }
+    if [[ ! -f "${marker}" || -L "${marker}" ]]; then
+      # A legacy interrupted first install may have created the reserved root
+      # before EntryController wrote its marker. Only an empty, owner-owned
+      # root can be recovered without adopting foreign Caddy state.
+      [[ "$(find "${root}" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" == "" &&
+        "$(stat -c %u "${root}")" == "${EUID}" ]] || {
+        echo_content red "Combined Entry root has no ownership marker; refusing adoption"
+        return 1
+      }
+      combined_owner_token_generate || return 1
+    else
+      [[ ! -L "${marker}" ]] || return 1
+    fi
+    if [[ -f "${marker}" ]]; then
+      [[ "$(stat -c %u "${marker}")" == "$(stat -c %u "${TP_DATA}")" && "$(stat -c %a "${marker}")" == 600 ]] || {
+      echo_content red "Combined Entry ownership marker must be root-only"
+      return 1
+      }
+      token="$(sed -n 's/^owner_token=//p' "${marker}" | head -n 1)"
+      [[ "$(sed -n 's/^deployment=//p' "${marker}" | head -n 1)" == "${COMBINED_ENTRY_DEPLOYMENT_ID}" &&
+        "${token}" =~ ^[0-9a-f]{64}$ ]] || {
+      echo_content red "Combined Entry ownership marker is invalid"
+      return 1
+      }
+      COMBINED_OWNER_TOKEN="${token}"
+    fi
+  else
+    combined_owner_token_generate || return 1
+  fi
+}
+
+combined_owner_write_marker() {
+  local marker="${COMBINED_OWNER_MARKER}" temporary
+  [[ "${COMBINED_OWNER_TOKEN}" =~ ^[0-9a-f]{64}$ ]] || return 1
+  [[ "$(realpath -m -- "${COMBINED_ENTRY_ROOT}")" == "${COMBINED_ENTRY_ROOT}" ]] || return 1
+  mkdir -p "${COMBINED_ENTRY_ROOT}" || return 1
+  temporary="$(mktemp)" || return 1
+  printf 'deployment=%s\nowner_token=%s\n' "${COMBINED_ENTRY_DEPLOYMENT_ID}" "${COMBINED_OWNER_TOKEN}" >"${temporary}"
+  chmod 0600 "${temporary}" || { rm -f "${temporary}"; return 1; }
+  mv -f -- "${temporary}" "${marker}" || { rm -f "${temporary}"; return 1; }
+  chmod 0600 "${marker}"
+}
+
+combined_owned_paths() {
+  printf '%s\n' \
+    "${TP_DATA}/custom/web-caddy" \
+    "${TP_DATA}/custom/node-caddy" \
+    "${TP_DATA}/trojan-panel" \
+    "${TP_DATA}/trojan-panel-ui" \
+    "${TP_DATA}/trojan-panel-core" \
+    "${MANAGED_CERT_DIR}" \
+    "${TP_DATA}/mariadb" \
+    "${TP_DATA}/redis" \
+    "${TP_DATA}/trojanpanelnext-entry" \
+    "$(dirname "${NODE_IDENTITY_CREDENTIAL_FILE:-${TP_DATA}/trojan-panel/config/node-identities/combined-node.json}")"
+}
+
+COMBINED_NEW_DATA_PATHS=()
+
+combined_owner_check_data_path() {
+  local path="$1" marker deployment token
+  [[ "$(realpath -m -- "$path")" == "$path" ]] || {
+    echo_content red "Combined data path contains a symlink or non-canonical component: ${path}"
+    return 1
+  }
+  [[ -d "$path" && ! -L "$path" ]] || {
+    echo_content red "Combined data path is not a safe directory: ${path}"
+    return 1
+  }
+  [[ "$(stat -c %u "$path")" == "${EUID}" ]] || {
+    echo_content red "Combined data path is not root-owned: ${path}"
+    return 1
+  }
+  marker="${path}/.trojanpanelnext-owner"
+  [[ -f "$marker" && ! -L "$marker" && "$(stat -c %u "$marker")" == "${EUID}" && "$(stat -c %a "$marker")" == 600 ]] || {
+    echo_content red "Combined data path has no valid ownership marker: ${path}"
+    return 1
+  }
+  deployment="$(sed -n 's/^deployment=//p' "$marker" | head -n 1)"
+  token="$(sed -n 's/^owner_token=//p' "$marker" | head -n 1)"
+  [[ "$deployment" == "$COMBINED_ENTRY_DEPLOYMENT_ID" && "$token" == "$COMBINED_OWNER_TOKEN" ]] || {
+    echo_content red "Combined data ownership conflict: ${path}"
+    return 1
+  }
+}
+
+combined_owner_check_data_paths() {
+  local path
+  COMBINED_NEW_DATA_PATHS=()
+  while IFS= read -r path; do
+    [[ -n "$path" && "$path" != "$COMBINED_ENTRY_ROOT" ]] || continue
+    if [[ ! -e "$path" && ! -L "$path" ]]; then
+      [[ "$(realpath -m -- "$path")" == "$path" ]] || return 1
+      COMBINED_NEW_DATA_PATHS+=("$path")
+    else
+      combined_owner_check_data_path "$path" || return 1
+    fi
+  done < <(combined_owned_paths)
+}
+
+combined_owner_write_data_markers() {
+  local path marker temporary expected is_new
+  while IFS= read -r path; do
+    [[ -n "${path}" ]] || continue
+    [[ "${path}" == "${COMBINED_ENTRY_ROOT}" ]] && continue
+    mkdir -p "${path}" || return 1
+    marker="${path}/.trojanpanelnext-owner"
+    if [[ -e "$marker" || -L "$marker" ]]; then
+      combined_owner_check_data_path "$path" || return 1
+      continue
+    fi
+    is_new=0
+    for expected in "${COMBINED_NEW_DATA_PATHS[@]}"; do
+      [[ "$expected" == "$path" ]] && is_new=1
+    done
+    [[ "$is_new" == 1 ]] || {
+      echo_content red "Combined data path appeared without a preflight ownership decision: ${path}"
+      return 1
+    }
+    temporary="$(mktemp)" || return 1
+    printf 'deployment=%s\nowner_token=%s\n' "${COMBINED_ENTRY_DEPLOYMENT_ID}" "${COMBINED_OWNER_TOKEN}" >"${temporary}"
+    chmod 0600 "${temporary}" || { rm -f "${temporary}"; return 1; }
+    mv -f -- "${temporary}" "${marker}" || { rm -f "${temporary}"; return 1; }
+  done < <(combined_owned_paths)
+}
+
+combined_owner_purge_preflight() {
+  local path marker token deployment
+  while IFS= read -r path; do
+    [[ -n "${path}" ]] || continue
+    [[ ! -e "${path}" && ! -L "${path}" ]] && continue
+    [[ -d "${path}" && ! -L "${path}" ]] || {
+      echo_content red "Combined purge target is not a safe directory: ${path}"
+      return 1
+    }
+    marker="${path}/.trojanpanelnext-owner"
+    [[ -f "${marker}" && ! -L "${marker}" && "$(stat -c %u "${marker}")" == "$(stat -c %u "${TP_DATA}")" && "$(stat -c %a "${marker}")" == 600 ]] || {
+      echo_content red "Combined purge target has no root-only ownership marker: ${path}"
+      return 1
+    }
+    deployment="$(sed -n 's/^deployment=//p' "${marker}" | head -n 1)"
+    token="$(sed -n 's/^owner_token=//p' "${marker}" | head -n 1)"
+    [[ "${deployment}" == "${COMBINED_ENTRY_DEPLOYMENT_ID}" && "${token}" == "${COMBINED_OWNER_TOKEN}" ]] || {
+      echo_content red "Combined purge ownership conflict: ${path}"
+      return 1
+    }
+  done < <(combined_owned_paths)
+}
+
+combined_container_owner_token() {
+  local name="$1"
+  docker inspect -f '{{ index .Config.Labels "io.trojanpanelnext.owner-token" }}' "${name}" 2>/dev/null || true
+}
+
+require_combined_entry_ownership() {
+  container_exists "${COMBINED_ENTRY_CONTAINER}" || return 0
+  local owner
+  owner="$(docker inspect -f '{{ index .Config.Labels "io.trojanpanelnext.deployment" }}' "${COMBINED_ENTRY_CONTAINER}" 2>/dev/null || true)"
+  if [[ "${owner}" != "${COMBINED_ENTRY_DEPLOYMENT_ID}" ]]; then
+    echo_content red "Shared Entry ownership conflict: ${COMBINED_ENTRY_CONTAINER} is not owned by ${COMBINED_ENTRY_DEPLOYMENT_ID}"
+    return 1
+  fi
+}
+
+combined_resource_check() {
+  local name owner token
+  for name in "${COMBINED_ENTRY_CONTAINER}" "${MARIADB_CONTAINER}" "${REDIS_CONTAINER}" "${PANEL_CONTAINER}" "${UI_CONTAINER}" "${CORE_CONTAINER}"; do
+    if container_exists "${name}"; then
+      owner="$(docker inspect -f '{{ index .Config.Labels "io.trojanpanelnext.deployment" }}' "${name}" 2>/dev/null || true)"
+      [[ "${owner}" == "${COMBINED_ENTRY_DEPLOYMENT_ID}" ]] || {
+        echo_content red "Combined resource ownership conflict: ${name}"
+        return 1
+      }
+      token="$(combined_container_owner_token "${name}")"
+      [[ "${token}" == "${COMBINED_OWNER_TOKEN}" ]] || {
+        echo_content red "Combined resource owner token conflict: ${name}"
+        return 1
+      }
+    fi
+  done
+}
+
+combined_entry_write_spec() {
+  local roles="$1" temporary route spec_dir restore_digest=""
+  route="${EXTERNAL_ROUTES_DIR}/routes.json"
+  spec_dir="$(dirname "${COMBINED_ENTRY_SPEC}")"
+  [[ ! -L "${spec_dir}" && ! -L "${COMBINED_ENTRY_SPEC}" ]] || return 1
+  install -d -m 0700 "${spec_dir}" || return 1
+  chmod 0700 "${spec_dir}" || return 1
+  mkdir -p "$(dirname "${route}")"
+  if [[ ! -e "${route}" ]]; then printf '{"routes":[]}\n' >"${route}"; chmod 0600 "${route}"; fi
+  if [[ -n "${COMBINED_RESTORE_ROLE}" ]]; then
+    restore_digest="$(jq -r '.committed_target.digest // empty' "${COMBINED_ENTRY_STATE_ROOT}/${COMBINED_ENTRY_DEPLOYMENT_ID}.json")"
+  fi
+  temporary="$(mktemp)"
+  jq -cn --argjson roles "${roles}" --arg deployment "${COMBINED_ENTRY_DEPLOYMENT_ID}" --arg token "${COMBINED_OWNER_TOKEN}" \
+    --arg web "${TP_WEB_DOMAIN}" --arg node "${TP_NODE_DOMAIN}" \
+    --arg root "${COMBINED_ENTRY_ROOT}" --arg cert_root "${TP_DATA}/trojanpanelnext-entry/cert" --arg consumer "${MANAGED_CERT_DIR}" \
+    --arg route "${route}" --arg upstream "127.0.0.1:${UI_PORT}" --arg restore_role "${COMBINED_RESTORE_ROLE}" --arg restore_digest "${restore_digest}" --argjson revision "${COMBINED_ENTRY_REVISION:-1}" '
+    {schema_version:2,topology:"combined",revision:$revision,deployment_id:$deployment,owner_token:$token,provider:"caddy-legacy",
+     domains:{web:$web,node:$node},active_roles:($roles|sort),
+     roles: ({} + (if ($roles|index("web")) then {web:{web_upstream:$upstream}} else {} end) +
+       (if ($roles|index("node")) then {node:{node_exposure:"direct",route_manifest:$route,certificate_consumer:$consumer}} else {} end)),
+     certificate_targets: ({} + (if ($roles|index("web")) then {web:{managed_dir:($root+"/data"),cert_path:($cert_root+"/web/fullchain.pem"),key_path:($cert_root+"/web/privkey.pem"),renewal_owner:"caddy-legacy"}} else {} end) +
+       (if ($roles|index("node")) then {node:{managed_dir:($root+"/data"),cert_path:($cert_root+"/node/fullchain.pem"),key_path:($cert_root+"/node/privkey.pem"),renewal_owner:"caddy-legacy"}} else {} end))} |
+     if ($restore_role | length) > 0 then . + {restore_intent:{roles:[$restore_role],expected_committed_digest:$restore_digest}} else . end' >"${temporary}"
+  chmod 0600 "${temporary}"
+  mv -f "${temporary}" "${COMBINED_ENTRY_SPEC}"
+}
+
+combined_entry_reconcile() {
+  local bootstrap="${1:-0}"
+  local image="${CADDY_IMAGE}"
+  if [[ "${CADDY_ADAPTER_FAKE:-0}" != 1 && "${image}" != *@sha256:* ]]; then
+    image="$(docker image inspect -f '{{index .RepoDigests 0}}' "${image}")" || return 1
+  fi
+    ENTRY_SPEC_OWNER_UID="$(stat -c %u "${COMBINED_ENTRY_SPEC}")" CADDY_ADAPTER_INSTALLER_OWNERSHIP=1 CADDY_ADAPTER_IMAGE="${image}" CADDY_ADAPTER_ROOT="${COMBINED_ENTRY_ROOT}" \
+    CADDY_ADAPTER_CONTAINER="${COMBINED_ENTRY_CONTAINER}" CADDY_ADAPTER_WEB_ROOT="${WEB_PATH}" \
+    CADDY_ADAPTER_OWNER_TOKEN="${COMBINED_OWNER_TOKEN}" \
+    CADDY_ADAPTER_NODE_CONTAINER="${CORE_CONTAINER}" CADDY_ADAPTER_BOOTSTRAP="${bootstrap}" \
+    CADDY_ADAPTER_PURGE_RETIRED_ROLES="${COMBINED_PURGE_RETIRED_ROLES:-0}" \
+    "${ENTRYCTL_PATH}" reconcile --spec "${COMBINED_ENTRY_SPEC}" --state-root "${COMBINED_ENTRY_STATE_ROOT}"
+}
+
+combined_entry_remove() {
+  local purge="${1:-0}"
+  local image="${CADDY_IMAGE}"
+  if [[ "${CADDY_ADAPTER_FAKE:-0}" != 1 && "${image}" != *@sha256:* ]]; then
+    image="$(docker image inspect -f '{{index .RepoDigests 0}}' "${image}")" || return 1
+  fi
+  local -a args=(remove --spec "${COMBINED_ENTRY_SPEC}" --state-root "${COMBINED_ENTRY_STATE_ROOT}")
+  [[ "${purge}" != 1 ]] || args+=(--purge)
+  ENTRY_SPEC_OWNER_UID="$(stat -c %u "${COMBINED_ENTRY_SPEC}")" CADDY_ADAPTER_INSTALLER_OWNERSHIP=1 CADDY_ADAPTER_IMAGE="${image}" CADDY_ADAPTER_ROOT="${COMBINED_ENTRY_ROOT}" \
+    CADDY_ADAPTER_CONTAINER="${COMBINED_ENTRY_CONTAINER}" CADDY_ADAPTER_WEB_ROOT="${WEB_PATH}" \
+    CADDY_ADAPTER_OWNER_TOKEN="${COMBINED_OWNER_TOKEN}" \
+    CADDY_ADAPTER_NODE_CONTAINER="${CORE_CONTAINER}" \
+    "${ENTRYCTL_PATH}" "${args[@]}"
+}
+
 validate_config() {
   local mode="$1"
 
   if [[ -n "${TP_DEPLOYMENT_MODE}" && "${TP_DEPLOYMENT_MODE}" != "${mode}" ]]; then
-    echo_content red "Configuration deployment mode '${TP_DEPLOYMENT_MODE}' does not match --mode '${mode}'"
-    exit 1
+    local combined_role_remove=0
+    if [[ "${TP_REQUEST_COMMAND}" == remove && "${TP_DEPLOYMENT_MODE}" == combined &&
+      ( "${mode}" == web || "${mode}" == node ) ]]; then
+      combined_role_remove=1
+    fi
+    if [[ "${combined_role_remove}" != 1 ]]; then
+      echo_content red "Configuration deployment mode '${TP_DEPLOYMENT_MODE}' does not match --mode '${mode}'"
+      exit 1
+    fi
   fi
   require_value TP_DEPLOYMENT_MODE
   local schema_version
@@ -950,6 +1510,19 @@ validate_config() {
       echo_content yellow "for example /etc/vps-factory/certs/<domain>, and see deploy/installer/EXTERNAL.md"
       exit 1
     fi
+    ;;
+  combined)
+    validate_combined_entry_preconditions
+    require_sysadmin_password
+    require_port PANEL_PORT
+    require_port UI_PORT
+    require_port CORE_PORT
+    require_port GRPC_PORT
+    require_one_of grpc_tls_mode "${GRPC_TLS_MODE}" mtls
+    require_value PANEL_IMAGE
+    require_value UI_IMAGE
+    require_value CORE_IMAGE
+    require_value TP_PKI_BUNDLE_DIR
     ;;
   *)
     echo_content red "Unsupported deployment mode: ${mode}"
@@ -1558,6 +2131,14 @@ install_pki_material() {
     mkdir -p "$(dirname "${GRPC_CLIENT_CA_PATH}")"
     install -m 0644 "${TP_PKI_BUNDLE_DIR}/client-ca.crt" "${GRPC_CLIENT_CA_PATH}"
     ;;
+  combined)
+    generate_web_client_pki
+    mkdir -p "$(dirname "${GRPC_CLIENT_CERT_PATH}")" "$(dirname "${GRPC_CLIENT_KEY_PATH}")"
+    install -m 0644 "${TP_PKI_BUNDLE_DIR}/client.crt" "${GRPC_CLIENT_CERT_PATH}"
+    install -m 0600 "${TP_PKI_BUNDLE_DIR}/client.key" "${GRPC_CLIENT_KEY_PATH}"
+    mkdir -p "$(dirname "${GRPC_CLIENT_CA_PATH}")"
+    install -m 0644 "${TP_PKI_BUNDLE_DIR}/client-ca.crt" "${GRPC_CLIENT_CA_PATH}"
+    ;;
   esac
 }
 
@@ -1718,7 +2299,6 @@ write_web_caddyfile() {
 {
     email ${TP_EMAIL}
 }
-
 ${domain} {
     reverse_proxy 127.0.0.1:${UI_PORT}
 }
@@ -1730,6 +2310,47 @@ ${domain} {
 }
 EOF
   fi
+}
+
+write_combined_caddyfile() {
+  local caddyfile="${TP_DATA}/custom/web-caddy/Caddyfile"
+  if [[ -n "${TP_EMAIL:-}" ]]; then
+    cat >"${caddyfile}" <<EOF
+{
+    email ${TP_EMAIL}
+}
+
+${TP_WEB_DOMAIN} {
+    reverse_proxy 127.0.0.1:${UI_PORT}
+}
+
+${TP_NODE_DOMAIN} {
+    root * /srv
+    file_server
+}
+EOF
+  else
+    cat >"${caddyfile}" <<EOF
+${TP_WEB_DOMAIN} {
+    reverse_proxy 127.0.0.1:${UI_PORT}
+}
+
+${TP_NODE_DOMAIN} {
+    root * /srv
+    file_server
+}
+EOF
+  fi
+}
+
+write_combined_node_only_caddyfile() {
+  local caddyfile="${TP_DATA}/custom/web-caddy/Caddyfile"
+  cat >"${caddyfile}" <<EOF
+${TP_NODE_DOMAIN} {
+    root * /srv
+    file_server
+}
+EOF
 }
 
 write_node_caddyfile() {
@@ -1768,7 +2389,16 @@ start_caddy() {
   local config_dir="$2"
   local data_dir="$3"
   local web_dir="$4"
+  local deployment_id="${5:-}"
 
+  if [[ -n "${deployment_id}" ]] && container_exists "${name}"; then
+    local current_owner
+    current_owner="$(container_env_value "${name}" TP_ENTRY_DEPLOYMENT_ID || true)"
+    [[ "${current_owner}" == "${deployment_id}" ]] || {
+      echo_content red "Entry container ownership conflict: ${name}"
+      return 1
+    }
+  fi
   remove_container_if_force "${name}"
   if container_running "${name}"; then
     echo_content skyBlue "---> ${name} already running"
@@ -1780,8 +2410,11 @@ start_caddy() {
   fi
 
   ensure_image "${CADDY_IMAGE}"
+  local -a ownership_env=()
+  [[ -z "${deployment_id}" ]] || ownership_env=(-e "TP_ENTRY_DEPLOYMENT_ID=${deployment_id}")
   docker run -d --name "${name}" --restart always \
     --network=host \
+    "${ownership_env[@]}" \
     -v "${config_dir}/Caddyfile:/etc/caddy/Caddyfile" \
     -v "${data_dir}:/data" \
     -v "${config_dir}:/config" \
@@ -1817,6 +2450,83 @@ wait_for_cert() {
   echo_content red "    Check DNS, firewall, and Caddy logs. If another process owns port 80,"
   echo_content red "    switch the configuration to tls_mode: external instead."
   exit 1
+}
+
+wait_for_combined_certs() {
+  local data_dir="$1"
+  wait_for_cert "${TP_WEB_DOMAIN}" "${data_dir}"
+  wait_for_cert "${TP_NODE_DOMAIN}" "${data_dir}"
+  validate_combined_certificate_domains "${data_dir}"
+}
+
+validate_combined_certificate_domains() {
+  local role domain certificate hostname_check
+  [[ -f "${COMBINED_ENTRY_SPEC}" ]] || return 1
+  while IFS= read -r role; do
+    domain="$(jq -r --arg role "${role}" '.domains[$role]' "${COMBINED_ENTRY_SPEC}")"
+    certificate="$(jq -r --arg role "${role}" '.certificate_targets[$role].cert_path' "${COMBINED_ENTRY_SPEC}")"
+    [[ -s "${certificate}" ]] || {
+      echo_content red "Shared Entry certificate is missing for ${domain}"
+      return 1
+    }
+    hostname_check="$(openssl x509 -in "${certificate}" -noout -checkhost "${domain}" 2>&1 || true)"
+    if [[ "${hostname_check}" != *" does match certificate"* ]]; then
+      echo_content red "Shared Entry certificate does not cover ${domain}"
+      return 1
+    fi
+  done < <(jq -r '.active_roles[]' "${COMBINED_ENTRY_SPEC}")
+}
+
+combined_node_cert_sha256() {
+  [[ -s "${MANAGED_CERT_DIR}/fullchain.pem" && -s "${MANAGED_CERT_DIR}/privkey.pem" ]] || return 1
+  sha256sum "${MANAGED_CERT_DIR}/fullchain.pem" "${MANAGED_CERT_DIR}/privkey.pem" | sha256sum | awk '{print $1}'
+}
+
+record_combined_node_cert_generation() {
+  local state_dir="${TP_DATA}/trojanpanelnext-entry"
+  local fingerprint="$1"
+  mkdir -p "${state_dir}"
+  chmod 0700 "${state_dir}"
+  printf '%s\n' "${fingerprint}" >"${state_dir}/combined-node-cert.sha256"
+  chmod 0600 "${state_dir}/combined-node-cert.sha256"
+}
+
+reconcile_combined_node_cert_consumer() {
+  local fingerprint previous=""
+  fingerprint="$(combined_node_cert_sha256)" || return 1
+  local state_file="${TP_DATA}/trojanpanelnext-entry/combined-node-cert.sha256"
+  [[ ! -r "${state_file}" ]] || previous="$(<"${state_file}")"
+  if [[ "${fingerprint}" != "${previous}" ]]; then
+    docker restart "${CORE_CONTAINER}" >/dev/null
+    wait_for_container "${CORE_CONTAINER}"
+    echo_content green "---> Reconciled renewed combined Node certificate generation"
+  fi
+  record_combined_node_cert_generation "${fingerprint}"
+}
+
+refresh_combined_certificate() {
+  local data_dir="${TP_DATA}/custom/web-caddy/data"
+  validate_combined_certificate_domains "${data_dir}"
+  local fingerprint previous=""
+  fingerprint="$(combined_node_cert_sha256)" || {
+    echo_content red "Combined Node certificate material is unavailable"
+    return 1
+  }
+  local state_file="${TP_DATA}/trojanpanelnext-entry/combined-node-cert.sha256"
+  [[ ! -r "${state_file}" ]] || previous="$(<"${state_file}")"
+  if [[ "${fingerprint}" == "${previous}" ]]; then
+    printf 'unchanged\n'
+    return 0
+  fi
+  container_exists "${CORE_CONTAINER}" || {
+    echo_content red "Certificate changed but ${CORE_CONTAINER} does not exist"
+    return 1
+  }
+  docker restart "${CORE_CONTAINER}" >/dev/null
+  wait_for_container "${CORE_CONTAINER}"
+  record_combined_node_cert_generation "${fingerprint}"
+  echo_content green "---> Combined Node certificate generation refreshed"
+  printf 'changed\n'
 }
 
 wait_for_container() {
@@ -1885,6 +2595,8 @@ EOF
 }
 
 deploy_mariadb() {
+  local -a combined_label=()
+  [[ "${TP_DEPLOYMENT_MODE}" != combined ]] || combined_label=(--label "io.trojanpanelnext.deployment=${COMBINED_ENTRY_DEPLOYMENT_ID}" --label "io.trojanpanelnext.owner-token=${COMBINED_OWNER_TOKEN}")
   persist_container_path "${MARIADB_CONTAINER}" "/var/lib/mysql" "${TP_DATA}/mariadb/data"
   if container_running "${MARIADB_CONTAINER}"; then
     echo_content skyBlue "---> MariaDB already running"
@@ -1897,7 +2609,7 @@ deploy_mariadb() {
   fi
 
   ensure_image "${MARIADB_IMAGE}"
-  docker run -d --name "${MARIADB_CONTAINER}" --restart always \
+  docker run -d --name "${MARIADB_CONTAINER}" --restart always "${combined_label[@]}" \
     --network=host \
     -e MYSQL_DATABASE="${MARIADB_DATABASE}" \
     -e MYSQL_ROOT_PASSWORD="${MARIADB_PASSWORD}" \
@@ -1912,6 +2624,8 @@ deploy_mariadb() {
 }
 
 deploy_redis() {
+  local -a combined_label=()
+  [[ "${TP_DEPLOYMENT_MODE}" != combined ]] || combined_label=(--label "io.trojanpanelnext.deployment=${COMBINED_ENTRY_DEPLOYMENT_ID}" --label "io.trojanpanelnext.owner-token=${COMBINED_OWNER_TOKEN}")
   persist_container_path "${REDIS_CONTAINER}" "/data" "${TP_DATA}/redis/data"
   if container_running "${REDIS_CONTAINER}"; then
     echo_content skyBlue "---> Redis already running"
@@ -1923,7 +2637,7 @@ deploy_redis() {
   fi
 
   ensure_image "${REDIS_IMAGE}"
-  docker run -d --name "${REDIS_CONTAINER}" --restart always \
+  docker run -d --name "${REDIS_CONTAINER}" --restart always "${combined_label[@]}" \
     --network=host \
     -v "${TP_DATA}/redis/data:/data" \
     "${REDIS_IMAGE}" redis-server --requirepass "${REDIS_PASSWORD}" --port "${REDIS_PORT}"
@@ -1931,6 +2645,8 @@ deploy_redis() {
 }
 
 deploy_panel_backend() {
+  local -a combined_label=()
+  [[ "${TP_DEPLOYMENT_MODE}" != combined ]] || combined_label=(--label "io.trojanpanelnext.deployment=${COMBINED_ENTRY_DEPLOYMENT_ID}" --label "io.trojanpanelnext.owner-token=${COMBINED_OWNER_TOKEN}")
   remove_container_if_force "${PANEL_CONTAINER}"
   if container_running "${PANEL_CONTAINER}"; then
     echo_content skyBlue "---> Trojan Panel backend already running"
@@ -1942,7 +2658,7 @@ deploy_panel_backend() {
   fi
 
   ensure_image "${PANEL_IMAGE}"
-  docker run -d --name "${PANEL_CONTAINER}" --restart always \
+  docker run -d --name "${PANEL_CONTAINER}" --restart always "${combined_label[@]}" \
     --network=host \
     -v "${WEB_PATH}:${TP_DATA}/trojan-panel/webfile/" \
     -v "${TP_DATA}/trojan-panel/logs/:${TP_DATA}/trojan-panel/logs/" \
@@ -1967,6 +2683,8 @@ deploy_panel_backend() {
 }
 
 deploy_panel_ui() {
+  local -a combined_label=()
+  [[ "${TP_DEPLOYMENT_MODE}" != combined ]] || combined_label=(--label "io.trojanpanelnext.deployment=${COMBINED_ENTRY_DEPLOYMENT_ID}" --label "io.trojanpanelnext.owner-token=${COMBINED_OWNER_TOKEN}")
   remove_container_if_force "${UI_CONTAINER}"
   write_ui_nginx_config
   recreate_container_if_env_changed "${UI_CONTAINER}" TP_BIND_ADDRESS "${BIND_ADDRESS}" 0.0.0.0
@@ -1980,7 +2698,7 @@ deploy_panel_ui() {
   fi
 
   ensure_image "${UI_IMAGE}"
-  docker run -d --name "${UI_CONTAINER}" --restart always \
+  docker run -d --name "${UI_CONTAINER}" --restart always "${combined_label[@]}" \
     --network=host \
     -e "TP_BIND_ADDRESS=${BIND_ADDRESS}" \
     -v "${TP_DATA}/trojan-panel-ui/nginx/default.conf:/etc/nginx/conf.d/default.conf" \
@@ -1988,13 +2706,112 @@ deploy_panel_ui() {
   wait_for_container "${UI_CONTAINER}"
 }
 
+prepare_combined_node_identity() {
+  command -v jq >/dev/null 2>&1 || {
+    echo_content red "jq is required to provision the combined Node identity"
+    exit 1
+  }
+  local credential_file="${NODE_IDENTITY_CREDENTIAL_FILE}"
+  mkdir -p "$(dirname "${credential_file}")"
+  chmod 0700 "$(dirname "${credential_file}")"
+
+  # The API container and host deliberately share this restricted path. The
+  # CLI is idempotent for the same name/domain and replays the committed file
+  # on a same-version rerun without minting a second identity.
+  if ! docker exec "${PANEL_CONTAINER}" /tpdata/trojan-panel/trojan-panel \
+    node-identity register \
+    --name "${TP_NODE_NAME}" \
+    --domain "${TP_NODE_DOMAIN}" \
+    --public-ip "${TP_NODE_PUBLIC_IP}" \
+    --credential-file "${credential_file}"; then
+    echo_content red "Unable to provision the combined Node identity"
+    exit 1
+  fi
+  [[ -r "${credential_file}" && ! -L "${credential_file}" ]] || {
+    echo_content red "Combined Node identity did not produce a safe credential file"
+    exit 1
+  }
+
+  NODE_IDENTITY_ID="$(jq -r '.node_identity_id // empty' "${credential_file}")"
+  NODE_SERVER_ID="$(jq -r '.node_server_id // empty' "${credential_file}")"
+  NODE_IDENTITY_GENERATION="$(jq -r '.generation // empty' "${credential_file}")"
+  MARIADB_USER="$(jq -r '.mariadb.username // empty' "${credential_file}")"
+  MARIADB_PASSWORD="$(jq -r '.mariadb.password // empty' "${credential_file}")"
+  REDIS_USERNAME="$(jq -r '.redis.username // empty' "${credential_file}")"
+  REDIS_PASSWORD="$(jq -r '.redis.password // empty' "${credential_file}")"
+  REDIS_AUTH_USERNAME="$(jq -r '.redis_auth.username // empty' "${credential_file}")"
+  REDIS_AUTH_PASSWORD="$(jq -r '.redis_auth.password // empty' "${credential_file}")"
+  MARIADB_HOST=127.0.0.1
+  REDIS_HOST=127.0.0.1
+  export NODE_IDENTITY_ID NODE_SERVER_ID NODE_IDENTITY_GENERATION \
+    MARIADB_USER MARIADB_PASSWORD REDIS_USERNAME REDIS_PASSWORD \
+    REDIS_AUTH_USERNAME REDIS_AUTH_PASSWORD MARIADB_HOST REDIS_HOST
+
+  [[ -n "${NODE_IDENTITY_ID}" && -n "${MARIADB_USER}" && -n "${REDIS_USERNAME}" &&
+    -n "${REDIS_AUTH_USERNAME}" ]] || {
+    echo_content red "Combined Node credential file is incomplete"
+    exit 1
+  }
+}
+
+revoke_combined_node_identity() {
+  local credential_file="${NODE_IDENTITY_CREDENTIAL_FILE}"
+  if [[ ! -e "${credential_file}" ]] && ! container_exists "${CORE_CONTAINER}"; then
+    echo_content skyBlue "---> Combined Node identity is already absent"
+    return 0
+  fi
+  [[ -r "${credential_file}" && ! -L "${credential_file}" ]] || {
+    echo_content red "Cannot remove the combined Node role without its owned identity record: ${credential_file}"
+    return 1
+  }
+  local identity_id
+  identity_id="$(jq -r '.node_identity_id // empty' "${credential_file}")"
+  [[ "${identity_id}" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]] || {
+    echo_content red "Combined Node identity record is invalid"
+    return 1
+  }
+  local status=0
+  if container_running "${PANEL_CONTAINER}"; then
+    docker exec "${PANEL_CONTAINER}" /tpdata/trojan-panel/trojan-panel \
+      node-identity revoke --id "${identity_id}" || status=$?
+  else
+    # Web role removal leaves the shared database and Redis running. Use the
+    # same control-plane binary for a one-shot revocation without restoring
+    # its public service or taking ownership of the Node role.
+    docker run --rm --network=host \
+      --entrypoint /tpdata/trojan-panel/trojan-panel \
+      -w /tpdata/trojan-panel \
+      -v "${TP_DATA}/trojan-panel/config:/tpdata/trojan-panel/config" \
+      "${PANEL_IMAGE}" node-identity revoke --id "${identity_id}" || status=$?
+  fi
+  if [[ "${status}" != 0 ]]; then
+    echo_content red "Combined Node identity revocation failed; local Node resources were retained"
+    return 1
+  fi
+  echo_content skyBlue "---> Combined Node identity revoked: ${identity_id}"
+}
+
 probe_mariadb_health() {
+  if [[ "${TP_DEPLOYMENT_MODE}" == combined && -n "${WEB_MARIADB_PASSWORD}" ]]; then
+    local previous_user="${MARIADB_USER}" previous_password="${MARIADB_PASSWORD}"
+    MARIADB_USER="${WEB_MARIADB_USER}"
+    MARIADB_PASSWORD="${WEB_MARIADB_PASSWORD}"
+    local status=0
+    mariadb_query_with_configured_credential 'select 1' || status=$?
+    MARIADB_USER="${previous_user}"
+    MARIADB_PASSWORD="${previous_password}"
+    return "${status}"
+  fi
   mariadb_query_with_configured_credential 'select 1'
 }
 
 probe_redis_health() {
+  local redis_password="${REDIS_PASSWORD}"
+  if [[ "${TP_DEPLOYMENT_MODE}" == combined && -n "${WEB_REDIS_PASSWORD}" ]]; then
+    redis_password="${WEB_REDIS_PASSWORD}"
+  fi
   local response
-  response="$(printf 'AUTH %s\r\nPING\r\n' "${REDIS_PASSWORD}" |
+  response="$(printf 'AUTH %s\r\nPING\r\n' "${redis_password}" |
     docker exec -i "${REDIS_CONTAINER}" redis-cli -p "${REDIS_PORT}" --no-auth-warning 2>/dev/null)" || return
   grep -Fxq PONG <<<"${response}"
 }
@@ -2002,6 +2819,11 @@ probe_redis_health() {
 probe_web_https_health() {
   curl --proto '=https' --tlsv1.2 --fail --silent --show-error \
     --connect-timeout 5 --max-time 15 "https://${TP_WEB_DOMAIN}/" >/dev/null
+}
+
+probe_node_https_health() {
+  curl --proto '=https' --tlsv1.2 --fail --silent --show-error \
+    --connect-timeout 5 --max-time 15 "https://${TP_NODE_DOMAIN}/" >/dev/null
 }
 
 probe_sysadmin_credential_health() {
@@ -2086,6 +2908,18 @@ verify_web_health() {
   wait_for_health_probe "sysadmin container credential" probe_sysadmin_credential_health
 }
 
+verify_combined_health() {
+  verify_web_health
+  wait_for_health_probe "Node HTTPS" probe_node_https_health
+  verify_node_health
+  wait_for_health_probe "Web-to-Node mTLS/gRPC" probe_combined_mtls_grpc_health
+}
+
+probe_combined_mtls_grpc_health() {
+  docker exec "${PANEL_CONTAINER}" /tpdata/trojan-panel/trojan-panel \
+    node-identity verify --id "${NODE_IDENTITY_ID}" --challenge "${NODE_BOOTSTRAP_CHALLENGE}" >/dev/null
+}
+
 print_web_success() {
   echo_content red "\n=============================================================="
   echo_content skyBlue "Web control plane is healthy"
@@ -2095,16 +2929,41 @@ print_web_success() {
   echo_content red "==============================================================\n"
 }
 
+print_combined_success() {
+  echo_content red "\n=============================================================="
+  echo_content skyBlue "Combined deployment is healthy"
+  echo_content yellow "Web URL: https://${TP_WEB_DOMAIN}"
+  echo_content yellow "Node URL: https://${TP_NODE_DOMAIN}"
+  echo_content yellow "Shared Entry owns TCP 80/443; Node kernel protocol listeners remain direct."
+  echo_content yellow "Node identity: ${NODE_IDENTITY_ID} (generation ${NODE_IDENTITY_GENERATION})"
+  echo_content yellow "Credentials are stored in restricted deployment files and are not printed."
+  echo_content red "==============================================================\n"
+}
+
 deploy_core() {
+  local -a combined_label=()
+  [[ "${TP_DEPLOYMENT_MODE}" != combined ]] || combined_label=(--label "io.trojanpanelnext.deployment=${COMBINED_ENTRY_DEPLOYMENT_ID}" --label "io.trojanpanelnext.owner-token=${COMBINED_OWNER_TOKEN}")
   local domain="$1"
   local client_ca_sha256
   client_ca_sha256="$(sha256sum "${GRPC_CLIENT_CA_PATH}" | awk '{print $1}')"
   local runtime_config="${TP_DATA}/trojan-panel-core/config/config.ini"
   local node_config_sha256
   local cert_data="${TP_DATA}/custom/node-caddy/data"
+  if [[ "${TP_DEPLOYMENT_MODE}" == combined ]]; then
+    # The shared Entry owns the Node certificate too; the Node kernels only
+    # consume the material and never bind the Entry's 80/443 listeners.
+    cert_data="${TP_DATA}/custom/web-caddy/data"
+  fi
   local crt_path="${cert_data}/caddy/certificates/acme-v02.api.letsencrypt.org-directory/${domain}/${domain}.crt"
   local key_path="${cert_data}/caddy/certificates/acme-v02.api.letsencrypt.org-directory/${domain}/${domain}.key"
   if [[ "${TLS_MODE}" == "external" ]]; then
+    crt_path="${MANAGED_CERT_DIR}/fullchain.pem"
+    key_path="${MANAGED_CERT_DIR}/privkey.pem"
+  elif [[ "${TP_DEPLOYMENT_MODE}" == combined ]]; then
+    if [[ ! -s "${MANAGED_CERT_DIR}/fullchain.pem" || ! -s "${MANAGED_CERT_DIR}/privkey.pem" ]]; then
+      echo_content red "Certificate material is unavailable for Node domain ${domain}"
+      exit 1
+    fi
     crt_path="${MANAGED_CERT_DIR}/fullchain.pem"
     key_path="${MANAGED_CERT_DIR}/privkey.pem"
   fi
@@ -2120,6 +2979,9 @@ deploy_core() {
     if [[ "${TLS_MODE}" == "external" ]]; then
       echo_content yellow "---> Note: re-run with --force when switching tls_mode so the managed certificate mount is applied"
     fi
+    if [[ "${TP_DEPLOYMENT_MODE}" == combined ]]; then
+      reconcile_combined_node_cert_consumer
+    fi
     return
   fi
   if container_exists "${CORE_CONTAINER}"; then
@@ -2127,11 +2989,14 @@ deploy_core() {
     if [[ "${TLS_MODE}" == "external" ]]; then
       echo_content yellow "---> Note: re-run with --force when switching tls_mode so the managed certificate mount is applied"
     fi
+    if [[ "${TP_DEPLOYMENT_MODE}" == combined ]]; then
+      record_combined_node_cert_generation "$(combined_node_cert_sha256)"
+    fi
     return
   fi
 
   ensure_image "${CORE_IMAGE}"
-  docker run -d --name "${CORE_CONTAINER}" --restart always \
+  docker run -d --name "${CORE_CONTAINER}" --restart always "${combined_label[@]}" \
     --network=host \
     -v "${TP_DATA}/trojan-panel-core/bin/xray/config/:${TP_DATA}/trojan-panel-core/bin/xray/config/" \
     -v "${TP_DATA}/trojan-panel-core/bin/naiveproxy/config/:${TP_DATA}/trojan-panel-core/bin/naiveproxy/config/" \
@@ -2141,7 +3006,7 @@ deploy_core() {
     -v "${runtime_config}:${runtime_config}:ro" \
     -v "${TP_DATA}/trojan-panel-core/pki/:${TP_DATA}/trojan-panel-core/pki/:ro" \
     -v "${KERNEL_RUNTIME_PATH}:${TP_DATA}/trojan-panel-core/runtime/" \
-    -v "${cert_data}:${cert_data}" \
+    -v "${cert_data}:${cert_data}:ro" \
     -v "${MANAGED_CERT_DIR}:${MANAGED_CERT_DIR}:ro" \
     -v "${EXTERNAL_MANAGED_DIR}:${EXTERNAL_MANAGED_DIR}" \
     -v "${EXTERNAL_ROUTES_DIR}:${EXTERNAL_ROUTES_DIR}" \
@@ -2172,6 +3037,9 @@ deploy_core() {
     -e "TP_NODE_DOMAIN=${domain}" \
     "${CORE_IMAGE}"
   wait_for_container "${CORE_CONTAINER}"
+  if [[ "${TP_DEPLOYMENT_MODE}" == combined ]]; then
+    record_combined_node_cert_generation "$(combined_node_cert_sha256)"
+  fi
 }
 
 write_external_entry_contract() {
@@ -2305,6 +3173,46 @@ deploy_node() {
 
 }
 
+deploy_combined() {
+  validate_combined_entry_preconditions
+  combined_owner_prepare
+  # Establish ownership before any data/container mutation so a failed first
+  # deployment remains safely retryable.
+  combined_owner_write_marker
+  install_base_tools
+  install_docker
+  init_web_secrets
+  load_image_archives
+  ensure_image "${CADDY_IMAGE}"
+  prepare_dirs
+  combined_owner_write_data_markers
+  install_pki_material combined
+  prepare_static_web
+  deploy_mariadb
+  deploy_redis
+  write_panel_runtime_config
+  write_initial_sysadmin_password_file
+  deploy_panel_backend
+  deploy_panel_ui
+
+  # The API provisions dedicated MariaDB/Redis identities for the local Node;
+  # the Core never receives the Web root password or the global Redis secret.
+  WEB_MARIADB_USER="${MARIADB_USER}"
+  WEB_MARIADB_PASSWORD="${MARIADB_PASSWORD}"
+  WEB_REDIS_PASSWORD="${REDIS_PASSWORD}"
+  prepare_combined_node_identity
+  COMBINED_ENTRY_REVISION="$(jq -r '.desired_revision // 0' "${COMBINED_ENTRY_STATE_ROOT}/${COMBINED_ENTRY_DEPLOYMENT_ID}.json" 2>/dev/null || printf '0')"
+  COMBINED_ENTRY_REVISION=$((COMBINED_ENTRY_REVISION + 1))
+  combined_entry_write_spec '["web","node"]'
+  if container_exists "${CORE_CONTAINER}"; then
+    combined_entry_reconcile 0
+  else
+    combined_entry_reconcile 1
+  fi
+  deploy_core "${TP_NODE_DOMAIN}"
+  combined_entry_reconcile 0
+}
+
 remove_web() {
   local containers=("${UI_CONTAINER}" "${PANEL_CONTAINER}" "${REDIS_CONTAINER}" "${MARIADB_CONTAINER}")
   if [[ "${TLS_MODE}" != "external" ]]; then
@@ -2329,8 +3237,106 @@ remove_node() {
   echo_content skyBlue "---> Trojan Panel node side removed"
 }
 
+remove_combined_container_if_exists() {
+  local name="$1"
+  container_exists "${name}" || return 0
+  local owner
+  owner="$(docker inspect -f '{{ index .Config.Labels "io.trojanpanelnext.deployment" }}' "${name}" 2>/dev/null || true)"
+  [[ "${owner}" == "${COMBINED_ENTRY_DEPLOYMENT_ID}" ]] || {
+    echo_content red "Combined resource ownership conflict: ${name}"
+    return 1
+  }
+  [[ "$(combined_container_owner_token "${name}")" == "${COMBINED_OWNER_TOKEN}" ]] || {
+    echo_content red "Combined resource owner token conflict: ${name}"
+    return 1
+  }
+  docker rm -f "${name}" >/dev/null || {
+    echo_content red "Could not remove combined role container: ${name}"
+    return 1
+  }
+}
+
+remove_combined_role() {
+  local role="$1" state="${COMBINED_ENTRY_STATE_ROOT}/${COMBINED_ENTRY_DEPLOYMENT_ID}.json" roles
+  [[ -f "${state}" && ! -L "${state}" ]] || { echo_content red "Combined Entry journal is missing"; return 1; }
+  combined_owner_prepare || return 1
+  roles="$(jq -r '.active_roles | sort | join(",")' "${state}")" || return 1
+  combined_resource_check || return 1
+  [[ "${TP_PURGE_DATA}" != 1 ]] || combined_owner_purge_preflight || return 1
+  require_combined_entry_ownership
+  case "${role}" in
+  web)
+    [[ "${roles}" == node,web || "${roles}" == web ]] || return 1
+    if [[ "${roles}" == node,web ]]; then
+      COMBINED_ENTRY_REVISION="$(jq -r '.desired_revision' "${state}")"
+      COMBINED_ENTRY_REVISION=$((COMBINED_ENTRY_REVISION + 1))
+      combined_entry_write_spec '["node"]'
+      COMBINED_PURGE_RETIRED_ROLES="${TP_PURGE_DATA}" combined_entry_reconcile 0
+    else
+      combined_entry_remove "${TP_PURGE_DATA}"
+    fi
+    remove_combined_container_if_exists "${UI_CONTAINER}"
+    remove_combined_container_if_exists "${PANEL_CONTAINER}"
+    if [[ "${roles}" == web ]]; then
+      remove_combined_container_if_exists "${REDIS_CONTAINER}"
+      remove_combined_container_if_exists "${MARIADB_CONTAINER}"
+    fi
+    if [[ "${TP_PURGE_DATA}" == 1 ]]; then
+      rm -rf "${TP_DATA}/trojan-panel-ui"
+    fi
+    ;;
+  node)
+    [[ "${roles}" == node,web || "${roles}" == node ]] || return 1
+    # Reclaim the control-plane identity before changing the local Node role.
+    # A failed revocation leaves every local resource untouched.
+    revoke_combined_node_identity
+    if [[ "${roles}" == node,web ]]; then
+      COMBINED_ENTRY_REVISION="$(jq -r '.desired_revision' "${state}")"
+      COMBINED_ENTRY_REVISION=$((COMBINED_ENTRY_REVISION + 1))
+      combined_entry_write_spec '["web"]'
+      COMBINED_PURGE_RETIRED_ROLES="${TP_PURGE_DATA}" combined_entry_reconcile 0
+    fi
+    remove_combined_container_if_exists "${CORE_CONTAINER}"
+    if [[ "${roles}" == node ]]; then
+      combined_entry_remove "${TP_PURGE_DATA}"
+      remove_combined_container_if_exists "${REDIS_CONTAINER}"
+      remove_combined_container_if_exists "${MARIADB_CONTAINER}"
+    fi
+    if [[ "${TP_PURGE_DATA}" == 1 ]]; then
+      rm -rf "${TP_DATA}/trojan-panel-core"
+      rm -f "${NODE_IDENTITY_CREDENTIAL_FILE}"
+    fi
+    ;;
+  combined)
+    # The Entry Adapter validates and removes every owned Entry resource before
+    # role containers and shared data are retired. Certificate consumers are
+    # still stopped below; purge of their files is only done after ownership
+    # has been proven by the Adapter.
+    revoke_combined_node_identity
+    combined_entry_remove "${TP_PURGE_DATA}"
+    local resource
+    for resource in "${WEB_CADDY_CONTAINER}" "${UI_CONTAINER}" "${PANEL_CONTAINER}" \
+      "${CORE_CONTAINER}" "${REDIS_CONTAINER}" "${MARIADB_CONTAINER}"; do
+      remove_combined_container_if_exists "${resource}"
+    done
+    if [[ "${TP_PURGE_DATA}" == "1" ]]; then
+      rm -rf "${TP_DATA}/custom/web-caddy" "${TP_DATA}/custom/node-caddy" \
+        "${TP_DATA}/trojan-panel" "${TP_DATA}/trojan-panel-ui" \
+        "${TP_DATA}/trojan-panel-core" "${TP_DATA}/mariadb" "${TP_DATA}/redis" \
+        "${TP_DATA}/trojanpanelnext-entry" "$(dirname "${NODE_IDENTITY_CREDENTIAL_FILE}")"
+    fi
+    ;;
+  *)
+    echo_content red "Unsupported combined removal role: ${role}"
+    return 1
+    ;;
+  esac
+  echo_content skyBlue "---> Trojan Panel combined ${role} role removed; unrelated role resources were retained"
+}
+
 main() {
   local command="${1:-}"
+  TP_REQUEST_COMMAND="${command}"
   local mode=""
   local config_file=""
   local bundle_file=""
@@ -2375,6 +3381,11 @@ main() {
       entry_spec_override="$2"
       shift 2
       ;;
+    --restore-role)
+      [[ $# -ge 2 ]] || { echo_content red "--restore-role requires web or node"; exit 1; }
+      COMBINED_RESTORE_ROLE="$2"
+      shift 2
+      ;;
     --force)
       force_override=1
       shift
@@ -2401,7 +3412,14 @@ main() {
     esac
   done
 
-  require_one_of mode "${mode}" web node
+  require_one_of mode "${mode}" web node combined
+  if [[ -n "${COMBINED_RESTORE_ROLE}" ]]; then
+    require_one_of restore_role "${COMBINED_RESTORE_ROLE}" web node
+    [[ "${command}" == install && "${mode}" == combined ]] || {
+      echo_content red "--restore-role is only valid with combined install"
+      exit 1
+    }
+  fi
   if [[ -n "${config_file}" && -n "${bundle_file}" ]] || [[ -z "${config_file}" && -z "${bundle_file}" ]]; then
     echo_content red "Exactly one of --config or --bundle is required"
     usage
@@ -2463,15 +3481,24 @@ main() {
   fi
   [[ -n "${force_override}" ]] && TP_FORCE="${force_override}"
   [[ -n "${purge_override}" ]] && TP_PURGE_DATA="${purge_override}"
-  validate_config "${mode}"
+  local validation_mode="${mode}"
+  if [[ "${command}" == remove && "${TP_DEPLOYMENT_MODE}" == combined &&
+    ( "${mode}" == web || "${mode}" == node ) ]]; then
+    validation_mode=combined
+  fi
+  validate_config "${validation_mode}"
   validate_entry_spec_binding "${mode}"
 
-  if [[ "${command}:${mode}" == install:node ]]; then
+  if [[ "${command}:${mode}" == install:combined ]]; then
+    check_combined_host_preconditions
+  fi
+
+  if [[ "${command}:${mode}" == install:node || "${command}:${mode}" == install:combined ]]; then
     initialize_node_bootstrap_challenge
   fi
 
-  if [[ "${command}" == refresh-cert && "${mode}" != node ]]; then
-    echo_content red "refresh-cert is only valid with --mode node"
+  if [[ "${command}" == refresh-cert && "${mode}" != node && "${mode}" != combined ]]; then
+    echo_content red "refresh-cert is only valid with --mode node or combined"
     exit 1
   fi
 
@@ -2490,8 +3517,8 @@ main() {
   fi
 
   case "${command}:${mode}" in
-  validate:web | validate:node)
-    echo_content green "Configuration is valid for ${mode} deployment mode: ${config_file}"
+  validate:web | validate:node | validate:combined)
+    echo_content green "Configuration is valid for ${TP_DEPLOYMENT_MODE} deployment mode: ${config_file}"
     ;;
   install:web)
     deploy_web
@@ -2499,14 +3526,31 @@ main() {
   install:node)
     deploy_node
     ;;
-  remove:web)
-    remove_web
+  install:combined)
+    deploy_combined
     ;;
   remove:node)
-    remove_node
+    if [[ "${TP_DEPLOYMENT_MODE}" == combined ]]; then
+      remove_combined_role node
+    else
+      remove_node
+    fi
+    ;;
+  remove:combined)
+    remove_combined_role combined
+    ;;
+  remove:web)
+    if [[ "${TP_DEPLOYMENT_MODE}" == combined ]]; then
+      remove_combined_role web
+    else
+      remove_web
+    fi
     ;;
   refresh-cert:node)
     refresh_node_certificate
+    ;;
+  refresh-cert:combined)
+    refresh_combined_certificate
     ;;
   esac
 
@@ -2519,6 +3563,9 @@ main() {
   elif [[ "${command}:${mode}" == install:node ]]; then
     verify_node_health
     print_node_success
+  elif [[ "${command}:${mode}" == install:combined ]]; then
+    verify_combined_health
+    print_combined_success
   fi
 }
 

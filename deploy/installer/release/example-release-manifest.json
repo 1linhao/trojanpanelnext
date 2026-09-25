@@ -21,7 +21,7 @@
     {
       "name": "install",
       "path": "install.sh",
-      "sha256": "9122631a51b9f42dec2b030f903f5b05990a886a2bcabeb019b143fb15ad1410"
+      "sha256": "9ac664ff219e7b5f851f76eed63e6ae7bdd4a852d8f6e1f224ffe9c92eb98c0f"
     },
     {
       "name": "secure-file",
@@ -46,7 +46,7 @@
     {
       "name": "config-combined",
       "path": "config-combined.yaml",
-      "sha256": "23bf60d633044fedc0ee0e92cce03adbb695bf9c9a1f7f2ebf88f998b8eaaf80"
+      "sha256": "c74a34654fecbd53a3739f97ca1b6f45f4fa157c83589d998cbf7522b057ea37"
     },
     {
       "name": "entry/entryctl",
@@ -61,7 +61,7 @@
     {
       "name": "entry/v2",
       "path": "entry/v2.sh",
-      "sha256": "982f720a93007dcf2fdf672515123db876e2b4eeaba205421ce9ecff051ef961"
+      "sha256": "c51bf224d578d06393799fdf5fbf86b5103f4a21055de78825887f423db128dd"
     },
     {
       "name": "entry/adapters/external",
@@ -76,7 +76,7 @@
     {
       "name": "entry/adapters/caddy",
       "path": "entry/adapters/caddy.sh",
-      "sha256": "fcd97ebbf1bebc347c82fb350925fd5197bf3bddbcaf54c09e6cdee5ecad03b3"
+      "sha256": "3de385013c7fdf9cf70fe3b61a3dcd05bdb99a0c7071c3223d58d8a82e90d42f"
     }
   ],
   "images": {
