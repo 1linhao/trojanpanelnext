@@ -164,7 +164,10 @@ entry_v2_validate_state() {
       (.scope == "shared" or .scope == "role") and
       (if .scope == "role" then .role == "node" or .role == "web" else (has("role") | not) end))) and
     (.capabilities | type == "array" and all(.[]; type == "string")) and
-    (if .phase == "stable" then .candidate_target == null else .candidate_target != null and .candidate_target.digest == .desired_digest end)
+    (if .phase == "stable" then
+       .candidate_target == null and .committed_target != null and
+       ((.active_roles | sort) == (.committed_target.spec.active_roles | sort))
+     else .candidate_target != null and .candidate_target.digest == .desired_digest end)
   ' "$1" >/dev/null 2>&1
 }
 

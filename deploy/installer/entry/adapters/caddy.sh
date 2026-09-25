@@ -22,8 +22,15 @@ caddy_adapter_safe_upstream() {
 }
 
 caddy_adapter_root() {
-  local spec="$1"
-  printf '%s\n' "${CADDY_ADAPTER_ROOT:-$(jq -r '.certificate_targets.web.managed_dir // .certificate_targets.node.managed_dir' "$spec")}"
+  local spec="$1" managed
+  if [[ -n "${CADDY_ADAPTER_ROOT:-}" ]]; then
+    printf '%s\n' "$CADDY_ADAPTER_ROOT"
+    return
+  fi
+  managed="$(jq -r '.certificate_targets.web.managed_dir // .certificate_targets.node.managed_dir' "$spec")"
+  # EntrySpec stores Caddy's data directory in managed_dir; the adapter root
+  # also owns Caddyfile and renewal metadata in the parent directory.
+  printf '%s\n' "$(dirname -- "$managed")"
 }
 
 caddy_adapter_container() {
@@ -729,7 +736,7 @@ caddy_adapter_retire_node_consumer() {
 }
 
 caddy_adapter_refresh_node_consumer() {
-  local spec="$1" node_cert node_key consumer marker docker core envs mount temp_cert temp_key changed=0
+  local spec="$1" node_cert node_key consumer marker installer_marker docker core envs mount temp_cert temp_key changed=0
   [[ "${CADDY_ADAPTER_FAKE:-0}" == 1 ]] && return 0
   jq -e '.active_roles | index("node") != null' "$spec" >/dev/null || return 0
   node_cert="$(jq -r '.certificate_targets.node.cert_path' "$spec")"
@@ -738,7 +745,16 @@ caddy_adapter_refresh_node_consumer() {
   caddy_adapter_safe_path "$consumer" || return 1
   [[ ! -L "$consumer" ]] || return 1
   marker="${consumer}/.tpn-$(jq -r '.deployment_id' "$spec")-consumer.owner"
+  if [[ "${CADDY_ADAPTER_INSTALLER_OWNERSHIP:-0}" == 1 ]]; then
+    installer_marker="${consumer}/.trojanpanelnext-owner"
+    [[ -f "$installer_marker" && ! -L "$installer_marker" &&
+       "$(stat -c %u "$installer_marker")" == "${ENTRY_SPEC_OWNER_UID:-0}" &&
+       "$(stat -c %a "$installer_marker")" == 600 ]] || return 1
+    [[ "$(sed -n 's/^deployment=//p' "$installer_marker" | head -n 1)" == "$(jq -r '.deployment_id' "$spec")" &&
+       "$(sed -n 's/^owner_token=//p' "$installer_marker" | head -n 1)" == "$(jq -r '.owner_token' "$spec")" ]] || return 1
+  fi
   if [[ -d "$consumer" ]]; then
+    [[ "$(stat -c %u "$consumer")" == "${ENTRY_SPEC_OWNER_UID:-$(id -u)}" ]] || return 1
     if [[ -e "$consumer/fullchain.pem" || -e "$consumer/privkey.pem" ]]; then
       [[ -f "$marker" && "$(cat "$marker")" == "deployment=$(jq -r '.deployment_id' "$spec")" ]] || return 1
     fi

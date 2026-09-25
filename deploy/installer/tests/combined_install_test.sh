@@ -266,7 +266,6 @@ export CADDY_ADAPTER_FAKE=1
 export CADDY_ADAPTER_FAKE_ISSUER="$(realpath "${BASH_SOURCE[0]}")"
 
 run_installer() {
-  mkdir -p "${data}/trojan-panel-core/external"
   TP_DATA="${data}" \
     TP_OS_RELEASE_FILE="${os_release}" \
     TP_HEALTH_ATTEMPTS=2 \
@@ -299,6 +298,29 @@ grep -Fq 'another listener is active' "${work}/busy-port.out" || fail 'port conf
 ! grep -q '^docker run ' "${trace}" || fail 'port conflict rejection happened after container mutation'
 : >"${trace}"
 TP_TEST_SS_OUTPUT=''
+
+# Existing data without this deployment's marker must never be adopted or
+# overwritten.  The check must happen before any Docker mutation.
+mkdir -p "${data}/mariadb"
+printf 'foreign-data\n' >"${data}/mariadb/foreign.txt"
+: >"${trace}"
+if run_installer install --mode combined >"${work}/foreign-data.out" 2>&1; then
+  fail 'combined installation adopted an unmarked data directory'
+fi
+grep -Fq 'Combined data path has no valid ownership marker' "${work}/foreign-data.out" || fail 'foreign data rejection omitted diagnostic'
+! grep -q '^docker run ' "${trace}" || fail 'foreign data rejection happened after container mutation'
+rm -rf "${data}/mariadb"
+
+# The control-plane API rejects private Node addresses; the installer must
+# reject them before creating MariaDB, Redis, or panel containers.
+sed -i 's/^  node_public_ip: .*/  node_public_ip: 10.0.0.7/' "${config}"
+: >"${trace}"
+if run_installer install --mode combined >"${work}/private-ip.out" 2>&1; then
+  fail 'combined installation accepted a private Node address'
+fi
+grep -Fq 'TP_NODE_PUBLIC_IP must be an IP address' "${work}/private-ip.out" || fail 'private IP rejection omitted diagnostic'
+! grep -q '^docker run ' "${trace}" || fail 'private IP rejection happened after container mutation'
+sed -i 's/^  node_public_ip: .*/  node_public_ip: 203.0.113.10/' "${config}"
 
 for port_key in mariadb_port redis_port panel_port ui_port core_port grpc_port; do
   original_port="$(sed -n "s/^  ${port_key}: //p" "${config}")"

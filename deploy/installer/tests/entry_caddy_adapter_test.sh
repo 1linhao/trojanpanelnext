@@ -27,6 +27,16 @@ cat "$tmp/certs/web/cert.pem" "$tmp/certs/node/cert.pem" >"$tmp/test-ca.pem"
 export CADDY_ADAPTER_CA_FILE="$tmp/test-ca.pem"
 printf '{"routes":[{"network":"tcp","port":8443}]}' >"$tmp/routes.json"
 
+# The canonical v2 contract stores managed_dir at the data level; without an
+# installer override the adapter root is its parent, not the data directory.
+jq '.certificate_targets.web.managed_dir = "/tpdata/custom/web-caddy/data" |
+   .certificate_targets.node.managed_dir = "/tpdata/custom/web-caddy/data"' \
+  "$repo/docs/entry-controller/examples/combined-caddy-v2.json" >"$tmp/canonical-root-spec"
+unset CADDY_ADAPTER_ROOT
+[[ "$(caddy_adapter_root "$tmp/canonical-root-spec")" == /tpdata/custom/web-caddy ]] ||
+  fail 'canonical managed_dir did not resolve to the Caddy root'
+export CADDY_ADAPTER_ROOT="$tmp/caddy"
+
 jq --arg root "$CADDY_ADAPTER_ROOT" \
   --arg routes "$tmp/routes.json" \
   --arg wc "$tmp/certs/web/cert.pem" --arg wk "$tmp/certs/web/key.pem" \

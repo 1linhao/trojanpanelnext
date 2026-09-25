@@ -928,22 +928,60 @@ require_public_ip() {
   local valid=0
   local -a parts=()
   if [[ "${value}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
-    local part
+    local part first second
     IFS=. read -r -a parts <<<"${value}"
     valid=1
     for part in "${parts[@]}"; do
-      if ((10#${part} > 255)); then
+      if [[ ! "${part}" =~ ^[0-9]+$ ]] || ((10#${part} > 255)); then
         valid=0
         break
       fi
     done
+    first=$((10#${parts[0]})); second=$((10#${parts[1]}))
+    if [[ "${valid}" == 1 ]] && {
+      ((first == 0 || first == 10 || first == 127 || first >= 224)) ||
+      ((first == 169 && second == 254)) ||
+      ((first == 172 && second >= 16 && second <= 31)) ||
+      ((first == 192 && second == 168));
+    }; then
+      valid=0
+    fi
   elif [[ "${value}" == *:* && "${value}" =~ ^[0-9a-fA-F:]+$ ]]; then
     valid=1
+    [[ "${value}" != *:::* && "${value}" != "::" && "${value}" != "::1" ]] || valid=0
+    if [[ "${valid}" == 1 ]]; then
+      local compressed=0 count=0 part first_group
+      [[ "${value}" == *::* ]] && compressed=1
+      IFS=: read -r -a parts <<<"${value}"
+      for part in "${parts[@]}"; do
+        [[ -z "${part}" ]] && continue
+        [[ "${part}" =~ ^[0-9a-fA-F]{1,4}$ ]] || { valid=0; break; }
+        count=$((count + 1))
+      done
+      if [[ "${compressed}" == 1 ]]; then
+        ((count < 8)) || valid=0
+      elif ((count != 8)); then
+        valid=0
+      fi
+      first_group="${value%%:*}"
+      first_group="${first_group,,}"
+      [[ "${first_group}" == fe8* || "${first_group}" == fe9* || "${first_group}" == fea* ||
+         "${first_group}" == feb* || "${first_group}" == fc* || "${first_group}" == fd* ||
+         "${first_group}" == ff* ]] && valid=0
+    fi
   fi
   if [[ "${valid}" != 1 ]]; then
     echo_content red "${name} must be an IP address"
     exit 1
   fi
+}
+
+require_node_name() {
+  local value="${TP_NODE_NAME:-}"
+  [[ "${value}" =~ ^[A-Za-z0-9._\ -]{1,64}$ ]] || {
+    echo_content red "node_name must be 1 to 64 ASCII letters, digits, spaces, dots, underscores, or hyphens"
+    exit 1
+  }
 }
 
 validate_combined_entry_preconditions() {
@@ -954,6 +992,7 @@ validate_combined_entry_preconditions() {
     exit 1
   fi
   require_value TP_NODE_NAME
+  require_node_name
   require_public_ip TP_NODE_PUBLIC_IP
   require_one_of tls_mode "${TLS_MODE}" acme
   if [[ "${NODE_CADDY_HTTP_PORT}" != 80 || "${NODE_CADDY_HTTPS_PORT}" != 443 ]]; then
@@ -994,6 +1033,7 @@ check_combined_host_preconditions() {
     fi
   fi
   combined_owner_prepare || exit 1
+  combined_owner_check_data_paths || exit 1
   combined_resource_check || exit 1
   combined_entry_target_guard
   [[ "${TP_SKIP_NETWORK_PRECHECK:-0}" != 1 ]] || return 0
@@ -1095,19 +1135,75 @@ combined_owned_paths() {
     "${TP_DATA}/trojan-panel" \
     "${TP_DATA}/trojan-panel-ui" \
     "${TP_DATA}/trojan-panel-core" \
+    "${MANAGED_CERT_DIR}" \
     "${TP_DATA}/mariadb" \
     "${TP_DATA}/redis" \
     "${TP_DATA}/trojanpanelnext-entry" \
     "$(dirname "${NODE_IDENTITY_CREDENTIAL_FILE:-${TP_DATA}/trojan-panel/config/node-identities/combined-node.json}")"
 }
 
+COMBINED_NEW_DATA_PATHS=()
+
+combined_owner_check_data_path() {
+  local path="$1" marker deployment token
+  [[ "$(realpath -m -- "$path")" == "$path" ]] || {
+    echo_content red "Combined data path contains a symlink or non-canonical component: ${path}"
+    return 1
+  }
+  [[ -d "$path" && ! -L "$path" ]] || {
+    echo_content red "Combined data path is not a safe directory: ${path}"
+    return 1
+  }
+  [[ "$(stat -c %u "$path")" == "${EUID}" ]] || {
+    echo_content red "Combined data path is not root-owned: ${path}"
+    return 1
+  }
+  marker="${path}/.trojanpanelnext-owner"
+  [[ -f "$marker" && ! -L "$marker" && "$(stat -c %u "$marker")" == "${EUID}" && "$(stat -c %a "$marker")" == 600 ]] || {
+    echo_content red "Combined data path has no valid ownership marker: ${path}"
+    return 1
+  }
+  deployment="$(sed -n 's/^deployment=//p' "$marker" | head -n 1)"
+  token="$(sed -n 's/^owner_token=//p' "$marker" | head -n 1)"
+  [[ "$deployment" == "$COMBINED_ENTRY_DEPLOYMENT_ID" && "$token" == "$COMBINED_OWNER_TOKEN" ]] || {
+    echo_content red "Combined data ownership conflict: ${path}"
+    return 1
+  }
+}
+
+combined_owner_check_data_paths() {
+  local path
+  COMBINED_NEW_DATA_PATHS=()
+  while IFS= read -r path; do
+    [[ -n "$path" && "$path" != "$COMBINED_ENTRY_ROOT" ]] || continue
+    if [[ ! -e "$path" && ! -L "$path" ]]; then
+      [[ "$(realpath -m -- "$path")" == "$path" ]] || return 1
+      COMBINED_NEW_DATA_PATHS+=("$path")
+    else
+      combined_owner_check_data_path "$path" || return 1
+    fi
+  done < <(combined_owned_paths)
+}
+
 combined_owner_write_data_markers() {
-  local path marker temporary
+  local path marker temporary expected is_new
   while IFS= read -r path; do
     [[ -n "${path}" ]] || continue
     [[ "${path}" == "${COMBINED_ENTRY_ROOT}" ]] && continue
     mkdir -p "${path}" || return 1
     marker="${path}/.trojanpanelnext-owner"
+    if [[ -e "$marker" || -L "$marker" ]]; then
+      combined_owner_check_data_path "$path" || return 1
+      continue
+    fi
+    is_new=0
+    for expected in "${COMBINED_NEW_DATA_PATHS[@]}"; do
+      [[ "$expected" == "$path" ]] && is_new=1
+    done
+    [[ "$is_new" == 1 ]] || {
+      echo_content red "Combined data path appeared without a preflight ownership decision: ${path}"
+      return 1
+    }
     temporary="$(mktemp)" || return 1
     printf 'deployment=%s\nowner_token=%s\n' "${COMBINED_ENTRY_DEPLOYMENT_ID}" "${COMBINED_OWNER_TOKEN}" >"${temporary}"
     chmod 0600 "${temporary}" || { rm -f "${temporary}"; return 1; }
@@ -1201,7 +1297,7 @@ combined_entry_reconcile() {
   if [[ "${CADDY_ADAPTER_FAKE:-0}" != 1 && "${image}" != *@sha256:* ]]; then
     image="$(docker image inspect -f '{{index .RepoDigests 0}}' "${image}")" || return 1
   fi
-    ENTRY_SPEC_OWNER_UID="$(stat -c %u "${COMBINED_ENTRY_SPEC}")" CADDY_ADAPTER_IMAGE="${image}" CADDY_ADAPTER_ROOT="${COMBINED_ENTRY_ROOT}" \
+    ENTRY_SPEC_OWNER_UID="$(stat -c %u "${COMBINED_ENTRY_SPEC}")" CADDY_ADAPTER_INSTALLER_OWNERSHIP=1 CADDY_ADAPTER_IMAGE="${image}" CADDY_ADAPTER_ROOT="${COMBINED_ENTRY_ROOT}" \
     CADDY_ADAPTER_CONTAINER="${COMBINED_ENTRY_CONTAINER}" CADDY_ADAPTER_WEB_ROOT="${WEB_PATH}" \
     CADDY_ADAPTER_OWNER_TOKEN="${COMBINED_OWNER_TOKEN}" \
     CADDY_ADAPTER_NODE_CONTAINER="${CORE_CONTAINER}" CADDY_ADAPTER_BOOTSTRAP="${bootstrap}" \
@@ -1216,7 +1312,7 @@ combined_entry_remove() {
   fi
   local -a args=(remove --spec "${COMBINED_ENTRY_SPEC}" --state-root "${COMBINED_ENTRY_STATE_ROOT}")
   [[ "${purge}" != 1 ]] || args+=(--purge)
-  ENTRY_SPEC_OWNER_UID="$(stat -c %u "${COMBINED_ENTRY_SPEC}")" CADDY_ADAPTER_IMAGE="${image}" CADDY_ADAPTER_ROOT="${COMBINED_ENTRY_ROOT}" \
+  ENTRY_SPEC_OWNER_UID="$(stat -c %u "${COMBINED_ENTRY_SPEC}")" CADDY_ADAPTER_INSTALLER_OWNERSHIP=1 CADDY_ADAPTER_IMAGE="${image}" CADDY_ADAPTER_ROOT="${COMBINED_ENTRY_ROOT}" \
     CADDY_ADAPTER_CONTAINER="${COMBINED_ENTRY_CONTAINER}" CADDY_ADAPTER_WEB_ROOT="${WEB_PATH}" \
     CADDY_ADAPTER_OWNER_TOKEN="${COMBINED_OWNER_TOKEN}" \
     CADDY_ADAPTER_NODE_CONTAINER="${CORE_CONTAINER}" \
@@ -3081,7 +3177,7 @@ remove_combined_role() {
       combined_entry_write_spec '["node"]'
       combined_entry_reconcile 0
     else
-      combined_entry_remove 0
+      combined_entry_remove "${TP_PURGE_DATA}"
     fi
     remove_combined_container_if_exists "${UI_CONTAINER}"
     remove_combined_container_if_exists "${PANEL_CONTAINER}"
@@ -3095,16 +3191,18 @@ remove_combined_role() {
     ;;
   node)
     [[ "${roles}" == node,web || "${roles}" == node ]] || return 1
+    # Reclaim the control-plane identity before changing the local Node role.
+    # A failed revocation leaves every local resource untouched.
+    revoke_combined_node_identity
     if [[ "${roles}" == node,web ]]; then
       COMBINED_ENTRY_REVISION="$(jq -r '.desired_revision' "${state}")"
       COMBINED_ENTRY_REVISION=$((COMBINED_ENTRY_REVISION + 1))
       combined_entry_write_spec '["web"]'
       combined_entry_reconcile 0
     fi
-    revoke_combined_node_identity
     remove_combined_container_if_exists "${CORE_CONTAINER}"
     if [[ "${roles}" == node ]]; then
-      combined_entry_remove 0
+      combined_entry_remove "${TP_PURGE_DATA}"
       remove_combined_container_if_exists "${REDIS_CONTAINER}"
       remove_combined_container_if_exists "${MARIADB_CONTAINER}"
     fi
@@ -3118,8 +3216,8 @@ remove_combined_role() {
     # role containers and shared data are retired. Certificate consumers are
     # still stopped below; purge of their files is only done after ownership
     # has been proven by the Adapter.
-    combined_entry_remove 0
     revoke_combined_node_identity
+    combined_entry_remove "${TP_PURGE_DATA}"
     local resource
     for resource in "${WEB_CADDY_CONTAINER}" "${UI_CONTAINER}" "${PANEL_CONTAINER}" \
       "${CORE_CONTAINER}" "${REDIS_CONTAINER}" "${MARIADB_CONTAINER}"; do
