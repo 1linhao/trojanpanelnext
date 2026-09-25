@@ -75,6 +75,13 @@ sudo ./install.sh install --mode web --config ./web.yaml
 成功。任一探测失败都返回非零，并输出不含秘密的定位建议。使用同一配置重跑会复用已保存的三组凭据。
 管理员凭据探测不暴露 HTTP 路径，也不会启动 Redis/限流、签发会话、更新登录时间或累计登录失败次数。
 
+每次成功的安装都会在 `${TP_DATA}/trojanpanelnext-network/allowlist.json` 和
+`allowlist.md` 写出网络放行清单。清单按 `web`、`node`、`combined` 拓扑区分公开的
+80/443（或 Node Entry 端口）与受限的 MariaDB、Redis、Core API、gRPC 和面板端口；分机
+清单使用已登记 Node 公网 IP 或 `control_plane_public_ip` 作为来源，combined 的内部端口只
+允许本机回环。Node 内核直连端口仍需根据 `routes.json` 中的声明单独核对。安装器只生成清单，
+不会调用 `nftables`、`ufw`、`iptables` 或云安全组 API，操作者必须据此实施主机和云侧规则。
+
 ## Node Agent 安装
 
 在 Web 主控登记 Node 后，使用同一版本 Release 中的 `node-bundle` 生成加密引导包。先把
@@ -189,6 +196,8 @@ MariaDB/Redis 等共享资源不会被单角色卸载误删；Node 移除会先�
 [Web 主控模板](examples/web.yaml)包含域名、镜像、服务端口、mTLS 身份目录以及主控内部凭据。
 
 [Node Agent 模板](examples/node-agent.yaml)包含节点域名、主控数据库连接、Redis 连接、gRPC、公开 CA 目录与证书路径。
+填写可选的 `control_plane_public_ip` 后，生成的放行清单会把 MariaDB、Redis、Core API 和
+gRPC 的来源固定为该 Web 主控公网 IP；留空时清单使用 `mariadb_host` 的 DNS 解析结果并提示操作者复核。
 
 [combined 模板](examples/combined.yaml)包含 Web 与 Node 双域名、本机 Node 公网 IP、独立 Node 身份
 凭据路径及共享入口端口。`node_identity_credential_file` 必须位于

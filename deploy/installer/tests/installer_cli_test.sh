@@ -399,6 +399,71 @@ bash -c '
   main remove --mode node --config /contains-purge-data --keep-data
 ' installer-test "${INSTALLER}" | grep -q '^KEPT$'
 
+# Network plans and installer state follow the same keep/purge contract as the
+# deployment data. A keep removal leaves both artifacts available for replay;
+# explicit purge removes them.
+bash -c '
+  set -Eeuo pipefail
+  source "$1"
+  TP_DATA="$2"
+  NETWORK_PLAN_DIR="${TP_DATA}/trojanpanelnext-network"
+  INSTALLER_STATE_DIR="${TP_DATA}/trojanpanelnext-installer"
+  mkdir -p "${NETWORK_PLAN_DIR}" "${INSTALLER_STATE_DIR}"
+  : >"${NETWORK_PLAN_DIR}/allowlist.json"
+  : >"${INSTALLER_STATE_DIR}/web.state"
+  docker() { :; }
+  TP_PURGE_DATA=0
+  remove_web
+  test -e "${NETWORK_PLAN_DIR}/allowlist.json" && test -e "${INSTALLER_STATE_DIR}/web.state"
+  TP_PURGE_DATA=1
+  remove_web
+  test ! -e "${NETWORK_PLAN_DIR}" && test ! -e "${INSTALLER_STATE_DIR}"
+' installer-test "${INSTALLER}" "${external_data_dir}/keep-purge"
+
+# The generated plan narrows Web data-plane access to registered Node public
+# IPs and Node access back to the configured control-plane address.
+bash -c '
+  set -Eeuo pipefail
+  source "$1"
+  TP_DATA="$2"
+  NETWORK_PLAN_DIR="${TP_DATA}/network"
+  EXTERNAL_ROUTES_DIR="${TP_DATA}/routes"
+  TP_WEB_DOMAIN=panel.example.com
+  TP_NODE_DOMAIN=node.example.com
+  TLS_MODE=external
+  MARIADB_PORT=9507 REDIS_PORT=6378 PANEL_PORT=8081 UI_PORT=8888 CORE_PORT=8082 GRPC_PORT=8100
+  NODE_CADDY_HTTP_PORT=80 NODE_CADDY_HTTPS_PORT=8863
+  mkdir -p "${TP_DATA}/trojan-panel/config/node-identities"
+  mkdir -p "${EXTERNAL_ROUTES_DIR}"
+  printf "{\\\"public_ip\\\":\\\"203.0.113.42\\\"}\\n" >"${TP_DATA}/trojan-panel/config/node-identities/node.json"
+  network_plan_write web
+  jq -e '\'' .rules[] | select(.name == "mariadb") | .sources == ["203.0.113.42"] '\'' "${NETWORK_PLAN_DIR}/allowlist.json" >/dev/null
+  CONTROL_PLANE_PUBLIC_IP=198.51.100.7
+  MARIADB_HOST=panel.example.com
+  network_plan_write node
+  jq -e '\'' .rules[] | select(.name == "core-grpc") | .sources == ["198.51.100.7"] '\'' "${NETWORK_PLAN_DIR}/allowlist.json" >/dev/null
+  printf "{\\\"routes\\\":[{\\\"kernel\\\":\\\"xray\\\",\\\"network\\\":\\\"tcp\\\",\\\"port\\\":2443}]}\\n" >"${EXTERNAL_ROUTES_DIR}/routes.json"
+  network_plan_write node
+  jq -e '\'' .rules[] | select(.name == "node-protocol-xray-2443") | .direction == "inbound" and .port == 2443 '\'' "${NETWORK_PLAN_DIR}/allowlist.json" >/dev/null
+' installer-test "${INSTALLER}" "${external_data_dir}/allowlist"
+
+# A completed same-version Web replay may keep its non-destructive settings,
+# while a domain change is rejected before any deployment function runs.
+bash -c '
+  set -Eeuo pipefail
+  source "$1"
+  TP_DATA="$2"
+  INSTALLER_STATE_DIR="${TP_DATA}/state"
+  TP_ASSET_VERSION=development
+  TP_WEB_DOMAIN=panel.example.com
+  write_installer_state web
+  check_same_version_replay_preconditions web
+  TP_WEB_DOMAIN=changed.example.com
+  if check_same_version_replay_preconditions web; then
+    exit 1
+  fi
+' installer-test "${INSTALLER}" "${external_data_dir}/same-version"
+
 # Mode/bind migrations recreate only affected containers. An old container
 # without the marker is the legacy default (acme / 0.0.0.0).
 bash -c '
