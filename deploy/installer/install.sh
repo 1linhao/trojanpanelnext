@@ -1189,8 +1189,8 @@ combined_entry_write_spec() {
      domains:{web:$web,node:$node},active_roles:($roles|sort),
      roles: ({} + (if ($roles|index("web")) then {web:{web_upstream:$upstream}} else {} end) +
        (if ($roles|index("node")) then {node:{node_exposure:"direct",route_manifest:$route,certificate_consumer:$consumer}} else {} end)),
-     certificate_targets: ({} + (if ($roles|index("web")) then {web:{managed_dir:$root+"/data",cert_path:$cert_root+"/web/fullchain.pem",key_path:$cert_root+"/web/privkey.pem",renewal_owner:"caddy-legacy"}} else {} end) +
-       (if ($roles|index("node")) then {node:{managed_dir:$root+"/data",cert_path:$cert_root+"/node/fullchain.pem",key_path:$cert_root+"/node/privkey.pem",renewal_owner:"caddy-legacy"}} else {} end))}' >"${temporary}"
+     certificate_targets: ({} + (if ($roles|index("web")) then {web:{managed_dir:($root+"/data"),cert_path:($cert_root+"/web/fullchain.pem"),key_path:($cert_root+"/web/privkey.pem"),renewal_owner:"caddy-legacy"}} else {} end) +
+       (if ($roles|index("node")) then {node:{managed_dir:($root+"/data"),cert_path:($cert_root+"/node/fullchain.pem"),key_path:($cert_root+"/node/privkey.pem"),renewal_owner:"caddy-legacy"}} else {} end))}' >"${temporary}"
   chmod 0600 "${temporary}"
   mv -f "${temporary}" "${COMBINED_ENTRY_SPEC}"
 }
