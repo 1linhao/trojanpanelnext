@@ -121,6 +121,13 @@ jobs:
           done < <(find deploy/installer -type f -name '*.sh' -print0)
           test "$count" -gt 0
           printf 'validated %d shell scripts\n' "$count"
+      - name: Regenerate example release manifest and reject drift
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          bash deploy/installer/release/generate-example-manifest.sh \
+            --output deploy/installer/release/example-release-manifest.json
+          git diff --exit-code -- deploy/installer/release/example-release-manifest.json
       - name: Test installer CLI contract
         run: |
           bash deploy/installer/tests/installer_cli_test.sh

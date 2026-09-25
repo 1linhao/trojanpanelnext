@@ -44,6 +44,8 @@ if [[ -d "${output}" ]] && find "${output}" -mindepth 1 -print -quit | grep -q .
   fail 'output directory must be empty'
 fi
 [[ -f "${installer_source}" && ! -L "${installer_source}" ]] || fail 'installer source must be a regular non-symlink file'
+[[ "$(grep -Fxc 'INSTALLER_ASSET_VERSION="development"' "${installer_source}")" == 1 ]] ||
+  fail 'installer source must contain exactly one development asset version marker'
 command -v jq >/dev/null 2>&1 || fail 'jq is required'
 command -v sha256sum >/dev/null 2>&1 || fail 'sha256sum is required'
 command -v go >/dev/null 2>&1 || fail 'Go is required to build the secure-file helper'
@@ -70,7 +72,9 @@ install -m 0644 "${INSTALLER_DIR}/entry/v2.sh" "${output}/entry/v2.sh"
 install -m 0644 "${INSTALLER_DIR}/entry/adapters/external.sh" "${output}/entry/adapters/external.sh"
 install -m 0755 "${INSTALLER_DIR}/entry/adapters/nginx_certbot.sh" "${output}/entry/adapters/nginx_certbot.sh"
 install -m 0755 "${INSTALLER_DIR}/entry/adapters/caddy.sh" "${output}/entry/adapters/caddy.sh"
-sed -i "s|INSTALLER_ASSET_VERSION=\"development\"|INSTALLER_ASSET_VERSION=\"${version}\"|" "${output}/install.sh"
+sed -i "s|^INSTALLER_ASSET_VERSION=\"development\"$|INSTALLER_ASSET_VERSION=\"${version}\"|" "${output}/install.sh"
+[[ "$(grep -Fxc "INSTALLER_ASSET_VERSION=\"${version}\"" "${output}/install.sh")" == 1 ]] ||
+  fail 'installer asset version replacement failed'
 
 render_template() {
   local source="$1"
