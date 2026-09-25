@@ -1,6 +1,30 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+if [[ "${1:-}" == --fake-issue ]]; then
+  spec="$2"
+  for role in web node; do
+    jq -e --arg role "$role" '.active_roles | index($role) != null' "$spec" >/dev/null || continue
+    domain="$(jq -r --arg role "$role" '.domains[$role]' "$spec")"
+    cert="$(jq -r --arg role "$role" '.certificate_targets[$role].cert_path' "$spec")"
+    key="$(jq -r --arg role "$role" '.certificate_targets[$role].key_path' "$spec")"
+    mkdir -p "$(dirname "$cert")"
+    if [[ ! -s "$cert" ]]; then
+      /usr/bin/openssl req -x509 -newkey rsa:2048 -nodes -days 2 \
+        -subj "/CN=${domain}" -addext "subjectAltName=DNS:${domain}" \
+        -keyout "$key" -out "$cert" >/dev/null 2>&1
+      cat "$cert" >>"${TP_TEST_CA_FILE}"
+    fi
+  done
+  if jq -e '.active_roles | index("node") != null' "$spec" >/dev/null; then
+    consumer="$(jq -r '.roles.node.certificate_consumer' "$spec")"
+    mkdir -p "$consumer"
+    cp "$(jq -r '.certificate_targets.node.cert_path' "$spec")" "$consumer/fullchain.pem"
+    cp "$(jq -r '.certificate_targets.node.key_path' "$spec")" "$consumer/privkey.pem"
+  fi
+  exit 0
+fi
+
 INSTALLER="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/install.sh"
 FAKE_YQ_READER="$(dirname "${BASH_SOURCE[0]}")/fixtures/fake_yq_reader.sh"
 
@@ -10,7 +34,7 @@ fail() {
 }
 
 work="$(mktemp -d)"
-trap 'rm -rf -- "${work}"' EXIT
+trap '[[ "${TP_TEST_KEEP_WORK:-0}" == 1 ]] || rm -rf -- "${work}"' EXIT
 config="${work}/combined.yaml"
 data="${work}/data"
 containers="${work}/containers"
@@ -108,16 +132,27 @@ docker() {
     ;;
   pull | load) ;;
   inspect)
-    local name="${2:-}"
-    [[ -f "${TP_TEST_CONTAINERS}/${name}.env" ]] && cat "${TP_TEST_CONTAINERS}/${name}.env"
+    local name="" argument
+    for argument in "$@"; do
+      [[ -f "${TP_TEST_CONTAINERS}/${argument}" ]] && name="${argument}"
+    done
+    [[ -n "${name}" ]] || return 1
+    if [[ " $* " == *'io.trojanpanelnext.owner-token'* ]]; then
+      [[ -f "${TP_TEST_CONTAINERS}/${name}.token" ]] && cat "${TP_TEST_CONTAINERS}/${name}.token"
+    elif [[ " $* " == *'io.trojanpanelnext.deployment'* ]]; then
+      [[ -f "${TP_TEST_CONTAINERS}/${name}.label" ]] && cat "${TP_TEST_CONTAINERS}/${name}.label"
+    else
+      [[ -f "${TP_TEST_CONTAINERS}/${name}.env" ]] && cat "${TP_TEST_CONTAINERS}/${name}.env"
+    fi
     ;;
   run)
     if [[ " $* " == *' node-identity revoke '* ]]; then
       printf 'revoke\n' >>"${TP_TEST_IDENTITY_TRACE}"
       return
     fi
-    local name=""
+    local name="" token=""
     local -a environment=()
+    local label=""
     shift
     while (($#)); do
       if [[ "$1" == --name ]]; then
@@ -130,11 +165,20 @@ docker() {
         shift 2
         continue
       fi
+      if [[ "$1" == --label ]]; then
+        case "$2" in
+          io.trojanpanelnext.deployment=*) label="${2#io.trojanpanelnext.deployment=}" ;;
+          io.trojanpanelnext.owner-token=*) token="${2#io.trojanpanelnext.owner-token=}" ;;
+        esac
+        shift 2; continue
+      fi
       shift
     done
     [[ -n "${name}" ]] || return 2
     : >"${TP_TEST_CONTAINERS}/${name}"
     printf '%s\n' "${environment[@]}" >"${TP_TEST_CONTAINERS}/${name}.env"
+    [[ -z "${label}" ]] || printf '%s\n' "${label}" >"${TP_TEST_CONTAINERS}/${name}.label"
+    [[ -z "${token:-}" ]] || printf '%s\n' "${token}" >"${TP_TEST_CONTAINERS}/${name}.token"
     if [[ "${name}" == trojan-panel-web-caddy ]]; then
       local domain cert_dir
       for domain in panel.example.com node.example.com; do
@@ -186,7 +230,7 @@ EOF
     shift
     while (($#)); do
       case "$1" in -f | -v | -fv | -vf) shift; continue ;; esac
-      rm -f "${TP_TEST_CONTAINERS}/$1" "${TP_TEST_CONTAINERS}/$1.env"
+      rm -f "${TP_TEST_CONTAINERS}/$1" "${TP_TEST_CONTAINERS}/$1.env" "${TP_TEST_CONTAINERS}/$1.label" "${TP_TEST_CONTAINERS}/$1.token"
       shift
     done
     ;;
@@ -212,8 +256,16 @@ export TP_TEST_IDENTITY_TRACE="${work}/identity.trace"
 export TP_TEST_DATA="${data}"
 export TP_TEST_DNS_IP=203.0.113.10
 export TP_TEST_SS_OUTPUT=''
+export TP_TEST_CA_FILE="${work}/ca.pem"
+export CADDY_ADAPTER_CA_FILE="${TP_TEST_CA_FILE}"
+export CADDY_ADAPTER_FAKE=1
+export CADDY_ADAPTER_FAKE_ISSUER="$(realpath "${BASH_SOURCE[0]}")"
 
 run_installer() {
+  mkdir -p "${data}/trojan-panel-core/external"
+  if [[ ! -s "${data}/trojan-panel-core/external/routes.json" ]]; then
+    printf '{"routes":[{"network":"tcp","port":2443}]}\n' >"${data}/trojan-panel-core/external/routes.json"
+  fi
   TP_DATA="${data}" \
     TP_OS_RELEASE_FILE="${os_release}" \
     TP_HEALTH_ATTEMPTS=2 \
@@ -247,6 +299,17 @@ grep -Fq 'another listener is active' "${work}/busy-port.out" || fail 'port conf
 : >"${trace}"
 TP_TEST_SS_OUTPUT=''
 
+for port_key in mariadb_port redis_port panel_port ui_port core_port grpc_port; do
+  original_port="$(sed -n "s/^  ${port_key}: //p" "${config}")"
+  sed -i "s/^  ${port_key}: .*/  ${port_key}: 443/" "${config}"
+  if run_installer install --mode combined >"${work}/${port_key}-conflict.out" 2>&1; then
+    fail "combined accepted ${port_key} on shared Entry port 443"
+  fi
+  grep -Fq 'must not compete with the shared Entry ports 80/443' "${work}/${port_key}-conflict.out" || fail "${port_key} conflict omitted diagnostic"
+  ! grep -q '^docker run ' "${trace}" || fail "${port_key} conflict mutated a container"
+  sed -i "s/^  ${port_key}: .*/  ${port_key}: ${original_port}/" "${config}"
+done
+
 : >"${containers}/trojan-panel-node-caddy"
 if run_installer install --mode combined >"${work}/standalone-node-entry.out" 2>&1; then
   fail 'combined installation removed an existing standalone Node Entry'
@@ -274,27 +337,35 @@ run_installer install --mode combined >"${work}/install.out" 2>&1 || {
 grep -Fq 'Combined deployment is healthy' "${work}/install.out" || fail 'combined health marker is missing'
 grep -Fq 'panel.example.com' "${data}/custom/web-caddy/Caddyfile" || fail 'shared Entry omitted the Web domain'
 grep -Fq 'node.example.com' "${data}/custom/web-caddy/Caddyfile" || fail 'shared Entry omitted the Node domain'
-test -s "${data}/custom/web-caddy/data/caddy/certificates/acme.test/panel.example.com/panel.example.com.crt" || fail 'Web certificate is missing'
-test -s "${data}/custom/web-caddy/data/caddy/certificates/acme.test/node.example.com/node.example.com.crt" || fail 'Node certificate is missing'
-test -f "${containers}/trojan-panel-web-caddy" || fail 'shared Entry container was not created'
+test -s "${data}/trojanpanelnext-entry/cert/web/fullchain.pem" || fail 'Web certificate is missing'
+test -s "${data}/trojanpanelnext-entry/cert/node/fullchain.pem" || fail 'Node certificate is missing'
+test "$(stat -c %a "${data}/trojanpanelnext-entry")" = 700 || fail 'Entry spec directory is not root-only'
+test "$(stat -c %a "${data}/trojanpanelnext-entry/combined-spec.json")" = 600 || fail 'Entry spec is not root-only'
+test -f "${data}/custom/web-caddy/.active" || fail 'shared Entry was not activated'
 test ! -e "${containers}/trojan-panel-node-caddy" || fail 'a second Entry container competes for 80/443'
-grep -Fxq 'TP_ENTRY_DEPLOYMENT_ID=trojanpanelnext-combined-entry' "${containers}/trojan-panel-web-caddy.env" || fail 'shared Entry ownership identity is missing'
-test "$(grep -c '^docker run .*--name trojan-panel-web-caddy ' "${trace}")" = 1 || fail 'more than one shared Entry was started'
-grep -Fq "${data}/custom/web-caddy/data:${data}/custom/web-caddy/data:ro" "${trace}" || fail 'Core does not consume shared certificates read-only'
+grep -Fxq 'deployment=trojanpanelnext-combined-entry' "${data}/custom/web-caddy/.trojanpanelnext-owner" || fail 'shared Entry ownership identity is missing'
+test "$(jq -r '.phase' "${data}/trojanpanelnext-entry/state/trojanpanelnext-combined-entry.json")" = stable || fail 'v2 Entry journal did not commit'
+grep -Fq "${data}/trojan-panel-core/cert:${data}/trojan-panel-core/cert:ro" "${trace}" || fail 'Core does not consume managed certificates read-only'
 grep -Fxq 'mariadb_user=tpn_combined' "${containers}/trojan-panel-core.env" || fail 'Core omitted its dedicated MariaDB identity'
 grep -Fxq 'REDIS_USERNAME=tpn-cache-combined' "${containers}/trojan-panel-core.env" || fail 'Core omitted its dedicated Redis identity'
 ! grep -Fq 'root-secret' "${containers}/trojan-panel-core.env" || fail 'Core received the Web MariaDB root credential'
 test "$(stat -c '%a' "${data}/trojan-panel/config/node-identities/combined-node.json")" = 600 || fail 'Node identity credential file is not mode 0600'
-grep -Fq 'https://panel.example.com/' "${curl_trace}" || fail 'Web HTTPS was not probed'
-grep -Fq 'https://node.example.com/' "${curl_trace}" || fail 'Node HTTPS was not probed'
+/usr/bin/openssl x509 -in "${data}/trojanpanelnext-entry/cert/web/fullchain.pem" -noout -checkhost panel.example.com | grep -Fq 'does match certificate' || fail 'Web certificate domain is wrong'
+/usr/bin/openssl x509 -in "${data}/trojanpanelnext-entry/cert/node/fullchain.pem" -noout -checkhost node.example.com | grep -Fq 'does match certificate' || fail 'Node certificate domain is wrong'
 grep -q '^docker exec trojan-panel /tpdata/trojan-panel/trojan-panel node-identity verify --id ' "${trace}" || fail 'combined install did not verify Web-to-Node mTLS/gRPC'
 
 # Same-version replay converges without a second Entry or identity.
+sed -i 's/web_hostname: panel.example.com/web_hostname: changed.example.com/' "${config}"
+if run_installer install --mode combined >"${work}/domain-drift.out" 2>&1; then
+  fail 'combined replay accepted a domain change'
+fi
+grep -Fq 'domain changes require an explicit migration' "${work}/domain-drift.out" || fail 'domain drift omission diagnostic'
+sed -i 's/web_hostname: changed.example.com/web_hostname: panel.example.com/' "${config}"
 run_installer install --mode combined >"${work}/replay.out" 2>&1 || {
   sed -n '1,260p' "${work}/replay.out" >&2
   fail 'combined replay failed'
 }
-test "$(grep -c '^docker run .*--name trojan-panel-web-caddy ' "${trace}")" = 1 || fail 'combined replay started another Entry'
+test "$(grep -c '^docker run .*--name trojan-panel-core ' "${trace}")" = 1 || fail 'combined replay recreated Core'
 test "$(grep -c '^docker restart trojan-panel-core$' "${trace}" || true)" = 0 || fail 'unchanged replay restarted the Node certificate consumer'
 
 export TP_TEST_FAIL_MTLS=1
@@ -307,35 +378,44 @@ TP_TEST_FAIL_MTLS=0
 # Caddy owns renewal; refresh only notifies the Node certificate consumer when
 # the shared certificate generation changes.
 run_installer refresh-cert --mode combined | grep -Fxq unchanged || fail 'unchanged certificate refresh was not a no-op'
-printf 'renewed certificate\n' >>"${data}/custom/web-caddy/data/caddy/certificates/acme.test/node.example.com/node.example.com.crt"
+printf 'renewed certificate\n' >>"${data}/trojan-panel-core/cert/fullchain.pem"
 run_installer refresh-cert --mode combined >"${work}/refresh.out"
 grep -Fxq changed "${work}/refresh.out" || fail 'changed certificate generation was not reported'
 test "$(grep -c '^docker restart trojan-panel-core$' "${trace}")" = 1 || fail 'changed Node certificate did not notify its consumer exactly once'
 
 # Web role removal preserves Node, shared data services, and the shared Entry.
-mv "${containers}/trojan-panel-web-caddy" "${containers}/trojan-panel-web-caddy.paused"
+mv "${containers}/trojan-panel-core.label" "${containers}/trojan-panel-core.foreign"
+if run_installer remove --mode web >"${work}/foreign-core-remove.out" 2>&1; then
+  fail 'Web removal ignored a foreign Core resource'
+fi
+grep -Fq 'Combined resource ownership conflict' "${work}/foreign-core-remove.out" || fail 'foreign Core rejection omitted diagnostic'
+mv "${containers}/trojan-panel-core.foreign" "${containers}/trojan-panel-core.label"
+mv "${data}/custom/web-caddy/.active" "${data}/custom/web-caddy/.paused"
 if run_installer remove --mode web >"${work}/missing-entry-remove.out" 2>&1; then
   fail 'Web role removal succeeded without the shared Entry it must preserve'
 fi
 test -f "${containers}/trojan-panel" || fail 'missing shared Entry check happened after removing Web'
-mv "${containers}/trojan-panel-web-caddy.paused" "${containers}/trojan-panel-web-caddy"
+mv "${data}/custom/web-caddy/.paused" "${data}/custom/web-caddy/.active"
 run_installer remove --mode web >"${work}/remove-web.out"
 test -f "${containers}/trojan-panel-core" || fail 'Web removal deleted the Node role'
 test -f "${containers}/trojan-panel-mariadb" || fail 'Web removal deleted shared MariaDB'
 test -f "${containers}/trojan-panel-redis" || fail 'Web removal deleted shared Redis'
-test -f "${containers}/trojan-panel-web-caddy" || fail 'Web removal deleted the shared Entry'
+test -f "${data}/custom/web-caddy/.active" || fail 'Web removal deleted the shared Entry'
 ! grep -Fq 'panel.example.com' "${data}/custom/web-caddy/Caddyfile" || fail 'removed Web role remains in shared Entry config'
 grep -Fq 'node.example.com' "${data}/custom/web-caddy/Caddyfile" || fail 'Web removal deleted Node Entry config'
+if run_installer install --mode combined >"${work}/implicit-restore.out" 2>&1; then
+  fail 'same-version replay restored the removed Web role'
+fi
+grep -Fq 'requires explicit restore_intent' "${work}/implicit-restore.out" || fail 'implicit restoration was not explained'
 
 # Node removal still revokes its identity after Web removal through the
 # control-plane CLI in a one-shot container.
 run_installer remove --mode node >"${work}/remove-node.out"
 test ! -e "${containers}/trojan-panel-core" || fail 'Node removal retained the Core container'
-test -f "${containers}/trojan-panel-mariadb" || fail 'Node removal deleted shared MariaDB'
-test -f "${containers}/trojan-panel-redis" || fail 'Node removal deleted shared Redis'
+test ! -e "${containers}/trojan-panel-mariadb" || fail 'last-role removal retained shared MariaDB'
+test ! -e "${containers}/trojan-panel-redis" || fail 'last-role removal retained shared Redis'
 grep -Fxq revoke "${work}/identity.trace" || fail 'Node removal did not revoke its control-plane identity first'
 grep -q '^docker run --rm --network=host .* node-identity revoke --id ' "${trace}" || fail 'Node removal did not use the one-shot identity CLI after Web removal'
-grep -Fq 'panel.example.com' "${data}/custom/web-caddy/Caddyfile" || fail 'Node removal deleted Web Entry config'
-! grep -Fq 'node.example.com' "${data}/custom/web-caddy/Caddyfile" || fail 'removed Node role remains in shared Entry config'
+test ! -e "${data}/custom/web-caddy/Caddyfile" || fail 'last-role removal retained shared Entry config'
 
 printf 'PASS combined shared Entry, dual-certificate, identity, replay, renewal, and role ownership smoke\n'

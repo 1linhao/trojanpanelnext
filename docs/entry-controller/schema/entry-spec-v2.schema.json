@@ -4,12 +4,13 @@
   "title": "Combined EntrySpec v2",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "topology", "revision", "deployment_id", "provider", "domains", "active_roles", "roles", "certificate_targets"],
+  "required": ["schema_version", "topology", "revision", "deployment_id", "owner_token", "provider", "domains", "active_roles", "roles", "certificate_targets"],
   "properties": {
     "schema_version": {"const": 2},
     "topology": {"const": "combined"},
     "revision": {"type": "integer", "minimum": 1},
     "deployment_id": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,62}$"},
+    "owner_token": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
     "provider": {"const": "caddy-legacy"},
     "domains": {
       "$comment": "The two domain values must differ; entry_v2_validate_spec enforces this cross-field constraint because standard Draft 2020-12 has no value-reference keyword.",

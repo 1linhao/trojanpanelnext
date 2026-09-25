@@ -10,9 +10,10 @@ entry_v2_validate_spec() {
     def absolute: type == "string" and test("^/[^/]");
     def keys_only($allowed): (keys - $allowed | length) == 0;
     . as $spec | .schema_version == 2 and .topology == "combined" and
-    keys_only(["schema_version","topology","revision","deployment_id","provider","domains","active_roles","roles","certificate_targets","restore_intent"]) and
+    keys_only(["schema_version","topology","revision","deployment_id","owner_token","provider","domains","active_roles","roles","certificate_targets","restore_intent"]) and
     (.revision | type == "number" and floor == . and . >= 1) and
     (.deployment_id | type == "string" and test("^[a-z][a-z0-9-]{0,62}$")) and
+    (.owner_token | type == "string" and test("^[a-f0-9]{64}$")) and
     .provider == "caddy-legacy" and
     (.domains | type == "object" and keys == ["node","web"] and
       (.web | fqdn) and (.node | fqdn) and .web != .node) and
@@ -59,10 +60,11 @@ entry_v2_validate_state() {
     def valid_spec($deployment;$domains;$provider):
       . as $spec |
       type == "object" and
-      (keys - ["schema_version","topology","revision","deployment_id","provider","domains","active_roles","roles","certificate_targets","restore_intent"] | length) == 0 and
+      (keys - ["schema_version","topology","revision","deployment_id","owner_token","provider","domains","active_roles","roles","certificate_targets","restore_intent"] | length) == 0 and
       .schema_version == 2 and .topology == "combined" and
       (.revision | type == "number" and floor == . and . >= 1) and
       .deployment_id == $deployment and .provider == $provider and
+      (.owner_token | type == "string" and test("^[a-f0-9]{64}$")) and
       (.domains | type == "object" and keys == ["node","web"] and
         (.web | fqdn) and (.node | fqdn) and .web != .node) and
       .domains == $domains and
@@ -304,7 +306,8 @@ entry_v2_validate_observation() {
       ([.listeners[] | select(.owner == "provider" and .scope == "shared" and .port == 80)] | length == 1) and
       ([.listeners[] | select(.owner == "provider" and .scope == "shared" and .port == 443)] | length == 1) and
       (if $spec.active_roles | index("node") then
-        ([.listeners[] | select(.owner == "kernel" and .scope == "role" and .role == "node" and .purpose == "node-direct")] | length >= 1)
+        ([.listeners[] | select(.owner == "kernel" and .scope == "role" and .role == "node") ] |
+          length >= 1 and all(.[]; .purpose == "node-direct"))
        else true end)
      else true end)
   ' <<<"$observation" >/dev/null 2>&1 || return 1
@@ -673,8 +676,8 @@ entry_v2_remove_locked() {
   [[ "$old" != null ]] || { entry_v2_error ownership_conflict stable 'No committed v2 deployment to remove'; return 4; }
   entry_v2_check_target "$spec" "$old" "$(entry_v2_target_digest "$spec")" || return $?
   [[ "$(jq -r '.phase' <<<"$old")" == stable ]] || { entry_v2_error ownership_conflict stable 'Recover unfinished transaction before remove'; return 4; }
-  [[ "$(jq -r '.active_roles | length' <<<"$old")" == 1 ]] || {
-    entry_v2_error invalid_spec stable 'Remove is allowed only after one-role reconcile'; return 2;
+  [[ "$(jq -r '.active_roles | length' <<<"$old")" == 1 || "$(jq -r '.active_roles | length' <<<"$old")" == 2 ]] || {
+    entry_v2_error invalid_spec stable 'Remove requires a committed role set'; return 2;
   }
   [[ "$(entry_v2_target_digest "$spec")" == "$(jq -r '.committed_target.digest' <<<"$old")" ]] || {
     entry_v2_error invalid_spec stable 'Remove target must match the last committed role'; return 2;

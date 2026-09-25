@@ -430,21 +430,24 @@ caddy_adapter_validate_render() {
 }
 
 caddy_adapter_owner_status() {
-  local spec="$1" root="$2" marker deployment
+  local spec="$1" root="$2" marker deployment token marker_token
   deployment="$(jq -r '.deployment_id' "$spec")"
+  token="$(jq -r '.owner_token // empty' "$spec")"
   marker="$(caddy_adapter_marker "$root")"
   if [[ ! -e "$root" ]]; then
     printf 'absent\n'
     return 0
   fi
-  [[ -d "$root" && ! -L "$root" && "$(stat -c %u "$root")" == "$(id -u)" ]] || return 2
+  [[ -d "$root" && ! -L "$root" && "$(stat -c %u "$root")" == "${ENTRY_SPEC_OWNER_UID:-$(id -u)}" ]] || return 2
   if [[ ! -f "$marker" ]]; then
     find "$root" -mindepth 1 -maxdepth 1 -print -quit | grep -q . && return 3
     printf 'empty\n'
     return 0
   fi
-  [[ ! -L "$marker" && "$(stat -c %a "$marker")" == 600 &&
-     "$(cat "$marker" 2>/dev/null)" == "deployment=${deployment}" ]] || return 3
+  [[ ! -L "$marker" && "$(stat -c %a "$marker")" == 600 && "$(stat -c %u "$marker")" == "${ENTRY_SPEC_OWNER_UID:-$(stat -c %u "$(dirname "$root")")}" ]] || return 3
+  marker_token="$(sed -n 's/^owner_token=//p' "$marker" | head -n 1)"
+  [[ "$(sed -n 's/^deployment=//p' "$marker" | head -n 1)" == "${deployment}" &&
+     -n "$token" && "$marker_token" == "$token" ]] || return 3
   printf 'owned\n'
 }
 
@@ -497,7 +500,6 @@ caddy_adapter_check_manifest() {
   upstream_port="$(jq -r '.roles.web.web_upstream // ""' "$spec" | sed 's/.*://')"
   jq -e --argjson upstream_port "${upstream_port:-0}" '
     .routes | type == "array" and
-    length >= 1 and
     all(.[]; (.network == "tcp" or .network == "udp") and
       (.port | type == "number" and floor == . and . >= 1 and . <= 65535) and
       (.port != 80 and .port != 443 and .port != $upstream_port)) and
@@ -508,6 +510,7 @@ caddy_adapter_check_manifest() {
 caddy_adapter_check_node_runtime() {
   local spec="$1" require_all="${2:-1}" docker core pids network port out line pid found consumer envs mount running
   [[ "${CADDY_ADAPTER_FAKE:-0}" == 1 ]] && return 0
+  [[ "${CADDY_ADAPTER_BOOTSTRAP:-0}" == 1 ]] && return 0
   jq -e '.active_roles | index("node") != null' "$spec" >/dev/null || return 0
   docker="$(caddy_adapter_docker)"; core="${CADDY_ADAPTER_NODE_CONTAINER:-trojan-panel-core}"
   running="$($docker inspect -f '{{.State.Running}}' "$core" 2>/dev/null || true)"
@@ -557,7 +560,7 @@ entry_v2_adapter_plan_ready() {
 }
 
 caddy_adapter_check_container_owner() {
-  local spec="$1" docker container deployment label
+  local spec="$1" docker container deployment label token container_token
   [[ "${CADDY_ADAPTER_FAKE:-0}" == 1 ]] && return 0
   docker="$(caddy_adapter_docker)"
   container="$(caddy_adapter_container)"
@@ -566,8 +569,13 @@ caddy_adapter_check_container_owner() {
   if ! "$docker" inspect "$container" >/dev/null 2>&1; then
     return 0
   fi
+  container_id="$($docker inspect -f '{{.Id}}' "$container" 2>/dev/null || true)"
+  [[ -n "$container_id" ]] || return 0
   label="$($docker inspect -f '{{ index .Config.Labels "io.trojanpanelnext.deployment" }}' "$container" 2>/dev/null || true)"
   [[ "$label" == "$deployment" ]] || return 1
+  token="$(jq -r '.owner_token // empty' "$spec")"
+  container_token="$($docker inspect -f '{{ index .Config.Labels "io.trojanpanelnext.owner-token" }}' "$container" 2>/dev/null || true)"
+  [[ -n "$token" && "$container_token" == "$token" ]] || return 1
   local image config_mount data_mount web_mount
   image="$(caddy_adapter_image)" || return 1
   [[ "$($docker inspect -f '{{.Config.Image}}' "$container" 2>/dev/null)" == "$image" ]] || return 1
@@ -761,7 +769,7 @@ caddy_adapter_refresh_node_consumer() {
       # Docker restart returns before the Node listener is necessarily bound.
       caddy_adapter_wait_node_runtime "$spec" || return 1
     fi
-  else
+  elif [[ "${CADDY_ADAPTER_BOOTSTRAP:-0}" != 1 ]]; then
     return 1
   fi
 }
@@ -806,6 +814,9 @@ caddy_adapter_ensure_container() {
   docker="$(caddy_adapter_docker)"; container="$(caddy_adapter_container)"
   if [[ "${CADDY_ADAPTER_FAKE:-0}" == 1 ]]; then
     : >"${root}/.active"
+    if [[ -n "${CADDY_ADAPTER_FAKE_ISSUER:-}" ]]; then
+      bash "${CADDY_ADAPTER_FAKE_ISSUER}" --fake-issue "${spec}" || return 1
+    fi
     return 0
   fi
   command -v "$docker" >/dev/null 2>&1 || return 1
@@ -816,6 +827,7 @@ caddy_adapter_ensure_container() {
   fi
   "$docker" create --name "$container" --restart always --network host \
     --label "io.trojanpanelnext.deployment=$(jq -r '.deployment_id' "$spec")" \
+    --label "io.trojanpanelnext.owner-token=$(jq -r '.owner_token' "$spec")" \
     -v "${root}:/etc/caddy:ro" -v "${root}/data:/data" \
     -v "${CADDY_ADAPTER_WEB_ROOT:-/tpdata/web}:/srv:ro" "$image" >/dev/null
 }
@@ -884,13 +896,12 @@ entry_v2_adapter_probe() {
   export CADDY_ADAPTER_REAL_CONNECTED=1
   root="$(caddy_adapter_root "$spec")"
   caddy_adapter_safe_path "$root" || return 1
-  caddy_adapter_owner_status "$spec" "$root" >/dev/null || return 1
+  status="$(caddy_adapter_owner_status "$spec" "$root")" || return 1
   caddy_adapter_check_container_owner "$spec" || return 1
   caddy_adapter_check_dns "$spec" || return 1
   caddy_adapter_check_manifest "$spec" || return 1
   caddy_adapter_check_node_runtime "$spec" 0 || return 1
   caddy_adapter_check_ports || return 1
-  status="$(caddy_adapter_owner_status "$spec" "$root")"
   if [[ "$status" == owned && "${CADDY_ADAPTER_FAKE:-0}" != 1 ]]; then
     timer_owner="$(caddy_adapter_timer_dir)/.tpn-renewal-owner"
     [[ -f "$timer_owner" && ! -L "$timer_owner" &&
@@ -943,7 +954,7 @@ entry_v2_adapter_prepare() {
   fi
   caddy_adapter_write_renewal_trigger "$spec" "$root" || return 1
   marker="$(caddy_adapter_marker "$root")"
-  printf 'deployment=%s\n' "$(jq -r '.deployment_id' "$spec")" >"$marker" || return 1
+  printf 'deployment=%s\nowner_token=%s\n' "$(jq -r '.deployment_id' "$spec")" "$(jq -r '.owner_token' "$spec")" >"$marker" || return 1
   chmod 0600 "$marker" || return 1
   if [[ "$(jq -r '.committed_target == null' <<<"$state")" == false ]]; then
     local old_spec
