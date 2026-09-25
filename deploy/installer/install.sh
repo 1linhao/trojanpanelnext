@@ -2187,7 +2187,7 @@ network_plan_write() {
       printf '%s{"name":"core-api","direction":"inbound","protocol":"tcp","port":%s,"sources":%s,"purpose":"combined local Core API"}' "${comma}" "${CORE_PORT}" "${local_sources}"; comma=,
       printf '%s{"name":"core-grpc","direction":"inbound","protocol":"tcp","port":%s,"sources":%s,"purpose":"combined local control-plane gRPC"}' "${comma}" "${GRPC_PORT}" "${local_sources}"; comma=,
     fi
-    printf '],"notes":["All listed rules are inbound host rules; apply them outside the installer.","Do not expose MariaDB, Redis, panel API, panel UI, Core API, or gRPC to 0.0.0.0/0.","Node protocol ports are direct kernel listeners; inspect the generated routes.json and add only declared ports."],"egress":[{"name":"dns","protocol":"udp/tcp","port":53,"destinations":["configured DNS resolvers"],"purpose":"name resolution"},{"name":"https","protocol":"tcp","port":443,"destinations":["configured registries and ACME endpoints"],"purpose":"image, release, and certificate retrieval"}]}\n'
+    printf '],"notes":["All listed rules are inbound host rules; apply them outside the installer.","The egress entries are advisory prerequisites, not host-firewall mutations; peer data-plane flows are represented as inbound rules on the receiving host.","Do not expose MariaDB, Redis, panel API, panel UI, Core API, or gRPC to 0.0.0.0/0.","Node protocol ports are direct kernel listeners; inspect the generated routes.json and add only declared ports."],"egress":[{"name":"dns-udp","protocol":"udp","port":53,"destinations":["configured DNS resolvers"],"purpose":"name resolution"},{"name":"dns-tcp","protocol":"tcp","port":53,"destinations":["configured DNS resolvers"],"purpose":"large or fallback DNS responses"},{"name":"https","protocol":"tcp","port":443,"destinations":["configured registries and ACME endpoints"],"purpose":"image, release, and certificate retrieval"}]}\n'
   } >"${tmp_json}"
   if [[ "${mode}" == node || "${mode}" == combined ]] && [[ -s "${EXTERNAL_ROUTES_DIR}/routes.json" ]] && jq -e '.routes | type == "array"' "${EXTERNAL_ROUTES_DIR}/routes.json" >/dev/null 2>&1; then
     local route_tmp
@@ -2195,7 +2195,7 @@ network_plan_write() {
     jq --slurpfile routes "${EXTERNAL_ROUTES_DIR}/routes.json" '
       .rules += ([($routes[0].routes[]? // empty) as $route |
         {name:("node-protocol-" + ($route.kernel // "kernel") + "-" + (($route.port // 0)|tostring)),
-         direction:"inbound", protocol:($route.network // "tcp"), port:($route.port // 0),
+         direction:"inbound", protocol:(($route.network // "tcp") | if . == "udp" then "udp" else "tcp" end), port:($route.port // 0),
          sources:["0.0.0.0/0","::/0"], purpose:"Node direct kernel listener"}])
     ' "${tmp_json}" >"${route_tmp}" && mv -f -- "${route_tmp}" "${tmp_json}"
   fi
@@ -2345,6 +2345,19 @@ check_same_version_replay_preconditions() {
       return 1
     }
   fi
+  if [[ "${mode}" == combined ]]; then
+    for key in node_identity_id node_server_id; do
+      case "$key" in
+      node_identity_id) expected="$NODE_IDENTITY_ID" ;;
+      node_server_id) expected="$NODE_SERVER_ID" ;;
+      esac
+      actual="$(installer_state_value "${key}" "${state}")"
+      [[ "${actual}" == "${expected}" ]] || {
+        echo_content red "Same-version combined Node identity changes require explicit revoke and registration"
+        return 1
+      }
+    done
+  fi
   local path_key path_expected
   for path_key in web_path pki_bundle_dir managed_cert_dir external_routes_dir kernel_runtime_path node_identity_credential_file; do
     case "${path_key}" in
@@ -2374,6 +2387,18 @@ check_same_version_replay_preconditions() {
         return 1
       }
     done
+  fi
+  if [[ "${mode}" == node || "${mode}" == combined ]]; then
+    local stored_generation
+    stored_generation="$(installer_state_value node_identity_generation "${state}")"
+    if [[ ! "${stored_generation}" =~ ^[1-9][0-9]*$ ]]; then
+      echo_content red "Installer state lacks a valid Node identity generation; explicit migration is required"
+      return 1
+    fi
+    if (( NODE_IDENTITY_GENERATION < stored_generation )); then
+      echo_content red "Same-version Node identity generation rollback requires explicit migration"
+      return 1
+    fi
   fi
 }
 
@@ -2406,7 +2431,7 @@ write_installer_state() {
     case "${mode}" in
     web) printf 'domain=%s\n' "${TP_WEB_DOMAIN}" ;;
     node) printf 'domain=%s\nnode_identity_id=%s\nnode_server_id=%s\nnode_identity_generation=%s\n' "${TP_NODE_DOMAIN}" "${NODE_IDENTITY_ID}" "${NODE_SERVER_ID}" "${NODE_IDENTITY_GENERATION}" ;;
-    combined) printf 'web_domain=%s\nnode_domain=%s\nnode_identity_id=%s\n' "${TP_WEB_DOMAIN}" "${TP_NODE_DOMAIN}" "${NODE_IDENTITY_ID}" ;;
+    combined) printf 'web_domain=%s\nnode_domain=%s\nnode_identity_id=%s\nnode_server_id=%s\nnode_identity_generation=%s\n' "${TP_WEB_DOMAIN}" "${TP_NODE_DOMAIN}" "${NODE_IDENTITY_ID}" "${NODE_SERVER_ID}" "${NODE_IDENTITY_GENERATION}" ;;
     esac
   } >"${temporary}"
   mv -f -- "${temporary}" "${state}"
@@ -3097,6 +3122,16 @@ prepare_combined_node_identity() {
     echo_content red "Combined Node credential file is incomplete"
     exit 1
   }
+}
+
+load_combined_identity_metadata() {
+  local credential_file="${NODE_IDENTITY_CREDENTIAL_FILE}"
+  [[ -f "${credential_file}" && ! -L "${credential_file}" ]] || return 0
+  command -v jq >/dev/null 2>&1 || return 0
+  NODE_IDENTITY_ID="$(jq -r '.node_identity_id // empty' "${credential_file}")"
+  NODE_SERVER_ID="$(jq -r '.node_server_id // empty' "${credential_file}")"
+  NODE_IDENTITY_GENERATION="$(jq -r '.generation // empty' "${credential_file}")"
+  export NODE_IDENTITY_ID NODE_SERVER_ID NODE_IDENTITY_GENERATION
 }
 
 revoke_combined_node_identity() {
@@ -3850,6 +3885,9 @@ main() {
   validate_entry_spec_binding "${mode}"
 
   if [[ "${command}" == install ]]; then
+    if [[ "${mode}" == combined ]]; then
+      load_combined_identity_metadata
+    fi
     check_same_version_replay_preconditions "${mode}"
   fi
 

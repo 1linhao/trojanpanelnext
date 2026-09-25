@@ -445,9 +445,10 @@ bash -c '
   MARIADB_HOST=panel.example.com
   network_plan_write node
   jq -e '\'' .rules[] | select(.name == "core-grpc") | .sources == ["198.51.100.7"] '\'' "${NETWORK_PLAN_DIR}/allowlist.json" >/dev/null
-  printf "{\\\"routes\\\":[{\\\"kernel\\\":\\\"xray\\\",\\\"network\\\":\\\"tcp\\\",\\\"port\\\":2443}]}\\n" >"${EXTERNAL_ROUTES_DIR}/routes.json"
+  printf "{\\\"routes\\\":[{\\\"kernel\\\":\\\"xray\\\",\\\"network\\\":\\\"ws\\\",\\\"port\\\":2443},{\\\"kernel\\\":\\\"hysteria2\\\",\\\"network\\\":\\\"udp\\\",\\\"port\\\":2444}]}\\n" >"${EXTERNAL_ROUTES_DIR}/routes.json"
   network_plan_write node
-  jq -e '\'' .rules[] | select(.name == "node-protocol-xray-2443") | .direction == "inbound" and .port == 2443 '\'' "${NETWORK_PLAN_DIR}/allowlist.json" >/dev/null
+  jq -e '\'' .rules[] | select(.name == "node-protocol-xray-2443") | .direction == "inbound" and .protocol == "tcp" and .port == 2443 '\'' "${NETWORK_PLAN_DIR}/allowlist.json" >/dev/null
+  jq -e '\'' .rules[] | select(.name == "node-protocol-hysteria2-2444") | .protocol == "udp" and .port == 2444 '\'' "${NETWORK_PLAN_DIR}/allowlist.json" >/dev/null
 ' installer-test "${INSTALLER}" "${external_data_dir}/allowlist"
 
 # A completed same-version Web replay may keep its non-destructive settings,
