@@ -88,6 +88,17 @@ generate "${bundle}"
 release_validate_output="$("${bundle}/install.sh" validate --mode web --config "${bundle}/config-web.yaml")"
 grep -q 'valid for web deployment mode' <<<"${release_validate_output}"
 
+# The publishing workflow passes a relative output directory. Keep that
+# contract covered because helper builds change into their Go module dirs.
+relative_root="${work}/relative-output"
+mkdir -m 700 "${relative_root}"
+(
+  cd "${relative_root}"
+  generate relative-assets
+)
+test -x "${relative_root}/relative-assets/secure-file" || fail 'relative output omitted secure-file'
+test -x "${relative_root}/relative-assets/node-bundle" || fail 'relative output omitted node-bundle'
+
 # A released installer must execute only helper binaries covered by the verified
 # Release asset set. Helper overrides remain development-only seams.
 cat >"${work}/node-credential.json" <<'JSON'

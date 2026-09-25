@@ -43,6 +43,10 @@ release_semver_is_valid "${version}" || fail 'version must be an explicit semant
 if [[ -d "${output}" ]] && find "${output}" -mindepth 1 -print -quit | grep -q .; then
   fail 'output directory must be empty'
 fi
+# The helper binaries are built from their own module directories below. Make
+# the destination absolute first so a relative --output remains valid after
+# those directory changes (the CI release workflow intentionally uses one).
+output="$(realpath -m -- "${output}")"
 [[ -f "${installer_source}" && ! -L "${installer_source}" ]] || fail 'installer source must be a regular non-symlink file'
 [[ "$(grep -Fxc 'INSTALLER_ASSET_VERSION="development"' "${installer_source}")" == 1 ]] ||
   fail 'installer source must contain exactly one development asset version marker'
