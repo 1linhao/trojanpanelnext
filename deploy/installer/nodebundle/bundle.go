@@ -103,7 +103,8 @@ var allowedNodeConfigKeys = map[string]bool{
 	"mariadb_password": true, "database": true, "account_table": true,
 	"redis_host": true, "redis_port": true, "redis_username": true,
 	"redis_password": true, "redis_auth_username": true, "redis_auth_password": true,
-	"grpc_port": true, "core_port": true, "node_server_id": true,
+	"control_plane_public_ip": true,
+	"grpc_port":               true, "core_port": true, "node_server_id": true,
 	"node_identity_id": true, "node_identity_generation": true,
 	"grpc_tls_mode": true, "grpc_tls_server_name": true, "grpc_client_ca_path": true,
 	"pki_bundle_dir": true, "kernel_runtime_path": true, "tls_mode": true,
@@ -386,6 +387,11 @@ func parseAndValidateNodeConfig(contents []byte, expected *bundleManifest) (map[
 	}
 	if _, err = requiredString(config, "email", true); err != nil {
 		return nil, nil, err
+	}
+	if _, present := config["control_plane_public_ip"]; present {
+		if _, err = requiredString(config, "control_plane_public_ip", true); err != nil {
+			return nil, nil, err
+		}
 	}
 	if stringValues["deployment_mode"] != "node" {
 		return nil, nil, errors.New("Node configuration deployment_mode must be node")

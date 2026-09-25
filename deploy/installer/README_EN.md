@@ -166,6 +166,14 @@ credential. The credential probe exposes no HTTP path, starts no Redis client or
 issue a session, update login time, or increment login failures. Any failed probe returns non-zero with a secret-free diagnostic.
 Replaying the same configuration reuses all three stored credentials.
 
+Each successful install writes `allowlist.json` and `allowlist.md` under
+`${TP_DATA}/trojanpanelnext-network`. The plan separates public entry ports from restricted
+MariaDB, Redis, Core API, gRPC, and panel ports. A Node plan uses `control_plane_public_ip` when
+provided, while a Web plan reads the public IPs recorded in Node identity files. The installer only
+generates this plan: it never invokes `nftables`, `ufw`, `iptables`, or a cloud security-group API.
+Apply and review the rules with the host or cloud operator, and add only direct Node listener ports
+declared in `routes.json`.
+
 ## Install a Node Agent
 
 After registering the Node on the Web control plane, use `node-bundle` from the same Release to create

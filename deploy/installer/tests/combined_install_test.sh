@@ -373,6 +373,18 @@ run_installer install --mode combined >"${work}/install.out" 2>&1 || {
   fail 'combined installation failed'
 }
 grep -Fq 'Combined deployment is healthy' "${work}/install.out" || fail 'combined health marker is missing'
+test -s "${data}/trojanpanelnext-network/allowlist.json" || fail 'combined network allowlist was not generated'
+test -s "${data}/trojanpanelnext-network/allowlist.md" || fail 'combined network allowlist Markdown was not generated'
+jq -e '.firewall_mutation_by_installer == false and (.rules | any(.name == "web-https" and .port == 443 and (.sources | index("0.0.0.0/0"))))' \
+  "${data}/trojanpanelnext-network/allowlist.json" >/dev/null || fail 'combined allowlist omitted public HTTPS rule'
+jq -e 'all(.rules[]; .direction == "inbound") and (.egress | any(.name == "dns-udp" and .protocol == "udp" and .port == 53)) and (.egress | any(.name == "dns-tcp" and .protocol == "tcp" and .port == 53))' \
+  "${data}/trojanpanelnext-network/allowlist.json" >/dev/null || fail 'combined allowlist omitted traffic direction or egress plan'
+jq -e 'all(.rules[]; ((.name | startswith("node-protocol-")) or .name == "web-http" or .name == "web-https" or (.sources | index("127.0.0.1/32") != null)))' \
+  "${data}/trojanpanelnext-network/allowlist.json" >/dev/null || fail 'combined allowlist exposed an internal service'
+grep -Fq 'does not modify nftables, ufw, or cloud security groups' "${data}/trojanpanelnext-network/allowlist.md" || fail 'allowlist omitted firewall responsibility boundary'
+if grep -Eq '(^| )nft(ables)?|(^| )ufw|iptables' "${trace}"; then
+  fail 'installer attempted to mutate a host firewall'
+fi
 grep -Fq 'panel.example.com' "${data}/custom/web-caddy/Caddyfile" || fail 'shared Entry omitted the Web domain'
 grep -Fq 'node.example.com' "${data}/custom/web-caddy/Caddyfile" || fail 'shared Entry omitted the Node domain'
 test -s "${data}/trojanpanelnext-entry/cert/web/fullchain.pem" || fail 'Web certificate is missing'
@@ -405,6 +417,20 @@ run_installer install --mode combined >"${work}/replay.out" 2>&1 || {
 }
 test "$(grep -c '^docker run .*--name trojan-panel-core ' "${trace}")" = 1 || fail 'combined replay recreated Core'
 test "$(grep -c '^docker restart trojan-panel-core$' "${trace}" || true)" = 0 || fail 'unchanged replay restarted the Node certificate consumer'
+
+# A rotated identity may advance generation, but an old bootstrap credential
+# must not roll the combined deployment back after the newer generation is
+# already committed.
+jq '.generation = 0' "${data}/trojan-panel/config/node-identities/combined-node.json" >"${work}/stale-identity.json"
+mv "${work}/stale-identity.json" "${data}/trojan-panel/config/node-identities/combined-node.json"
+chmod 600 "${data}/trojan-panel/config/node-identities/combined-node.json"
+if run_installer install --mode combined >"${work}/generation-rollback.out" 2>&1; then
+  fail 'combined replay accepted a stale Node identity generation'
+fi
+grep -Fq 'identity generation' "${work}/generation-rollback.out" || fail 'generation rollback omission diagnostic'
+jq '.generation = 1' "${data}/trojan-panel/config/node-identities/combined-node.json" >"${work}/current-identity.json"
+mv "${work}/current-identity.json" "${data}/trojan-panel/config/node-identities/combined-node.json"
+chmod 600 "${data}/trojan-panel/config/node-identities/combined-node.json"
 
 export TP_TEST_FAIL_MTLS=1
 if run_installer install --mode combined >"${work}/mtls-failure.out" 2>&1; then

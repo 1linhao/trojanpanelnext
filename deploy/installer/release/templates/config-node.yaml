@@ -24,6 +24,8 @@ trojanpanelnext:
   redis_password: replace-cache-from-node-bootstrap-bundle
   redis_auth_username: replace-auth-from-node-bootstrap-bundle
   redis_auth_password: replace-auth-from-node-bootstrap-bundle
+  # Optional: pin data-plane ingress to the Web control-plane IP.
+  control_plane_public_ip: ""
   grpc_port: 8100
   core_port: 8082
   node_server_id: 1
