@@ -207,6 +207,16 @@ Node 服务端证书；Node 的 `/healthz` 只在身份 ID、代次、服务器 
 凭据失效后至多 10 秒退出；轮换或撤销后，旧包不能通过安装检查，已经运行的旧代 Node 也会停止。
 新代次需生成新包重装。
 
+如需日后卸载，Node 主机必须保留一份从 bundle 解出的完整配置（其中含专用凭据），而不是只保留
+模板 `node-sg.yaml`。解出后立即限制权限；安装器只允许用 `--config` 执行移除，完成后可删除临时解包目录：
+
+```bash
+mkdir -m 700 ./node-bundle-extracted
+./node-bundle extract --bundle ./node-sg.g1.age --directory ./node-bundle-extracted
+install -m 600 ./node-bundle-extracted/config-node.yaml ./node-installed.yaml
+rm -rf ./node-bundle-extracted
+```
+
 直接使用权限为 `0600` 的 `--config` 仍用于开发、移除和证书刷新，但正式 Node 首装应使用
 加密 `--bundle`。
 
@@ -253,7 +263,7 @@ sudo ./install.sh install --mode combined --config ./combined-site.yaml --restor
 删除服务及生成数据：
 
 ```bash
-sudo ./install.sh remove --mode node --config ./node-sg.yaml --purge-data
+sudo ./install.sh remove --mode node --config ./node-installed.yaml --purge-data
 ```
 
 combined 使用两个不同且都解析到本机公网 IP 的域名。单个共享入口拥有 80/443，Node 内核协议

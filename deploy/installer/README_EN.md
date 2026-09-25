@@ -227,6 +227,17 @@ over fresh connections at a fixed production cadence and exits within 10 seconds
 After rotation or revocation, an old bundle cannot pass installation and an already-running
 old-generation Node stops. Generate and install a new bundle for the new generation.
 
+For a later removal, retain one complete configuration extracted from the bundle on the Node host
+(it contains the dedicated credentials); the template `node-sg.yaml` alone is not sufficient. Restrict
+the extracted file to mode `0600`, and remove the temporary extraction directory after copying it:
+
+```bash
+mkdir -m 700 ./node-bundle-extracted
+./node-bundle extract --bundle ./node-sg.g1.age --directory ./node-bundle-extracted
+install -m 600 ./node-bundle-extracted/config-node.yaml ./node-installed.yaml
+rm -rf ./node-bundle-extracted
+```
+
 A mode-`0600` `--config` remains available for development, removal, and certificate refresh, but use
 the encrypted `--bundle` for a production Node's initial install.
 
@@ -250,7 +261,7 @@ differ. Legacy `purpose` remains accepted only as compatibility input.
 ```bash
 sudo ./install.sh install --mode web --config ./web.yaml --force
 sudo ./install.sh remove --mode web --config ./web.yaml --keep-data
-sudo ./install.sh remove --mode node --config ./node-sg.yaml --purge-data
+sudo ./install.sh remove --mode node --config ./node-installed.yaml --purge-data
 ```
 
 `--keep-data` overrides `purge_data` in the config for a recoverable removal;
