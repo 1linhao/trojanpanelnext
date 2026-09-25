@@ -322,6 +322,17 @@ grep -Fq 'TP_NODE_PUBLIC_IP must be an IP address' "${work}/private-ip.out" || f
 ! grep -q '^docker run ' "${trace}" || fail 'private IP rejection happened after container mutation'
 sed -i 's/^  node_public_ip: .*/  node_public_ip: 203.0.113.10/' "${config}"
 
+for private_ip in '::fc00:0:0:0:1' '::fd12:1:2:3' '::fe80:1' '0::1' '0:0:0:0:0:0:0:0' '::ffff:c000:0201'; do
+  sed -i "s/^  node_public_ip: .*/  node_public_ip: ${private_ip}/" "${config}"
+  : >"${trace}"
+  if run_installer install --mode combined >"${work}/private-ip-${private_ip//:/_}.out" 2>&1; then
+    fail "combined installation accepted reserved IPv6 address ${private_ip}"
+  fi
+  grep -Fq 'TP_NODE_PUBLIC_IP must be an IP address' "${work}/private-ip-${private_ip//:/_}.out" || fail "reserved IPv6 rejection omitted diagnostic: ${private_ip}"
+  ! grep -q '^docker run ' "${trace}" || fail "reserved IPv6 rejection happened after container mutation: ${private_ip}"
+done
+sed -i 's/^  node_public_ip: .*/  node_public_ip: 203.0.113.10/' "${config}"
+
 for port_key in mariadb_port redis_port panel_port ui_port core_port grpc_port; do
   original_port="$(sed -n "s/^  ${port_key}: //p" "${config}")"
   sed -i "s/^  ${port_key}: .*/  ${port_key}: 443/" "${config}"
@@ -429,7 +440,14 @@ grep -Fq 'node.example.com' "${data}/custom/web-caddy/Caddyfile" || fail 'Web re
 if run_installer install --mode combined >"${work}/implicit-restore.out" 2>&1; then
   fail 'same-version replay restored the removed Web role'
 fi
-grep -Fq 'requires explicit restore_intent' "${work}/implicit-restore.out" || fail 'implicit restoration was not explained'
+grep -Fq -- 'requires explicit --restore-role' "${work}/implicit-restore.out" || fail 'implicit restoration was not explained'
+
+# Restoration is available only through an explicit installer operation; a
+# normal replay above must remain non-restoring.
+run_installer install --mode combined --restore-role web >"${work}/explicit-restore.out"
+grep -Fq 'panel.example.com' "${data}/custom/web-caddy/Caddyfile" || fail 'explicit Web restoration did not update the shared Entry'
+grep -Fq 'node.example.com' "${data}/custom/web-caddy/Caddyfile" || fail 'explicit Web restoration removed the Node Entry'
+run_installer remove --mode web >"${work}/remove-restored-web.out"
 
 # Node removal still revokes its identity after Web removal through the
 # control-plane CLI in a one-shot container.

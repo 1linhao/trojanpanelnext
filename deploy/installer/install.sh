@@ -37,6 +37,7 @@ COMBINED_ENTRY_SPEC="${COMBINED_ENTRY_SPEC:-${TP_DATA}/trojanpanelnext-entry/com
 COMBINED_ENTRY_CONTAINER="${COMBINED_ENTRY_CONTAINER:-${WEB_CADDY_CONTAINER}}"
 COMBINED_OWNER_TOKEN="${COMBINED_OWNER_TOKEN:-}"
 COMBINED_OWNER_MARKER="${COMBINED_OWNER_MARKER:-${COMBINED_ENTRY_ROOT}/.trojanpanelnext-owner}"
+COMBINED_RESTORE_ROLE="${COMBINED_RESTORE_ROLE:-}"
 
 CADDY_IMAGE="${CADDY_IMAGE:-caddy:2.8.4}"
 MARIADB_IMAGE="${MARIADB_IMAGE:-mariadb:10.7.3}"
@@ -153,6 +154,7 @@ Usage:
 Options:
   --mode <mode>      Deployment mode: Web control plane, Node Agent, or combined
   --entry-spec <file>  Versioned EntrySpec consumed by EntryController
+  --restore-role <role> Explicitly restore a removed combined role (web|node)
   --config <file>    YAML configuration file
   --bundle <file>    Encrypted Node bootstrap bundle (node install/validate only)
   --force            Recreate existing containers during installation
@@ -948,26 +950,56 @@ require_public_ip() {
     fi
   elif [[ "${value}" == *:* && "${value}" =~ ^[0-9a-fA-F:]+$ ]]; then
     valid=1
-    [[ "${value}" != *:::* && "${value}" != "::" && "${value}" != "::1" ]] || valid=0
+    [[ "${value}" != *:::* && "${value}" != "::" ]] || valid=0
     if [[ "${valid}" == 1 ]]; then
-      local compressed=0 count=0 part first_group
+      local compressed=0 count=0 part left right left_count right_count gap
+      local -a left_parts=() right_parts=() full_parts=()
       [[ "${value}" == *::* ]] && compressed=1
-      IFS=: read -r -a parts <<<"${value}"
-      for part in "${parts[@]}"; do
-        [[ -z "${part}" ]] && continue
+      if [[ "${compressed}" == 1 ]]; then
+        left="${value%%::*}"
+        right="${value#*::}"
+        [[ -z "${left}" ]] || IFS=: read -r -a left_parts <<<"${left}"
+        [[ -z "${right}" ]] || IFS=: read -r -a right_parts <<<"${right}"
+        left_count="${#left_parts[@]}"
+        right_count="${#right_parts[@]}"
+        gap=$((8 - left_count - right_count))
+        ((gap > 0)) || valid=0
+        full_parts+=("${left_parts[@]}")
+        for ((count = 0; count < gap; count++)); do full_parts+=(0000); done
+        full_parts+=("${right_parts[@]}")
+      else
+        IFS=: read -r -a full_parts <<<"${value}"
+      fi
+      count=0
+      for part in "${full_parts[@]}"; do
         [[ "${part}" =~ ^[0-9a-fA-F]{1,4}$ ]] || { valid=0; break; }
         count=$((count + 1))
       done
-      if [[ "${compressed}" == 1 ]]; then
-        ((count < 8)) || valid=0
-      elif ((count != 8)); then
-        valid=0
+      ((count == 8)) || valid=0
+      if [[ "${valid}" == 1 ]]; then
+        local group_value all_zero=1 all_but_last_zero=1 first_group last_group mapped_group
+        for part in "${full_parts[@]}"; do
+          group_value=$((16#${part}))
+          ((group_value == 0)) || all_zero=0
+        done
+        count=0
+        while ((count < 7)); do
+          group_value=$((16#${full_parts[count]}))
+          ((group_value == 0)) || all_but_last_zero=0
+          count=$((count + 1))
+        done
+        first_group=$((16#${full_parts[0]}))
+        last_group=$((16#${full_parts[7]}))
+        mapped_group=$((16#${full_parts[5]}))
+        # Reject ULA, link-local, multicast, unspecified, loopback and
+        # IPv4-mapped forms anywhere in the normalized 8-group address.
+        ((first_group != 0)) || valid=0
+        ((first_group < 0xfc00 || first_group > 0xfdff)) || valid=0
+        ((first_group < 0xfe80 || first_group > 0xfebf)) || valid=0
+        ((first_group < 0xff00)) || valid=0
+        ((all_zero == 0 && (all_but_last_zero == 0 || last_group != 1))) || valid=0
+        if ((all_but_last_zero == 1 && mapped_group == 65535)); then valid=0; fi
       fi
-      first_group="${value%%:*}"
-      first_group="${first_group,,}"
-      [[ "${first_group}" == fe8* || "${first_group}" == fe9* || "${first_group}" == fea* ||
-         "${first_group}" == feb* || "${first_group}" == fc* || "${first_group}" == fd* ||
-         "${first_group}" == ff* ]] && valid=0
     fi
   fi
   if [[ "${valid}" != 1 ]]; then
@@ -1050,24 +1082,30 @@ check_combined_host_preconditions() {
     fi
   done
 
-  # Replays may encounter the installer-owned shared Entry. Any other listener
-  # on 80/443 is a hard ownership conflict before containers are changed.
-  if container_running "${COMBINED_ENTRY_CONTAINER}"; then
-    :
-  else
-    command -v ss >/dev/null 2>&1 || {
-      echo_content red "ss is required to verify combined port ownership"
-      exit 1
-    }
-    if ss -H -ltn 2>/dev/null | awk '$4 ~ /(^|\]|:)(80|443)$/ {found=1} END {exit !found}'; then
-      echo_content red "combined shared Entry cannot own 80/443 because another listener is active"
+  # Replays may encounter the installer-owned shared Entry. A running Caddy
+  # must account for exactly one listener per shared port; any additional
+  # listener is still a hard ownership conflict before containers change.
+  command -v ss >/dev/null 2>&1 || {
+    echo_content red "ss is required to verify combined port ownership"
+    exit 1
+  }
+  local expected_listeners=0 count port
+  container_running "${COMBINED_ENTRY_CONTAINER}" && expected_listeners=1
+  for port in 80 443; do
+    count="$(ss -H -ltn 2>/dev/null | awk -v port="${port}" '$4 ~ ("(^|\\]|:)" port "$") {count++} END {print count + 0}')"
+    if [[ "${count}" != "${expected_listeners}" ]]; then
+      if [[ "${expected_listeners}" == 1 ]]; then
+        echo_content red "combined shared Entry has an unexpected listener count on port ${port}"
+      else
+        echo_content red "combined shared Entry cannot own 80/443 because another listener is active"
+      fi
       exit 1
     fi
-  fi
+  done
 }
 
 combined_entry_target_guard() {
-  local state="${COMBINED_ENTRY_STATE_ROOT}/${COMBINED_ENTRY_DEPLOYMENT_ID}.json" old_web old_node roles
+  local state="${COMBINED_ENTRY_STATE_ROOT}/${COMBINED_ENTRY_DEPLOYMENT_ID}.json" old_web old_node roles missing
   [[ -f "${state}" && ! -L "${state}" ]] || return 0
   old_web="$(jq -r '.domains.web // empty' "${state}")" || return 1
   old_node="$(jq -r '.domains.node // empty' "${state}")" || return 1
@@ -1077,7 +1115,22 @@ combined_entry_target_guard() {
   fi
   roles="$(jq -r '.committed_target.spec.active_roles // [] | sort | join(",")' "${state}")" || return 1
   if [[ -n "${roles}" && "${roles}" != node,web ]]; then
-    echo_content red "Restoring a removed combined role requires explicit restore_intent"
+    [[ "${TP_REQUEST_COMMAND}" == install && -n "${COMBINED_RESTORE_ROLE}" ]] || {
+      echo_content red "Restoring a removed combined role requires explicit --restore-role web|node"
+      return 1
+    }
+    [[ "${roles}" == node && "${COMBINED_RESTORE_ROLE}" == web ||
+      "${roles}" == web && "${COMBINED_RESTORE_ROLE}" == node ]] || {
+      echo_content red "--restore-role must name the inactive combined role"
+      return 1
+    }
+    missing="$(jq -r '.committed_target.digest // empty' "${state}")"
+    [[ "${missing}" =~ ^[a-f0-9]{64}$ ]] || {
+      echo_content red "Combined journal has no valid committed digest for explicit restore"
+      return 1
+    }
+  elif [[ -n "${COMBINED_RESTORE_ROLE}" ]]; then
+    echo_content red "--restore-role is only valid when restoring an inactive combined role"
     return 1
   fi
 }
@@ -1097,21 +1150,32 @@ combined_owner_prepare() {
       echo_content red "Combined Entry root is not a safe directory"
       return 1
     }
-    [[ -f "${marker}" && ! -L "${marker}" ]] || {
-      echo_content red "Combined Entry root has no ownership marker; refusing adoption"
-      return 1
-    }
-    [[ "$(stat -c %u "${marker}")" == "$(stat -c %u "${TP_DATA}")" && "$(stat -c %a "${marker}")" == 600 ]] || {
+    if [[ ! -f "${marker}" || -L "${marker}" ]]; then
+      # A legacy interrupted first install may have created the reserved root
+      # before EntryController wrote its marker. Only an empty, owner-owned
+      # root can be recovered without adopting foreign Caddy state.
+      [[ "$(find "${root}" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" == "" &&
+        "$(stat -c %u "${root}")" == "${EUID}" ]] || {
+        echo_content red "Combined Entry root has no ownership marker; refusing adoption"
+        return 1
+      }
+      combined_owner_token_generate || return 1
+    else
+      [[ ! -L "${marker}" ]] || return 1
+    fi
+    if [[ -f "${marker}" ]]; then
+      [[ "$(stat -c %u "${marker}")" == "$(stat -c %u "${TP_DATA}")" && "$(stat -c %a "${marker}")" == 600 ]] || {
       echo_content red "Combined Entry ownership marker must be root-only"
       return 1
-    }
-    token="$(sed -n 's/^owner_token=//p' "${marker}" | head -n 1)"
-    [[ "$(sed -n 's/^deployment=//p' "${marker}" | head -n 1)" == "${COMBINED_ENTRY_DEPLOYMENT_ID}" &&
-      "${token}" =~ ^[0-9a-f]{64}$ ]] || {
+      }
+      token="$(sed -n 's/^owner_token=//p' "${marker}" | head -n 1)"
+      [[ "$(sed -n 's/^deployment=//p' "${marker}" | head -n 1)" == "${COMBINED_ENTRY_DEPLOYMENT_ID}" &&
+        "${token}" =~ ^[0-9a-f]{64}$ ]] || {
       echo_content red "Combined Entry ownership marker is invalid"
       return 1
-    }
-    COMBINED_OWNER_TOKEN="${token}"
+      }
+      COMBINED_OWNER_TOKEN="${token}"
+    fi
   else
     combined_owner_token_generate || return 1
   fi
@@ -1268,7 +1332,7 @@ combined_resource_check() {
 }
 
 combined_entry_write_spec() {
-  local roles="$1" temporary route spec_dir
+  local roles="$1" temporary route spec_dir restore_digest=""
   route="${EXTERNAL_ROUTES_DIR}/routes.json"
   spec_dir="$(dirname "${COMBINED_ENTRY_SPEC}")"
   [[ ! -L "${spec_dir}" && ! -L "${COMBINED_ENTRY_SPEC}" ]] || return 1
@@ -1276,17 +1340,21 @@ combined_entry_write_spec() {
   chmod 0700 "${spec_dir}" || return 1
   mkdir -p "$(dirname "${route}")"
   if [[ ! -e "${route}" ]]; then printf '{"routes":[]}\n' >"${route}"; chmod 0600 "${route}"; fi
+  if [[ -n "${COMBINED_RESTORE_ROLE}" ]]; then
+    restore_digest="$(jq -r '.committed_target.digest // empty' "${COMBINED_ENTRY_STATE_ROOT}/${COMBINED_ENTRY_DEPLOYMENT_ID}.json")"
+  fi
   temporary="$(mktemp)"
   jq -cn --argjson roles "${roles}" --arg deployment "${COMBINED_ENTRY_DEPLOYMENT_ID}" --arg token "${COMBINED_OWNER_TOKEN}" \
     --arg web "${TP_WEB_DOMAIN}" --arg node "${TP_NODE_DOMAIN}" \
     --arg root "${COMBINED_ENTRY_ROOT}" --arg cert_root "${TP_DATA}/trojanpanelnext-entry/cert" --arg consumer "${MANAGED_CERT_DIR}" \
-    --arg route "${route}" --arg upstream "127.0.0.1:${UI_PORT}" --argjson revision "${COMBINED_ENTRY_REVISION:-1}" '
+    --arg route "${route}" --arg upstream "127.0.0.1:${UI_PORT}" --arg restore_role "${COMBINED_RESTORE_ROLE}" --arg restore_digest "${restore_digest}" --argjson revision "${COMBINED_ENTRY_REVISION:-1}" '
     {schema_version:2,topology:"combined",revision:$revision,deployment_id:$deployment,owner_token:$token,provider:"caddy-legacy",
      domains:{web:$web,node:$node},active_roles:($roles|sort),
      roles: ({} + (if ($roles|index("web")) then {web:{web_upstream:$upstream}} else {} end) +
        (if ($roles|index("node")) then {node:{node_exposure:"direct",route_manifest:$route,certificate_consumer:$consumer}} else {} end)),
      certificate_targets: ({} + (if ($roles|index("web")) then {web:{managed_dir:($root+"/data"),cert_path:($cert_root+"/web/fullchain.pem"),key_path:($cert_root+"/web/privkey.pem"),renewal_owner:"caddy-legacy"}} else {} end) +
-       (if ($roles|index("node")) then {node:{managed_dir:($root+"/data"),cert_path:($cert_root+"/node/fullchain.pem"),key_path:($cert_root+"/node/privkey.pem"),renewal_owner:"caddy-legacy"}} else {} end))}' >"${temporary}"
+       (if ($roles|index("node")) then {node:{managed_dir:($root+"/data"),cert_path:($cert_root+"/node/fullchain.pem"),key_path:($cert_root+"/node/privkey.pem"),renewal_owner:"caddy-legacy"}} else {} end))} |
+     if ($restore_role | length) > 0 then . + {restore_intent:{roles:[$restore_role],expected_committed_digest:$restore_digest}} else . end' >"${temporary}"
   chmod 0600 "${temporary}"
   mv -f "${temporary}" "${COMBINED_ENTRY_SPEC}"
 }
@@ -3083,6 +3151,9 @@ deploy_node() {
 deploy_combined() {
   validate_combined_entry_preconditions
   combined_owner_prepare
+  # Establish ownership before any data/container mutation so a failed first
+  # deployment remains safely retryable.
+  combined_owner_write_marker
   install_base_tools
   install_docker
   init_web_secrets
@@ -3285,6 +3356,11 @@ main() {
       entry_spec_override="$2"
       shift 2
       ;;
+    --restore-role)
+      [[ $# -ge 2 ]] || { echo_content red "--restore-role requires web or node"; exit 1; }
+      COMBINED_RESTORE_ROLE="$2"
+      shift 2
+      ;;
     --force)
       force_override=1
       shift
@@ -3312,6 +3388,13 @@ main() {
   done
 
   require_one_of mode "${mode}" web node combined
+  if [[ -n "${COMBINED_RESTORE_ROLE}" ]]; then
+    require_one_of restore_role "${COMBINED_RESTORE_ROLE}" web node
+    [[ "${command}" == install && "${mode}" == combined ]] || {
+      echo_content red "--restore-role is only valid with combined install"
+      exit 1
+    }
+  fi
   if [[ -n "${config_file}" && -n "${bundle_file}" ]] || [[ -z "${config_file}" && -z "${bundle_file}" ]]; then
     echo_content red "Exactly one of --config or --bundle is required"
     usage

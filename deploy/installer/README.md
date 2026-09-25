@@ -154,6 +154,15 @@ sudo ./install.sh remove --mode web --config ./web.yaml --keep-data
 
 `--keep-data` 会覆盖配置中的 `purge_data`，适合由外部管理系统执行可恢复卸载。
 
+combined 卸载某个角色后，普通的 `install --mode combined` 重跑不会隐式恢复该角色。
+只有明确指定恢复操作才会重新启用，例如：
+
+```bash
+sudo ./install.sh install --mode combined --config ./combined.yaml --restore-role web
+```
+
+`--restore-role` 只接受当前 journal 中已移除的 `web` 或 `node`，并绑定当时已提交的状态摘要。
+
 删除服务及生成数据：
 
 ```bash

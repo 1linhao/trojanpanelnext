@@ -455,6 +455,10 @@ caddy_adapter_owner_status() {
   marker_token="$(sed -n 's/^owner_token=//p' "$marker" | head -n 1)"
   [[ "$(sed -n 's/^deployment=//p' "$marker" | head -n 1)" == "${deployment}" &&
      -n "$token" && "$marker_token" == "$token" ]] || return 3
+  # The installer creates the ownership marker before the first transaction
+  # so failures are retryable; without a rendered Caddyfile this is still an
+  # empty target, not an already-active adapter.
+  [[ -s "$(caddy_adapter_config "$root")" ]] || { printf 'empty\n'; return 0; }
   printf 'owned\n'
 }
 
@@ -1247,10 +1251,13 @@ entry_v2_adapter_remove() {
     "$docker" rm -f "$container" >/dev/null 2>&1 || return 1
   fi
   caddy_adapter_remove_renewal_trigger "$root" "$spec" || return 1
-  rm -f "$config" "$(caddy_adapter_candidate "$root")" "$marker" || return 1
+  rm -f "$config" "$(caddy_adapter_candidate "$root")" || return 1
+  # Keep the ownership marker and consumer registry for a non-purging remove;
+  # --keep-data is explicitly a recoverable uninstall and must be reinstallable.
+  if [[ "$purge" == 1 ]]; then rm -f "$marker" || return 1; fi
   [[ ! -e "$backup" ]] || rm -rf -- "$backup" || return 1
   if [[ "$purge" == 1 ]]; then rm -rf -- "${root}/data" || return 1; fi
-  rm -f "$(caddy_adapter_consumer_registry "$root")"
+  if [[ "$purge" == 1 ]]; then rm -f "$(caddy_adapter_consumer_registry "$root")"; fi
   if [[ "$purge" == 1 ]]; then
     while IFS= read -r role; do
       [[ -n "$role" ]] || continue

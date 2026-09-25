@@ -21,7 +21,7 @@
     {
       "name": "install",
       "path": "install.sh",
-      "sha256": "7f8aaa1cfc2a8239758fa01bfc423f7770694b9d5ff6e4aa466bcd4d1c316caa"
+      "sha256": "b53e122fdeedb7611246525d1f081520cc691d7bbebb6a15bf3b852cb62f2f54"
     },
     {
       "name": "secure-file",
@@ -76,7 +76,7 @@
     {
       "name": "entry/adapters/caddy",
       "path": "entry/adapters/caddy.sh",
-      "sha256": "89a4e7cac6db98740c6bc859d869887d869bc9ece0266cd3c314b5862334001d"
+      "sha256": "e5d72ccbbcfa3de8fe24bce9905932f2aaa27b9df15dbb704f08a1606410796e"
     }
   ],
   "images": {
