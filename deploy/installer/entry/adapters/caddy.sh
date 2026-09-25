@@ -780,7 +780,7 @@ caddy_adapter_retire_node_consumer() {
 
 caddy_adapter_purge_retired_roles() {
   local old_spec="$1" new_spec="$2" root registry deployment role domain cert key marker consumer
-  local storage_root storage_dir storage_domain temp stage stage_storage root_uid index path
+  local storage_root storage_dir storage_domain storage_entry temp stage stage_storage root_uid index path
   local -a storage_paths=() storage_stage_paths=() artifact_paths=() artifact_stage_paths=()
   [[ "${CADDY_ADAPTER_PURGE_RETIRED_ROLES:-0}" == 1 ]] || return 0
   root="$(caddy_adapter_root "$new_spec")"
@@ -796,6 +796,7 @@ caddy_adapter_purge_retired_roles() {
   fi
   storage_root="${root%/}/data/caddy/certificates"
   if [[ "${CADDY_ADAPTER_FAKE:-0}" != 1 ]]; then
+    command -v fuser >/dev/null 2>&1 || return 1
     caddy_adapter_owner_status "$new_spec" "$root" | grep -qx owned || return 1
   fi
   if [[ -e "$storage_root" ]]; then
@@ -853,7 +854,10 @@ caddy_adapter_purge_retired_roles() {
         [[ "$storage_domain" == "$domain" ]] || continue
         [[ "$(realpath -m -- "$storage_dir")" == "$(realpath -m -- "$storage_root")"/* ]] || return 1
         [[ "$(stat -c %u "$storage_dir")" == "$root_uid" ]] || return 1
-        ! find "$storage_dir" -type l -print -quit | grep -q . || return 1
+        while IFS= read -r storage_entry; do
+          [[ ! -L "$storage_entry" ]] || return 1
+          [[ "$(stat -c %u "$storage_entry")" == "$root_uid" ]] || return 1
+        done < <(find "$storage_dir" -mindepth 1 -print)
         fuser -s "$storage_dir" 2>/dev/null && return 1
         storage_paths+=("$storage_dir")
       done < <(find "$storage_root" -mindepth 2 -maxdepth 2 -type d -print)
@@ -865,9 +869,11 @@ caddy_adapter_purge_retired_roles() {
     mkdir -m 0700 "$stage" || return 1
     mkdir -m 0700 "$stage/artifacts" || return 1
     mkdir -m 0700 "$stage/storage" || return 1
+    : >"$stage/manifest" || return 1
     index=0
     for path in "${artifact_paths[@]}"; do
       artifact_stage_paths+=("$stage/artifacts/$index")
+      printf '%s\t%s\n' "${artifact_stage_paths[$index]}" "$path" >>"$stage/manifest" || return 1
       mv -f -- "$path" "${artifact_stage_paths[$index]}" || {
         for ((index = 0; index < ${#artifact_stage_paths[@]}; index++)); do
           [[ -e "${artifact_stage_paths[$index]}" ]] && mv -f -- "${artifact_stage_paths[$index]}" "${artifact_paths[$index]}" || true
@@ -880,6 +886,7 @@ caddy_adapter_purge_retired_roles() {
     index=0
     for storage_dir in "${storage_paths[@]}"; do
       storage_stage_paths+=("$stage/storage/$index")
+      printf '%s\t%s\n' "${storage_stage_paths[$index]}" "$storage_dir" >>"$stage/manifest" || return 1
       mv -f -- "$storage_dir" "${storage_stage_paths[$index]}" || {
         for ((index = 0; index < ${#artifact_stage_paths[@]}; index++)); do
           [[ -e "${artifact_stage_paths[$index]}" ]] && mv -f -- "${artifact_stage_paths[$index]}" "${artifact_paths[$index]}" || true
@@ -1386,9 +1393,19 @@ entry_v2_adapter_rollback() {
     if [[ "$preserve_owner" != 1 ]]; then rmdir "$root" 2>/dev/null || true; fi
     return 0
   fi
-  local old_spec
+  local old_spec purge_stage staged original
   old_spec="$(mktemp)" || return 1
   jq -c '.committed_target.spec' <<<"$state" >"$old_spec" || { rm -f "$old_spec"; return 1; }
+  purge_stage="${root}/.purge-retired-$(jq -r '.deployment_id' "$old_spec")"
+  if [[ -f "$purge_stage/manifest" ]]; then
+    while IFS=$'\t' read -r staged original; do
+      [[ -n "$staged" && -n "$original" ]] || { rm -f "$old_spec"; return 1; }
+      caddy_adapter_safe_path "$staged" && caddy_adapter_safe_path "$original" || { rm -f "$old_spec"; return 1; }
+      [[ -e "$staged" && ! -L "$staged" && ! -e "$original" && ! -L "$original" ]] || { rm -f "$old_spec"; return 1; }
+      mkdir -p -- "$(dirname "$original")" && mv -f -- "$staged" "$original" || { rm -f "$old_spec"; return 1; }
+    done <"$purge_stage/manifest"
+    rm -rf -- "$purge_stage" || { rm -f "$old_spec"; return 1; }
+  fi
   local old_content
   old_content="$(caddy_adapter_render "$old_spec")" || { rm -f "$old_spec"; return 1; }
   if [[ -d "${root}/.rollback-renewal" ]]; then
