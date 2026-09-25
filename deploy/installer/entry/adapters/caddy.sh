@@ -751,7 +751,6 @@ caddy_adapter_backup_first_install() {
   [[ -e "$registry" ]] && retained_owner=1
   if [[ -f "$(caddy_adapter_marker "$root")" && ! -L "$(caddy_adapter_marker "$root")" ]]; then
     cp -p -- "$(caddy_adapter_marker "$root")" "$backup/root.owner" || return 1
-    retained_owner=1
   fi
   while IFS= read -r role; do
     cert="$(jq -r --arg role "$role" '.certificate_targets[$role].cert_path' "$spec")"
@@ -759,6 +758,7 @@ caddy_adapter_backup_first_install() {
     [[ -e "$cert" || -e "$key" ]] && retained_owner=1
   done < <(jq -r '.active_roles[]' "$spec")
   printf 'data_existed=%s\nretained_owner=%s\n' "$data_existed" "$retained_owner" >"$backup/meta"
+  [[ "$retained_owner" == 1 ]] || { rm -rf -- "$backup"; return 0; }
   CADDY_ADAPTER_ALLOW_EMPTY_OWNED=1 caddy_adapter_backup_certificates "$spec" "$root" || return 1
   caddy_adapter_backup_renewal_trigger "$root" || return 1
 }
