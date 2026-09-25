@@ -15,12 +15,16 @@ if [[ "${1:-}" == --fake-issue ]]; then
         -keyout "$key" -out "$cert" >/dev/null 2>&1
       cat "$cert" >>"${TP_TEST_CA_FILE}"
     fi
+    printf 'deployment=%s;role=%s\n' "$(jq -r '.deployment_id' "$spec")" "$role" >"$(dirname "$cert")/.tpn-$(jq -r '.deployment_id' "$spec")-${role}.owner"
+    chmod 0600 "$(dirname "$cert")/.tpn-$(jq -r '.deployment_id' "$spec")-${role}.owner"
   done
   if jq -e '.active_roles | index("node") != null' "$spec" >/dev/null; then
     consumer="$(jq -r '.roles.node.certificate_consumer' "$spec")"
     mkdir -p "$consumer"
     cp "$(jq -r '.certificate_targets.node.cert_path' "$spec")" "$consumer/fullchain.pem"
     cp "$(jq -r '.certificate_targets.node.key_path' "$spec")" "$consumer/privkey.pem"
+    printf 'deployment=%s\n' "$(jq -r '.deployment_id' "$spec")" >"$consumer/.tpn-$(jq -r '.deployment_id' "$spec")-consumer.owner"
+    chmod 0600 "$consumer/.tpn-$(jq -r '.deployment_id' "$spec")-consumer.owner"
   fi
   exit 0
 fi
@@ -447,7 +451,9 @@ grep -Fq -- 'requires explicit --restore-role' "${work}/implicit-restore.out" ||
 run_installer install --mode combined --restore-role web >"${work}/explicit-restore.out"
 grep -Fq 'panel.example.com' "${data}/custom/web-caddy/Caddyfile" || fail 'explicit Web restoration did not update the shared Entry'
 grep -Fq 'node.example.com' "${data}/custom/web-caddy/Caddyfile" || fail 'explicit Web restoration removed the Node Entry'
-run_installer remove --mode web >"${work}/remove-restored-web.out"
+run_installer remove --mode web --purge-data >"${work}/remove-restored-web.out"
+test ! -e "${data}/trojanpanelnext-entry/cert/web/fullchain.pem" || fail 'purged Web role retained its certificate'
+test -e "${data}/trojanpanelnext-entry/cert/node/fullchain.pem" || fail 'purged Web role removed active Node certificate'
 
 # Node removal still revokes its identity after Web removal through the
 # control-plane CLI in a one-shot container.

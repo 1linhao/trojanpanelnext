@@ -955,6 +955,7 @@ require_public_ip() {
       local compressed=0 count=0 part left right left_count right_count gap
       local -a left_parts=() right_parts=() full_parts=()
       [[ "${value}" == *::* ]] && compressed=1
+      if [[ "${compressed}" == 0 && ( "${value}" == :* || "${value}" == *: ) ]]; then valid=0; fi
       if [[ "${compressed}" == 1 ]]; then
         left="${value%%::*}"
         right="${value#*::}"
@@ -1089,18 +1090,36 @@ check_combined_host_preconditions() {
     echo_content red "ss is required to verify combined port ownership"
     exit 1
   }
-  local expected_listeners=0 count port
-  container_running "${COMBINED_ENTRY_CONTAINER}" && expected_listeners=1
-  for port in 80 443; do
-    count="$(ss -H -ltn 2>/dev/null | awk -v port="${port}" '$4 ~ ("(^|\\]|:)" port "$") {count++} END {print count + 0}')"
-    if [[ "${count}" != "${expected_listeners}" ]]; then
-      if [[ "${expected_listeners}" == 1 ]]; then
-        echo_content red "combined shared Entry has an unexpected listener count on port ${port}"
-      else
-        echo_content red "combined shared Entry cannot own 80/443 because another listener is active"
-      fi
+  local expected_listeners=0 count port owned_pid=0 listeners line pid
+  if container_running "${COMBINED_ENTRY_CONTAINER}"; then
+    expected_listeners=1
+    owned_pid="$(docker inspect -f '{{.State.Pid}}' "${COMBINED_ENTRY_CONTAINER}" 2>/dev/null || true)"
+    [[ "${owned_pid}" =~ ^[1-9][0-9]*$ ]] || {
+      echo_content red "combined shared Entry has no verifiable process owner"
       exit 1
+    }
+  fi
+  for port in 80 443; do
+    listeners="$(ss -Hlnpt "( sport = :${port} )" 2>/dev/null)" || return 1
+    if [[ "${expected_listeners}" == 0 ]]; then
+      if [[ -n "${listeners}" ]]; then
+        echo_content red "combined shared Entry cannot own 80/443 because another listener is active"
+        exit 1
+      fi
+      continue
     fi
+    [[ -n "${listeners}" ]] || { echo_content red "combined shared Entry has no listener on port ${port}"; exit 1; }
+    while IFS= read -r line; do
+      [[ "${line}" == *"pid=${owned_pid},"* ]] || {
+        echo_content red "combined shared Entry has a foreign listener on port ${port}"
+        exit 1
+      }
+      while [[ "${line}" =~ pid=([0-9]+), ]]; do
+        pid="${BASH_REMATCH[1]}"
+        [[ "${pid}" == "${owned_pid}" ]] || { echo_content red "combined shared Entry has a foreign listener on port ${port}"; exit 1; }
+        line="${line#*pid=${pid},}"
+      done
+    done <<<"${listeners}"
   done
 }
 
@@ -1145,6 +1164,10 @@ combined_owner_token_generate() {
 
 combined_owner_prepare() {
   local root="${COMBINED_ENTRY_ROOT}" marker="${COMBINED_OWNER_MARKER}" token
+  [[ "$(realpath -m -- "${root}")" == "${root}" ]] || {
+    echo_content red "Combined Entry root contains a symlink or non-canonical component"
+    return 1
+  }
   if [[ -e "${root}" || -L "${root}" ]]; then
     [[ -d "${root}" && ! -L "${root}" ]] || {
       echo_content red "Combined Entry root is not a safe directory"
@@ -1184,6 +1207,7 @@ combined_owner_prepare() {
 combined_owner_write_marker() {
   local marker="${COMBINED_OWNER_MARKER}" temporary
   [[ "${COMBINED_OWNER_TOKEN}" =~ ^[0-9a-f]{64}$ ]] || return 1
+  [[ "$(realpath -m -- "${COMBINED_ENTRY_ROOT}")" == "${COMBINED_ENTRY_ROOT}" ]] || return 1
   mkdir -p "${COMBINED_ENTRY_ROOT}" || return 1
   temporary="$(mktemp)" || return 1
   printf 'deployment=%s\nowner_token=%s\n' "${COMBINED_ENTRY_DEPLOYMENT_ID}" "${COMBINED_OWNER_TOKEN}" >"${temporary}"
@@ -1369,6 +1393,7 @@ combined_entry_reconcile() {
     CADDY_ADAPTER_CONTAINER="${COMBINED_ENTRY_CONTAINER}" CADDY_ADAPTER_WEB_ROOT="${WEB_PATH}" \
     CADDY_ADAPTER_OWNER_TOKEN="${COMBINED_OWNER_TOKEN}" \
     CADDY_ADAPTER_NODE_CONTAINER="${CORE_CONTAINER}" CADDY_ADAPTER_BOOTSTRAP="${bootstrap}" \
+    CADDY_ADAPTER_PURGE_RETIRED_ROLES="${COMBINED_PURGE_RETIRED_ROLES:-0}" \
     "${ENTRYCTL_PATH}" reconcile --spec "${COMBINED_ENTRY_SPEC}" --state-root "${COMBINED_ENTRY_STATE_ROOT}"
 }
 
@@ -3246,7 +3271,7 @@ remove_combined_role() {
       COMBINED_ENTRY_REVISION="$(jq -r '.desired_revision' "${state}")"
       COMBINED_ENTRY_REVISION=$((COMBINED_ENTRY_REVISION + 1))
       combined_entry_write_spec '["node"]'
-      combined_entry_reconcile 0
+      COMBINED_PURGE_RETIRED_ROLES="${TP_PURGE_DATA}" combined_entry_reconcile 0
     else
       combined_entry_remove "${TP_PURGE_DATA}"
     fi
@@ -3269,7 +3294,7 @@ remove_combined_role() {
       COMBINED_ENTRY_REVISION="$(jq -r '.desired_revision' "${state}")"
       COMBINED_ENTRY_REVISION=$((COMBINED_ENTRY_REVISION + 1))
       combined_entry_write_spec '["web"]'
-      combined_entry_reconcile 0
+      COMBINED_PURGE_RETIRED_ROLES="${TP_PURGE_DATA}" combined_entry_reconcile 0
     fi
     remove_combined_container_if_exists "${CORE_CONTAINER}"
     if [[ "${roles}" == node ]]; then

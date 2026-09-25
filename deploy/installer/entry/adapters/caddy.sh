@@ -192,6 +192,8 @@ caddy_adapter_restore_renewal_trigger() {
 caddy_adapter_commit_renewal_trigger() {
   local root="$1"
   [[ ! -e "${root}/.rollback-renewal" ]] || rm -rf -- "${root}/.rollback-renewal"
+  [[ ! -e "${root}/.rollback-certs" ]] || rm -rf -- "${root}/.rollback-certs"
+  [[ ! -e "${root}/.rollback-first-install" ]] || rm -rf -- "${root}/.rollback-first-install"
 }
 
 caddy_adapter_write_renewal_trigger() {
@@ -658,9 +660,11 @@ caddy_adapter_apply_generations() {
 }
 
 caddy_adapter_backup_certificates() {
-  local spec="$1" root="$2" backup="${root}/.rollback-certs" role cert key consumer
+  local spec="$1" root="$2" backup="${root}/.rollback-certs" role cert key marker consumer
   [[ "${CADDY_ADAPTER_FAKE:-0}" == 1 ]] && return 0
-  caddy_adapter_owner_status "$spec" "$root" | grep -qx owned || return 1
+  local owner_status
+  owner_status="$(caddy_adapter_owner_status "$spec" "$root")" || return 1
+  [[ "${owner_status}" == owned || ( ( "${owner_status}" == empty || "${owner_status}" == absent ) && "${CADDY_ADAPTER_ALLOW_EMPTY_OWNED:-0}" == 1 ) ]] || return 1
   rm -rf -- "$backup" || return 1
   mkdir -m 0700 "$backup" || return 1
   while IFS= read -r role; do
@@ -671,6 +675,8 @@ caddy_adapter_backup_certificates() {
     else
       : >"$backup/.absent-${role}.crt" && : >"$backup/.absent-${role}.key" || return 1
     fi
+    marker="$(dirname "$cert")/.tpn-$(jq -r '.deployment_id' "$spec")-${role}.owner"
+    if [[ -f "$marker" && ! -L "$marker" ]]; then cp -p -- "$marker" "$backup/${role}.owner"; else : >"$backup/.absent-${role}.owner"; fi
   done < <(jq -r '.active_roles[]' "$spec")
   if jq -e '.active_roles | index("node") != null' "$spec" >/dev/null; then
     consumer="$(jq -r '.roles.node.certificate_consumer' "$spec")"
@@ -680,12 +686,14 @@ caddy_adapter_backup_certificates() {
     else
       : >"$backup/.absent-consumer.crt" && : >"$backup/.absent-consumer.key" || return 1
     fi
+    marker="$consumer/.tpn-$(jq -r '.deployment_id' "$spec")-consumer.owner"
+    if [[ -f "$marker" && ! -L "$marker" ]]; then cp -p -- "$marker" "$backup/consumer.owner"; else : >"$backup/.absent-consumer.owner"; fi
   fi
   printf 'deployment=%s\n' "$(jq -r '.deployment_id' "$spec")" >"$backup/owner"
 }
 
 caddy_adapter_restore_certificates() {
-  local spec="$1" root="$2" backup="${root}/.rollback-certs" role cert key consumer docker core envs mount
+  local spec="$1" root="$2" backup="${root}/.rollback-certs" role cert key marker consumer docker core envs mount
   [[ "${CADDY_ADAPTER_FAKE:-0}" == 1 || ! -e "$backup" ]] && return 0
   [[ "$(cat "$backup/owner" 2>/dev/null)" == "deployment=$(jq -r '.deployment_id' "$spec")" ]] || return 1
   while IFS= read -r role; do
@@ -696,6 +704,8 @@ caddy_adapter_restore_certificates() {
     elif [[ -e "$backup/.absent-${role}.crt" && -e "$backup/.absent-${role}.key" ]]; then
       rm -f -- "$cert" "$key" "$(dirname "$cert")/.tpn-$(jq -r '.deployment_id' "$spec")-${role}.owner" || return 1
     fi
+    marker="$(dirname "$cert")/.tpn-$(jq -r '.deployment_id' "$spec")-${role}.owner"
+    if [[ -f "$backup/${role}.owner" ]]; then cp -p -- "$backup/${role}.owner" "$marker"; else rm -f -- "$marker"; fi
   done < <(jq -r '.active_roles[]' "$spec")
   if [[ -f "$backup/consumer.crt" && -f "$backup/consumer.key" ]]; then
     consumer="$(jq -r '.roles.node.certificate_consumer' "$spec")"
@@ -721,7 +731,36 @@ caddy_adapter_restore_certificates() {
       rm -f -- "$consumer/fullchain.pem" "$consumer/privkey.pem" "$consumer/.tpn-$(jq -r '.deployment_id' "$spec")-consumer.owner" || return 1
     fi
   fi
+  consumer="$(jq -r '.roles.node.certificate_consumer // ""' "$spec")"
+  if [[ -n "$consumer" ]]; then
+    marker="$consumer/.tpn-$(jq -r '.deployment_id' "$spec")-consumer.owner"
+    if [[ -f "$backup/consumer.owner" ]]; then cp -p -- "$backup/consumer.owner" "$marker"; else rm -f -- "$marker"; fi
+  fi
   rm -rf -- "$backup"
+}
+
+caddy_adapter_backup_first_install() {
+  local spec="$1" root="$2" backup="${root}/.rollback-first-install" data_existed=0 retained_owner=0 registry role cert key
+  [[ "${CADDY_ADAPTER_FAKE:-0}" == 1 ]] && return 0
+  rm -rf -- "$backup" || return 1
+  mkdir -m 0700 "$backup" || return 1
+  [[ -d "${root}/data" && ! -L "${root}/data" ]] && data_existed=1
+  [[ "$data_existed" == 1 ]] && retained_owner=1
+  registry="$(caddy_adapter_consumer_registry "$root")"
+  [[ ! -e "$registry" || ! -L "$registry" ]] || return 1
+  [[ -e "$registry" ]] && retained_owner=1
+  if [[ -f "$(caddy_adapter_marker "$root")" && ! -L "$(caddy_adapter_marker "$root")" ]]; then
+    cp -p -- "$(caddy_adapter_marker "$root")" "$backup/root.owner" || return 1
+    retained_owner=1
+  fi
+  while IFS= read -r role; do
+    cert="$(jq -r --arg role "$role" '.certificate_targets[$role].cert_path' "$spec")"
+    key="$(jq -r --arg role "$role" '.certificate_targets[$role].key_path' "$spec")"
+    [[ -e "$cert" || -e "$key" ]] && retained_owner=1
+  done < <(jq -r '.active_roles[]' "$spec")
+  printf 'data_existed=%s\nretained_owner=%s\n' "$data_existed" "$retained_owner" >"$backup/meta"
+  CADDY_ADAPTER_ALLOW_EMPTY_OWNED=1 caddy_adapter_backup_certificates "$spec" "$root" || return 1
+  caddy_adapter_backup_renewal_trigger "$root" || return 1
 }
 
 caddy_adapter_retire_node_consumer() {
@@ -736,6 +775,64 @@ caddy_adapter_retire_node_consumer() {
     [[ -f "$marker" && "$(cat "$marker" 2>/dev/null)" == "deployment=$(jq -r '.deployment_id' "$old_spec")" ]] || return 1
     fuser -s "$consumer/fullchain.pem" "$consumer/privkey.pem" && return 1
     rm -f -- "$consumer/fullchain.pem" "$consumer/privkey.pem" "$marker" || return 1
+  fi
+}
+
+caddy_adapter_purge_retired_roles() {
+  local old_spec="$1" new_spec="$2" root registry deployment role domain cert key marker consumer
+  local storage_root storage_dir storage_domain temp
+  [[ "${CADDY_ADAPTER_PURGE_RETIRED_ROLES:-0}" == 1 ]] || return 0
+  root="$(caddy_adapter_root "$new_spec")"
+  deployment="$(jq -r '.deployment_id' "$old_spec")"
+  [[ "$deployment" == "$(jq -r '.deployment_id' "$new_spec")" ]] || return 1
+  registry="$(caddy_adapter_consumer_registry "$root")"
+  [[ ! -e "$registry" || ! -L "$registry" ]] || return 1
+  if [[ -f "$registry" ]]; then caddy_adapter_validate_consumer_registry "$registry" || return 1; fi
+  while IFS= read -r role; do
+    [[ -n "$role" ]] || continue
+    jq -e --arg role "$role" '.active_roles | index($role) == null' "$new_spec" >/dev/null || continue
+    cert="$(jq -r --arg role "$role" '.certificate_targets[$role].cert_path' "$old_spec")"
+    key="$(jq -r --arg role "$role" '.certificate_targets[$role].key_path' "$old_spec")"
+    caddy_adapter_safe_path "$cert" && caddy_adapter_safe_path "$key" || return 1
+    [[ ! -L "$cert" && ! -L "$key" ]] || return 1
+    marker="$(dirname "$cert")/.tpn-${deployment}-${role}.owner"
+    if [[ -e "$cert" || -e "$key" || -e "$marker" ]]; then
+      [[ -f "$marker" && "$(cat "$marker" 2>/dev/null)" == "deployment=${deployment};role=${role}" ]] || return 1
+      fuser -s "$cert" "$key" 2>/dev/null && return 1
+      rm -f -- "$cert" "$key" "$marker" || return 1
+    fi
+    if [[ "$role" == node ]]; then
+      consumer="$(jq -r '.roles.node.certificate_consumer // empty' "$old_spec")"
+      if [[ -n "$consumer" ]]; then
+        caddy_adapter_safe_path "$consumer" || return 1
+        marker="$consumer/.tpn-${deployment}-consumer.owner"
+        if [[ -e "$consumer/fullchain.pem" || -e "$consumer/privkey.pem" || -e "$marker" ]]; then
+          [[ -f "$marker" && "$(cat "$marker" 2>/dev/null)" == "deployment=${deployment}" ]] || return 1
+          fuser -s "$consumer/fullchain.pem" "$consumer/privkey.pem" 2>/dev/null && return 1
+          rm -f -- "$consumer/fullchain.pem" "$consumer/privkey.pem" "$marker" || return 1
+        fi
+      fi
+    fi
+    domain="$(jq -r --arg role "$role" '.domains[$role]' "$old_spec")"
+    storage_root="${root%/}/data/caddy/certificates"
+    if [[ -d "$storage_root" && ! -L "$storage_root" ]]; then
+      while IFS= read -r storage_dir; do
+        [[ -d "$storage_dir" && ! -L "$storage_dir" ]] || return 1
+        storage_domain="${storage_dir##*/}"
+        [[ "$storage_domain" == "$domain" ]] || continue
+        [[ "$(realpath -m -- "$storage_dir")" == "$(realpath -m -- "$storage_root")"/* ]] || return 1
+        rm -rf -- "$storage_dir" || return 1
+      done < <(find "$storage_root" -mindepth 2 -maxdepth 2 -type d -print)
+    fi
+  done < <(jq -r '.active_roles[]' "$old_spec")
+  if [[ -f "$registry" ]]; then
+    temp="$(mktemp)" || return 1
+    jq --arg deployment "$deployment" --argjson roles "$(jq -c '.active_roles' "$new_spec")" '
+      .domains |= map(select(.deployment_id != $deployment or (.role as $role | $roles | index($role) != null))) |
+      .consumers |= map(select(.deployment_id != $deployment or (.role as $role | $roles | index($role) != null)))
+    ' "$registry" >"$temp" || { rm -f "$temp"; return 1; }
+    caddy_adapter_validate_consumer_registry "$temp" || { rm -f "$temp"; return 1; }
+    chmod 0600 "$temp" && mv -f -- "$temp" "$registry" || { rm -f "$temp"; return 1; }
   fi
 }
 
@@ -964,8 +1061,15 @@ entry_v2_adapter_prepare() {
     while IFS= read -r role; do
       cert="$(jq -r --arg role "$role" '.certificate_targets[$role].cert_path' "$spec")"
       key="$(jq -r --arg role "$role" '.certificate_targets[$role].key_path' "$spec")"
-      [[ ! -e "$cert" && ! -e "$key" && ! -L "$cert" && ! -L "$key" ]] || return 1
+      if [[ -e "$cert" || -e "$key" ]]; then
+        marker="$(dirname "$cert")/.tpn-$(jq -r '.deployment_id' "$spec")-${role}.owner"
+        [[ -f "$marker" && ! -L "$marker" &&
+           "$(cat "$marker" 2>/dev/null)" == "deployment=$(jq -r '.deployment_id' "$spec");role=${role}" ]] || return 1
+      fi
+      [[ ! -L "$cert" && ! -L "$key" ]] || return 1
     done < <(jq -r '.active_roles[]' "$spec")
+    mkdir -p "$root" || return 1
+    caddy_adapter_backup_first_install "$spec" "$root" || return 1
   fi
   mkdir -p "$root" "$root/data" || return 1
   chmod 0700 "$root" "$root/data" || return 1
@@ -1071,11 +1175,17 @@ caddy_adapter_validate_remove_ownership() {
 }
 
 entry_v2_adapter_verify() {
-  local spec="$1" state="$2" root
+  local spec="$1" state="$2" root old_spec=""
   root="$(caddy_adapter_root "$spec")"
   [[ -s "$(caddy_adapter_config "$root")" ]] || return 1
   caddy_adapter_check_ports || return 1
   caddy_adapter_verify_runtime "$spec" || return 1
+  if [[ "${CADDY_ADAPTER_PURGE_RETIRED_ROLES:-0}" == 1 && "$(jq -r '.committed_target == null' <<<"$state")" == false ]]; then
+    old_spec="$(mktemp)" || return 1
+    jq -c '.committed_target.spec' <<<"$state" >"$old_spec" || { rm -f "$old_spec"; return 1; }
+    caddy_adapter_purge_retired_roles "$old_spec" "$spec" || { rm -f "$old_spec"; return 1; }
+    rm -f "$old_spec"
+  fi
   local observation
   observation="$(caddy_adapter_observation "$spec" "$root" 1)" || return 1
   rm -f -- "$(caddy_adapter_candidate "$root")" || return 1
@@ -1125,29 +1235,51 @@ entry_v2_adapter_rollback() {
         "$docker" rm -f "$container" >/dev/null 2>&1 || return 1
       fi
     fi
-    local role cert key cert_marker
-    while IFS= read -r role; do
-      cert="$(jq -r --arg role "$role" '.certificate_targets[$role].cert_path' "$spec")"
-      key="$(jq -r --arg role "$role" '.certificate_targets[$role].key_path' "$spec")"
-      cert_marker="$(dirname "$cert")/.tpn-$(jq -r '.deployment_id' "$spec")-${role}.owner"
-      if [[ -e "$cert_marker" ]]; then
-        [[ "$(cat "$cert_marker")" == "deployment=$(jq -r '.deployment_id' "$spec");role=${role}" ]] || return 1
-        rm -f -- "$cert" "$key" "$cert_marker" || return 1
-      fi
-    done < <(jq -r '.active_roles[]' "$spec")
-    if jq -e '.active_roles | index("node") != null' "$spec" >/dev/null; then
-      local consumer consumer_marker
-      consumer="$(jq -r '.roles.node.certificate_consumer' "$spec")"
-      consumer_marker="$consumer/.tpn-$(jq -r '.deployment_id' "$spec")-consumer.owner"
-      if [[ -e "$consumer_marker" ]]; then
-        [[ "$(cat "$consumer_marker")" == "deployment=$(jq -r '.deployment_id' "$spec")" ]] || return 1
-        rm -f -- "$consumer/fullchain.pem" "$consumer/privkey.pem" "$consumer_marker" || return 1
+    local role cert key cert_marker first_backup meta preserve_data preserve_owner
+    first_backup="${root}/.rollback-first-install"
+    meta="${first_backup}/meta"
+    preserve_data=0; preserve_owner=0
+    if [[ -f "$meta" ]]; then
+      preserve_data="$(sed -n 's/^data_existed=//p' "$meta" | head -n 1)"
+      preserve_owner="$(sed -n 's/^retained_owner=//p' "$meta" | head -n 1)"
+      [[ "$preserve_data" == 0 || "$preserve_data" == 1 ]] || return 1
+      [[ "$preserve_owner" == 0 || "$preserve_owner" == 1 ]] || return 1
+    fi
+    caddy_adapter_restore_certificates "$spec" "$root" || return 1
+    if [[ "$preserve_owner" != 1 ]]; then
+      while IFS= read -r role; do
+        cert="$(jq -r --arg role "$role" '.certificate_targets[$role].cert_path' "$spec")"
+        key="$(jq -r --arg role "$role" '.certificate_targets[$role].key_path' "$spec")"
+        cert_marker="$(dirname "$cert")/.tpn-$(jq -r '.deployment_id' "$spec")-${role}.owner"
+        if [[ -e "$cert_marker" ]]; then
+          [[ "$(cat "$cert_marker")" == "deployment=$(jq -r '.deployment_id' "$spec");role=${role}" ]] || return 1
+          rm -f -- "$cert" "$key" "$cert_marker" || return 1
+        fi
+      done < <(jq -r '.active_roles[]' "$spec")
+      if jq -e '.active_roles | index("node") != null' "$spec" >/dev/null; then
+        local consumer consumer_marker
+        consumer="$(jq -r '.roles.node.certificate_consumer' "$spec")"
+        consumer_marker="$consumer/.tpn-$(jq -r '.deployment_id' "$spec")-consumer.owner"
+        if [[ -e "$consumer_marker" ]]; then
+          [[ "$(cat "$consumer_marker")" == "deployment=$(jq -r '.deployment_id' "$spec")" ]] || return 1
+          rm -f -- "$consumer/fullchain.pem" "$consumer/privkey.pem" "$consumer_marker" || return 1
+        fi
       fi
     fi
-    caddy_adapter_remove_renewal_trigger "$root" "$spec" || return 1
-    rm -f "$config" "$(caddy_adapter_marker "$root")" "$(caddy_adapter_consumer_registry "$root")"
-    rm -rf -- "${root}/data" || return 1
-    rmdir "$root" 2>/dev/null || true
+    if [[ -d "${root}/.rollback-renewal" ]]; then
+      caddy_adapter_restore_renewal_trigger "$root" "$spec" || return 1
+    else
+      caddy_adapter_remove_renewal_trigger "$root" "$spec" || return 1
+    fi
+    rm -f "$config" "$candidate"
+    if [[ "$preserve_owner" == 1 ]]; then
+      if [[ -f "${first_backup}/root.owner" ]]; then cp -p -- "${first_backup}/root.owner" "$(caddy_adapter_marker "$root")" || return 1; fi
+    else
+      rm -f "$(caddy_adapter_marker "$root")" "$(caddy_adapter_consumer_registry "$root")"
+    fi
+    if [[ "$preserve_data" != 1 ]]; then rm -rf -- "${root}/data" || return 1; fi
+    rm -rf -- "$first_backup"
+    if [[ "$preserve_owner" != 1 ]]; then rmdir "$root" 2>/dev/null || true; fi
     return 0
   fi
   local old_spec
