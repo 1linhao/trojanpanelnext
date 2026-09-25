@@ -379,7 +379,7 @@ jq -e '.firewall_mutation_by_installer == false and (.rules | any(.name == "web-
   "${data}/trojanpanelnext-network/allowlist.json" >/dev/null || fail 'combined allowlist omitted public HTTPS rule'
 jq -e 'all(.rules[]; .direction == "inbound") and (.egress | any(.name == "dns" and .port == 53))' \
   "${data}/trojanpanelnext-network/allowlist.json" >/dev/null || fail 'combined allowlist omitted traffic direction or egress plan'
-jq -e 'all(.rules[]; (.name == "web-http" or .name == "web-https" or (.sources | index("127.0.0.1/32") != null)))' \
+jq -e 'all(.rules[]; ((.name | startswith("node-protocol-")) or .name == "web-http" or .name == "web-https" or (.sources | index("127.0.0.1/32") != null)))' \
   "${data}/trojanpanelnext-network/allowlist.json" >/dev/null || fail 'combined allowlist exposed an internal service'
 grep -Fq 'does not modify nftables, ufw, or cloud security groups' "${data}/trojanpanelnext-network/allowlist.md" || fail 'allowlist omitted firewall responsibility boundary'
 if grep -Eq '(^| )nft(ables)?|(^| )ufw|iptables' "${trace}"; then

@@ -2141,7 +2141,7 @@ network_plan_write() {
     echo_content red "Network plan directory must not be a symbolic link"
     return 1
   }
-  install -d -m 0700 "${NETWORK_PLAN_DIR}" || return 1
+  installer_owned_dir_prepare "${NETWORK_PLAN_DIR}" "${mode}" || return 1
 
   if [[ "${mode}" == web ]]; then
     peer_sources="$(network_json_sources < <(network_sources_for_web_nodes))"
@@ -2219,6 +2219,68 @@ installer_state_path_for() {
   printf '%s/%s.state\n' "${INSTALLER_STATE_DIR}" "$1"
 }
 
+installer_owned_marker_path() {
+  printf '%s/.installer-owner\n' "$1"
+}
+
+installer_owned_dir_prepare() {
+  local dir="$1" mode="$2" marker temporary
+  [[ "$dir" == "${TP_DATA%/}/"* && "$(realpath -m -- "$dir")" == "$dir" && ! -L "$dir" ]] || {
+    echo_content red "Installer-owned directory is not canonical: ${dir}"
+    return 1
+  }
+  if [[ -e "$dir" && ! -d "$dir" ]]; then
+    echo_content red "Installer-owned path is not a directory: ${dir}"
+    return 1
+  fi
+  if [[ ! -e "$dir" ]]; then
+    install -d -m 0700 "$dir" || return 1
+  else
+    [[ "$(stat -c %u "$dir")" == "$EUID" ]] || return 1
+  fi
+  if [[ "$mode" == combined ]]; then
+    combined_owner_check_data_path "$dir" || return 1
+    return 0
+  fi
+  marker="$(installer_owned_marker_path "$dir")"
+  if [[ -e "$marker" || -L "$marker" ]]; then
+    installer_owned_dir_require "$dir" "$mode"
+    return $?
+  fi
+  if find "$dir" -mindepth 1 -maxdepth 1 -print -quit | grep -q .; then
+    echo_content red "Installer-owned directory has no ownership marker: ${dir}"
+    return 1
+  fi
+  chmod 0700 "$dir" || return 1
+  temporary="$(mktemp "${dir}/.owner.XXXXXX")"
+  chmod 0600 "$temporary"
+  printf 'deployment_mode=%s\nasset_version=%s\ntp_data=%s\n' \
+    "$mode" "${TP_ASSET_VERSION:-development}" "$TP_DATA" >"$temporary"
+  mv -f -- "$temporary" "$marker"
+  chmod 0600 "$marker"
+}
+
+installer_owned_dir_require() {
+  local dir="$1" mode="$2" marker
+  [[ "$dir" == "${TP_DATA%/}/"* && "$(realpath -m -- "$dir")" == "$dir" && ! -L "$dir" ]] || return 1
+  [[ ! -e "$dir" && ! -L "$dir" ]] && return 0
+  marker="$(installer_owned_marker_path "$dir")"
+  [[ -d "$dir" && ! -L "$dir" && -f "$marker" && ! -L "$marker" ]] || {
+    echo_content red "Installer-owned directory is missing a safe marker: ${dir}"
+    return 1
+  }
+  [[ "$(stat -c %u "$dir")" == "${EUID}" && "$(stat -c %a "$dir")" == 700 &&
+    "$(stat -c %u "$marker")" == "${EUID}" && "$(stat -c %a "$marker")" == 600 ]] || {
+    echo_content red "Installer-owned directory has unsafe ownership or permissions: ${dir}"
+    return 1
+  }
+  [[ "$(installer_state_value deployment_mode "$marker")" == "$mode" &&
+    "$(installer_state_value tp_data "$marker")" == "$TP_DATA" ]] || {
+    echo_content red "Installer-owned directory belongs to another deployment: ${dir}"
+    return 1
+  }
+}
+
 installer_state_value() {
   local key="$1" file="$2"
   sed -n "s/^${key}=//p" "${file}" | head -n 1
@@ -2287,7 +2349,7 @@ check_same_version_replay_preconditions() {
   for path_key in web_path pki_bundle_dir managed_cert_dir external_routes_dir kernel_runtime_path node_identity_credential_file; do
     case "${path_key}" in
     web_path) path_expected="${WEB_PATH}" ;;
-    pki_bundle_dir) path_expected="${TP_PKI_BUNDLE_DIR}" ;;
+    pki_bundle_dir) path_expected="$(installer_state_pki_path)" ;;
     managed_cert_dir) path_expected="${MANAGED_CERT_DIR}" ;;
     external_routes_dir) path_expected="${EXTERNAL_ROUTES_DIR}" ;;
     kernel_runtime_path) path_expected="${KERNEL_RUNTIME_PATH}" ;;
@@ -2302,7 +2364,10 @@ check_same_version_replay_preconditions() {
   done
   if [[ "${mode}" == node ]]; then
     for key in node_identity_id node_server_id; do
-      expected="${!key}"
+      case "$key" in
+      node_identity_id) expected="$NODE_IDENTITY_ID" ;;
+      node_server_id) expected="$NODE_SERVER_ID" ;;
+      esac
       actual="$(installer_state_value "${key}" "${state}")"
       [[ "${actual}" == "${expected}" ]] || {
         echo_content red "Same-version Node identity changes require explicit revoke and registration"
@@ -2312,10 +2377,20 @@ check_same_version_replay_preconditions() {
   fi
 }
 
+installer_state_pki_path() {
+  # Bundle extraction uses a fresh temporary directory on every invocation;
+  # the installed trust path, not that temporary input, defines replay identity.
+  if [[ "$TP_NODE_BUNDLE_ACTIVE" == 1 ]]; then
+    dirname -- "$GRPC_CLIENT_CA_PATH"
+  else
+    printf '%s\n' "$TP_PKI_BUNDLE_DIR"
+  fi
+}
+
 write_installer_state() {
   local mode="$1" state temporary
   state="${INSTALLER_STATE_FILE:-$(installer_state_path_for "${mode}")}"
-  install -d -m 0700 "${INSTALLER_STATE_DIR}" || return 1
+  installer_owned_dir_prepare "${INSTALLER_STATE_DIR}" "${mode}" || return 1
   [[ ! -L "${INSTALLER_STATE_DIR}" && ! -L "${state}" ]] || {
     echo_content red "Installer state path must not be a symbolic link"
     return 1
@@ -2326,11 +2401,11 @@ write_installer_state() {
     printf 'schema_version=1\nmode=%s\nasset_version=%s\ntp_data=%s\n' \
       "${mode}" "${TP_ASSET_VERSION:-development}" "${TP_DATA}"
     printf 'web_path=%s\npki_bundle_dir=%s\nmanaged_cert_dir=%s\nexternal_routes_dir=%s\nkernel_runtime_path=%s\nnode_identity_credential_file=%s\n' \
-      "${WEB_PATH}" "${TP_PKI_BUNDLE_DIR}" "${MANAGED_CERT_DIR}" "${EXTERNAL_ROUTES_DIR}" \
+      "${WEB_PATH}" "$(installer_state_pki_path)" "${MANAGED_CERT_DIR}" "${EXTERNAL_ROUTES_DIR}" \
       "${KERNEL_RUNTIME_PATH}" "${NODE_IDENTITY_CREDENTIAL_FILE}"
     case "${mode}" in
     web) printf 'domain=%s\n' "${TP_WEB_DOMAIN}" ;;
-    node) printf 'domain=%s\nnode_identity_id=%s\nnode_server_id=%s\n' "${TP_NODE_DOMAIN}" "${NODE_IDENTITY_ID}" "${NODE_SERVER_ID}" ;;
+    node) printf 'domain=%s\nnode_identity_id=%s\nnode_server_id=%s\nnode_identity_generation=%s\n' "${TP_NODE_DOMAIN}" "${NODE_IDENTITY_ID}" "${NODE_SERVER_ID}" "${NODE_IDENTITY_GENERATION}" ;;
     combined) printf 'web_domain=%s\nnode_domain=%s\nnode_identity_id=%s\n' "${TP_WEB_DOMAIN}" "${TP_NODE_DOMAIN}" "${NODE_IDENTITY_ID}" ;;
     esac
   } >"${temporary}"
@@ -3484,6 +3559,10 @@ deploy_combined() {
 }
 
 remove_web() {
+  if [[ "${TP_PURGE_DATA}" == 1 ]]; then
+    installer_owned_dir_require "${NETWORK_PLAN_DIR}" web || return 1
+    installer_owned_dir_require "${INSTALLER_STATE_DIR}" web || return 1
+  fi
   local containers=("${UI_CONTAINER}" "${PANEL_CONTAINER}" "${REDIS_CONTAINER}" "${MARIADB_CONTAINER}")
   if [[ "${TLS_MODE}" != "external" ]]; then
     containers=("${WEB_CADDY_CONTAINER}" "${containers[@]}")
@@ -3496,6 +3575,10 @@ remove_web() {
 }
 
 remove_node() {
+  if [[ "${TP_PURGE_DATA}" == 1 ]]; then
+    installer_owned_dir_require "${NETWORK_PLAN_DIR}" node || return 1
+    installer_owned_dir_require "${INSTALLER_STATE_DIR}" node || return 1
+  fi
   local containers=("${CORE_CONTAINER}")
   if [[ "${TLS_MODE}" != "external" ]]; then
     containers+=("${NODE_CADDY_CONTAINER}")
@@ -3578,7 +3661,9 @@ remove_combined_role() {
     if [[ "${TP_PURGE_DATA}" == 1 ]]; then
       rm -rf "${TP_DATA}/trojan-panel-core"
       rm -f "${NODE_IDENTITY_CREDENTIAL_FILE}"
-      rm -rf "${NETWORK_PLAN_DIR}" "${INSTALLER_STATE_DIR}"
+      if [[ "${roles}" == node ]]; then
+        rm -rf "${NETWORK_PLAN_DIR}" "${INSTALLER_STATE_DIR}"
+      fi
     fi
     ;;
   combined)
@@ -3772,10 +3857,6 @@ main() {
     check_combined_host_preconditions
   fi
 
-  if [[ "${command}" == install ]]; then
-    network_plan_write "${mode}"
-  fi
-
   if [[ "${command}:${mode}" == install:node || "${command}:${mode}" == install:combined ]]; then
     initialize_node_bootstrap_challenge
   fi
@@ -3842,14 +3923,17 @@ main() {
   fi
   if [[ "${command}:${mode}" == install:web ]]; then
     verify_web_health
+    network_plan_write "${mode}"
     write_installer_state "${mode}"
     print_web_success
   elif [[ "${command}:${mode}" == install:node ]]; then
     verify_node_health
+    network_plan_write "${mode}"
     write_installer_state "${mode}"
     print_node_success
   elif [[ "${command}:${mode}" == install:combined ]]; then
     verify_combined_health
+    network_plan_write "${mode}"
     write_installer_state "${mode}"
     print_combined_success
   fi

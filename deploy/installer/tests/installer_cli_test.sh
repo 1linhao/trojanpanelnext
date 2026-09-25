@@ -408,7 +408,9 @@ bash -c '
   TP_DATA="$2"
   NETWORK_PLAN_DIR="${TP_DATA}/trojanpanelnext-network"
   INSTALLER_STATE_DIR="${TP_DATA}/trojanpanelnext-installer"
-  mkdir -p "${NETWORK_PLAN_DIR}" "${INSTALLER_STATE_DIR}"
+  TP_ASSET_VERSION=development
+  installer_owned_dir_prepare "${NETWORK_PLAN_DIR}" web
+  installer_owned_dir_prepare "${INSTALLER_STATE_DIR}" web
   : >"${NETWORK_PLAN_DIR}/allowlist.json"
   : >"${INSTALLER_STATE_DIR}/web.state"
   docker() { :; }
@@ -438,6 +440,7 @@ bash -c '
   printf "{\\\"public_ip\\\":\\\"203.0.113.42\\\"}\\n" >"${TP_DATA}/trojan-panel/config/node-identities/node.json"
   network_plan_write web
   jq -e '\'' .rules[] | select(.name == "mariadb") | .sources == ["203.0.113.42"] '\'' "${NETWORK_PLAN_DIR}/allowlist.json" >/dev/null
+  NETWORK_PLAN_DIR="${TP_DATA}/network-node"
   CONTROL_PLANE_PUBLIC_IP=198.51.100.7
   MARIADB_HOST=panel.example.com
   network_plan_write node
@@ -463,6 +466,57 @@ bash -c '
     exit 1
   fi
 ' installer-test "${INSTALLER}" "${external_data_dir}/same-version"
+
+# Node replay preserves identity; rotation of that identity remains supported
+# by ADR-0003 and uses the normal live credential and health checks.
+bash -c '
+  set -Eeuo pipefail
+  source "$1"
+  TP_DATA="$2"
+  INSTALLER_STATE_DIR="${TP_DATA}/node-state"
+  TP_ASSET_VERSION=development
+  TP_NODE_DOMAIN=node.example.com
+  NODE_IDENTITY_ID=11111111-2222-4333-8444-555555555555
+  NODE_SERVER_ID=42
+  NODE_IDENTITY_GENERATION=1
+  TP_NODE_BUNDLE_ACTIVE=1
+  TP_PKI_BUNDLE_DIR=/dev/shm/bundle-first/pki
+  write_installer_state node
+  check_same_version_replay_preconditions node
+  TP_PKI_BUNDLE_DIR=/dev/shm/bundle-replay/pki
+  check_same_version_replay_preconditions node
+  NODE_IDENTITY_GENERATION=2
+  check_same_version_replay_preconditions node
+  NODE_SERVER_ID=43
+  if check_same_version_replay_preconditions node; then
+    exit 1
+  fi
+  NODE_SERVER_ID=42
+  NODE_IDENTITY_ID=22222222-2222-4333-8444-555555555555
+  if check_same_version_replay_preconditions node; then
+    exit 1
+  fi
+' installer-test "${INSTALLER}" "${external_data_dir}/node-generation"
+
+# Reject unowned and symlinked metadata before removing any container or data.
+bash -c '
+  set -Eeuo pipefail
+  source "$1"
+  TP_DATA="$2"
+  NETWORK_PLAN_DIR="${TP_DATA}/network"
+  INSTALLER_STATE_DIR="${TP_DATA}/state"
+  mkdir -p "$NETWORK_PLAN_DIR" "$INSTALLER_STATE_DIR"
+  printf keep >"${NETWORK_PLAN_DIR}/foreign"
+  TP_PURGE_DATA=1
+  docker() { touch "${TP_DATA}/docker-called"; }
+  if remove_web; then exit 1; fi
+  test ! -e "${TP_DATA}/docker-called"
+  test -f "${NETWORK_PLAN_DIR}/foreign"
+  NETWORK_PLAN_DIR="${TP_DATA}/link"
+  ln -s "${TP_DATA}/network" "$NETWORK_PLAN_DIR"
+  if remove_node; then exit 1; fi
+  test ! -e "${TP_DATA}/docker-called"
+' installer-test "${INSTALLER}" "${external_data_dir}/unowned-purge"
 
 # Mode/bind migrations recreate only affected containers. An old container
 # without the marker is the legacy default (acme / 0.0.0.0).
