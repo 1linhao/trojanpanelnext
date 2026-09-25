@@ -485,8 +485,14 @@ entry_v2_reconcile_locked() {
         return 12
       fi
       if [[ "$(jq -c '.certificates' <<<"$old")" == "$(jq -c '.certificates' <<<"$result")" ]]; then
+        if declare -F entry_v2_adapter_commit >/dev/null && ! entry_v2_adapter_commit "$spec" "$result"; then
+          entry_v2_infrastructure_error "$root" 'Unable to finalize combined Adapter transaction'; return 12;
+        fi
         jq -c '. + {result:"unchanged"}' <<<"$result"
       else
+        if declare -F entry_v2_adapter_commit >/dev/null && ! entry_v2_adapter_commit "$spec" "$result"; then
+          entry_v2_infrastructure_error "$root" 'Unable to finalize combined Adapter transaction'; return 12;
+        fi
         jq -c '. + {result:"renewed"}' <<<"$result"
       fi
       return 0
@@ -631,6 +637,9 @@ entry_v2_reconcile_locked() {
       entry_v2_infrastructure_error "$root" 'Unable to enable renewal trigger'
       return 12
     fi
+  fi
+  if declare -F entry_v2_adapter_commit >/dev/null && ! entry_v2_adapter_commit "$spec" "$result"; then
+    entry_v2_infrastructure_error "$root" 'Unable to finalize combined Adapter transaction'; return 12;
   fi
   printf '%s\n' "$result"
 }

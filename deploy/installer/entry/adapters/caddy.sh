@@ -940,7 +940,7 @@ caddy_adapter_purge_retired_roles() {
     }
   fi
   if [[ "${CADDY_ADAPTER_FAKE:-0}" != 1 ]]; then
-    rm -rf -- "$stage" || return 1
+    [[ -d "$stage" && ! -L "$stage" ]] || return 1
   else
     for path in "${artifact_paths[@]}"; do rm -f -- "$path" || return 1; done
     for path in "${storage_paths[@]}"; do rm -rf -- "$path" || return 1; done
@@ -1302,8 +1302,15 @@ entry_v2_adapter_verify() {
     caddy_adapter_purge_retired_roles "$old_spec" "$spec" || { rm -f "$old_spec"; return 1; }
     rm -f "$old_spec"
   fi
-  caddy_adapter_commit_renewal_trigger "$root" || return 1
   printf '%s\n' "$result"
+}
+
+entry_v2_adapter_commit() {
+  local spec="$1" root deployment
+  root="$(caddy_adapter_root "$spec")"
+  deployment="$(jq -r '.deployment_id' "$spec")"
+  caddy_adapter_commit_renewal_trigger "$root" || return 1
+  [[ ! -e "${root}/.purge-retired-${deployment}" ]] || rm -rf -- "${root}/.purge-retired-${deployment}"
 }
 
 entry_v2_adapter_refresh() {
