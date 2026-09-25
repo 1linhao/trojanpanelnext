@@ -3,6 +3,7 @@ set -Eeuo pipefail
 
 INSTALLER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 GENERATOR="${INSTALLER_DIR}/release/generate-assets.sh"
+EXAMPLE_GENERATOR="${INSTALLER_DIR}/release/generate-example-manifest.sh"
 VERIFY="${INSTALLER_DIR}/release/verify-assets.sh"
 PACKAGE="${INSTALLER_DIR}/release/package-assets.sh"
 ATTESTATION_VERIFY="${INSTALLER_DIR}/release/verify-attestation-results.sh"
@@ -62,15 +63,6 @@ export -f yq
 
 digest() {
   printf 'sha256:%064d' "$1"
-}
-
-repeated_digest() {
-  local digit="$1"
-  local _
-  printf 'sha256:'
-  for _ in {1..64}; do
-    printf '%s' "${digit}"
-  done
 }
 
 generate() {
@@ -217,6 +209,12 @@ for config in "${bundle}"/config-*.yaml; do
 done
 jq -e '.release_version == "1.2.3" and (.assets | length == 15)' \
   "${bundle}/release-manifest.json" >/dev/null
+installer_sha="$(sha256sum "${bundle}/install.sh" | awk '{print $1}')"
+source_sha="$(sha256sum "${INSTALLER_DIR}/install.sh" | awk '{print $1}')"
+manifest_installer_sha="$(jq -r '.assets[] | select(.path == "install.sh") | .sha256' \
+  "${bundle}/release-manifest.json")"
+[[ "${installer_sha}" == "${manifest_installer_sha}" && "${installer_sha}" != "${source_sha}" ]] ||
+  fail 'manifest must hash the versioned installer asset, not its source'
 EXPECTED_RELEASE_ASSET_PATHS=(
   bootstrap.sh
   release-contract.sh
@@ -239,26 +237,8 @@ cmp -s \
   <(printf '%s\n' "${EXPECTED_RELEASE_ASSET_PATHS[@]}" | sort) \
   <(printf '%s\n' "${manifest_asset_paths[@]}" | sort) ||
   fail 'release manifest asset set differs from the independently expected contract'
-example_bundle="${work}/example-bundle"
-"${GENERATOR}" \
-  --version 0.1.0 \
-  --source-commit 671f5db70816572eec99f7eeae277f97bc1fec1b \
-  --output "${example_bundle}" \
-  --api-image "ghcr.io/1linhao/trojanpanelnext-api@$(repeated_digest 1)" \
-  --web-image "ghcr.io/1linhao/trojanpanelnext-web@$(repeated_digest 2)" \
-  --node-agent-image "ghcr.io/1linhao/trojanpanelnext-node-agent@$(repeated_digest 3)" \
-  --caddy-image "caddy@$(repeated_digest 4)" \
-  --mariadb-image "mariadb@$(repeated_digest 5)" \
-  --redis-image "redis@$(repeated_digest 6)" >/dev/null
 normalized_example_manifest="${work}/normalized-example-release-manifest.json"
-awk '
-  /"name": "(secure-file|node-bundle)"/ { generated_binary = 1 }
-  generated_binary && /"sha256":/ {
-    sub(/"sha256": "[^"]+"/, "\"sha256\": \"0000000000000000000000000000000000000000000000000000000000000000\"")
-    generated_binary = 0
-  }
-  { print }
-' "${example_bundle}/release-manifest.json" >"${normalized_example_manifest}"
+"${EXAMPLE_GENERATOR}" --output "${normalized_example_manifest}"
 cmp -s "${normalized_example_manifest}" \
   "${INSTALLER_DIR}/release/example-release-manifest.json" ||
   fail 'example release manifest is stale'
@@ -277,7 +257,7 @@ assert_fails env TP_INSTALLER_ASSET_VERSION=development bash -c '
 
 sentinel_installer="${work}/sentinel-installer.sh"
 sentinel_trace="${work}/installer-ran"
-printf '#!/usr/bin/env bash\nprintf ran >"${TP_SENTINEL_TRACE}"\n' >"${sentinel_installer}"
+printf '#!/usr/bin/env bash\nINSTALLER_ASSET_VERSION="development"\nprintf ran >"${TP_SENTINEL_TRACE}"\n' >"${sentinel_installer}"
 chmod 0755 "${sentinel_installer}"
 sentinel_bundle="${work}/sentinel-bundle"
 generate "${sentinel_bundle}" --installer-source "${sentinel_installer}"
@@ -361,6 +341,13 @@ generate "${work}/prerelease" --version 1.2.3-rc.1+build.2 >/dev/null
 mkdir "${work}/nonempty-output"
 printf stale >"${work}/nonempty-output/stale"
 assert_fails generate "${work}/nonempty-output"
+printf '#!/usr/bin/env bash\nprintf "no version marker\\n"\n' >"${work}/missing-version-marker.sh"
+assert_failure_contains 'exactly one development asset version marker' generate \
+  "${work}/missing-version-marker" --installer-source "${work}/missing-version-marker.sh"
+printf 'INSTALLER_ASSET_VERSION="development"\nINSTALLER_ASSET_VERSION="development"\n' \
+  >"${work}/duplicate-version-marker.sh"
+assert_failure_contains 'exactly one development asset version marker' generate \
+  "${work}/duplicate-version-marker" --installer-source "${work}/duplicate-version-marker.sh"
 
 copy_case() {
   local name="$1"

@@ -121,6 +121,13 @@ jobs:
           done < <(find deploy/installer -type f -name '*.sh' -print0)
           test "$count" -gt 0
           printf 'validated %d shell scripts\n' "$count"
+      - name: Regenerate example release manifest and reject drift
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          bash deploy/installer/release/generate-example-manifest.sh \
+            --output deploy/installer/release/example-release-manifest.json
+          git diff --exit-code -- deploy/installer/release/example-release-manifest.json
       - name: Test installer CLI contract
         run: |
           bash deploy/installer/tests/installer_cli_test.sh
@@ -129,12 +136,15 @@ jobs:
           bash deploy/installer/tests/entry_controller_test.sh
           bash deploy/installer/tests/entry_combined_v2_test.sh
           bash deploy/installer/tests/entry_caddy_adapter_test.sh
+          bash deploy/installer/tests/combined_install_test.sh
           bash deploy/installer/tests/dependency_preflight_test.sh
           bash deploy/installer/tests/secure_file_test.sh
           bash deploy/installer/tests/web_bare_install_test.sh
           bash deploy/installer/tests/release_assets_test.sh
           bash deploy/installer/tests/jq_free_release_verification_test.sh
           bash deploy/installer/tests/release_web_docker_smoke_cleanup_test.sh
+      - name: Test combined shared Entry with Docker
+        run: bash deploy/installer/tests/combined_docker_smoke_test.sh
 
   docs:
     name: documentation site

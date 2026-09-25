@@ -92,7 +92,8 @@ mv "$tmp/webroot/index.html" "$tmp/webroot/held-index.html"
 if entry_v2_reconcile "$tmp/spec" "$ENTRY_STATE_ROOT" >"$tmp/first-verify-failure"; then
   echo 'Missing node route was accepted' >&2; exit 1
 fi
-[[ "$(jq -r '.code' "$tmp/first-verify-failure")" == verification_failed ]]
+first_verify_code="$(jq -r '.code' "$tmp/first-verify-failure")"
+[[ "$first_verify_code" == verification_failed ]] || { cat "$tmp/first-verify-failure" >&2; exit 1; }
 [[ ! -e "$CADDY_ADAPTER_ROOT/data" && ! -e "$tmp/cert/web/fullchain.pem" ]]
 [[ "$(docker inspect -f '{{.Id}}' "$container" 2>/dev/null || true)" == '' ]]
 mv "$tmp/webroot/held-index.html" "$tmp/webroot/index.html"
