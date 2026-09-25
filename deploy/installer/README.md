@@ -28,8 +28,8 @@
 删除上一次安装残留的 `*-caddy` 容器、写出本机契约摘要到
 `/tpdata/trojanpanelnext-external/README.md`。
 
-示例配置：[external-web.yaml](examples/external-web.yaml)、
-[external-node.yaml](examples/external-node.yaml)。外部入口需要实现的完整功能清单见
+Release 归档中的配置模板为 `config-web.yaml`、`config-node.yaml` 和
+`config-combined.yaml`；外部入口流程请复制归档内对应模板后再编辑。外部入口需要实现的完整功能清单见
 [外部入口实现契约](../../docs/外部入口实现契约.md)，简版见 [EXTERNAL.md](EXTERNAL.md)。
 
 Node 的 Xray、NaiveProxy 和 Hysteria2 默认直接监听协议端口并自行终止 TLS，不经过统一 L4
@@ -50,9 +50,24 @@ nginx `stream` 动态配置源。只有标记 `external_fallback_listener_requir
 
 安装器会检查配置、依赖和部署健康状态，但不配置 DNS、云安全组或宿主防火墙。操作者须先确认域名解析、端口放行和目标主机；默认 ACME 入口需要可从公网访问的 80/443。安装、卸载及证书变更都直接修改目标主机，生产操作须由操作者审核并执行。
 
+安装成功后，当前拓扑的网络放行清单会写入 `/tpdata/trojanpanelnext-network/allowlist.json`
+和 `allowlist.md`。先审阅清单，再由主机或云安全组操作者实施规则；安装器不会自动修改防火墙：
+
+```bash
+sudo sed -n '1,240p' /tpdata/trojanpanelnext-network/allowlist.md
+sudo jq . /tpdata/trojanpanelnext-network/allowlist.json
+sudo test ! -e /tpdata/trojan-panel-core/external/routes.json || \
+  sudo jq '.routes[] | {network,port,external_fallback_listener_required}' \
+    /tpdata/trojan-panel-core/external/routes.json
+```
+
+`ingress` 是主机入站规则，`egress` 是安装所需的 DNS/HTTPS 出站范围；MariaDB、Redis、面板
+API/UI、Core API 和 gRPC 不得对 `0.0.0.0/0` 开放。Node 协议端口是内核直连，仅按
+`routes.json` 中实际声明的端口放行。来源为空或解析异常时，先补齐配置并重新执行 `validate`。
+
 ## 版本化 Release 与候选版本
 
-生产部署应使用同一个版本的 Release 归档、`release-manifest.json`、`SHA256SUMS` 和 `bootstrap.sh`。归档提供 `config-web.yaml`、`config-node.yaml` 和 `config-combined.yaml`；三种部署模式都从对应模板复制配置副本。不要用 `latest` 镜像或从 Git 分支取未固定版本的安装脚本替代 Release。仓库当前的候选版本标签为 `v0.1.0-rc.1`；标签中的版本号为 `0.1.0-rc.1`，此版本生成的镜像和配置会固定到该版本及其摘要，RC 不会更新 Docker `latest`。
+生产部署应使用同一个版本的 Release 归档、`release-manifest.json`、`SHA256SUMS` 和 `bootstrap.sh`。归档提供 `config-web.yaml`、`config-node.yaml` 和 `config-combined.yaml`；三种部署模式都从对应模板复制配置副本。不要用 `latest` 镜像或从 Git 分支取未固定版本的安装脚本替代 Release。计划中的候选版本标签为 `v0.1.0-rc.1`；在标签和 Release 实际创建并验证前，不应把它当作已发布版本。标签中的版本号为 `0.1.0-rc.1`，此版本生成的镜像和配置会固定到该版本及其摘要，RC 不会更新 Docker `latest`。
 
 推送版本标签会触发 `.github/workflows/publish-images.yml` 并自动创建 GitHub Release。只有获准的发布维护者才应在审核过的提交上创建并推送候选标签：
 
@@ -120,10 +135,10 @@ sudo ./bootstrap.sh install --mode web --config ./web-site.yaml
 
 ## Web 主控安装
 
-复制配置模板：
+从已验证的 Release 归档目录复制配置模板：
 
 ```bash
-cp examples/web.yaml ./web.yaml
+cp ./config-web.yaml ./web.yaml
 chmod 600 ./web.yaml
 ```
 
@@ -224,6 +239,15 @@ sudo ./install.sh remove --mode web --config ./web.yaml --keep-data
 
 `--keep-data` 会覆盖配置中的 `purge_data`，适合由外部管理系统执行可恢复卸载。
 
+combined 卸载后，使用原 combined 配置重跑不会自动恢复已移除的角色；必须明确指定恢复角色，
+并先确认该角色的域名、端口和数据仍属于本次部署：
+
+```bash
+sudo ./install.sh install --mode combined --config ./combined-site.yaml --restore-role web
+```
+
+`--restore-role` 只接受当前处于 inactive 状态的 `web` 或 `node`，普通重跑和证书刷新不会隐式恢复角色。
+
 删除服务及生成数据：
 
 ```bash
@@ -251,16 +275,15 @@ MariaDB/Redis 等共享资源不会被单角色卸载误删；Node 移除会先�
 
 ## 配置文件
 
-[Web 主控模板](examples/web.yaml)包含域名、镜像、服务端口、mTLS 身份目录以及主控内部凭据。
+Release 的 `config-web.yaml` 包含域名、镜像、服务端口、mTLS 身份目录以及主控内部凭据。
 
-[Node Agent 模板](examples/node-agent.yaml)包含节点域名、主控数据库连接、Redis 连接、gRPC、公开 CA 目录与证书路径。
+Release 的 `config-node.yaml` 包含节点域名、主控数据库连接、Redis 连接、gRPC、公开 CA 目录与证书路径。
 
-[combined 模板](examples/combined.yaml)包含 Web 与 Node 双域名、本机 Node 公网 IP、独立 Node 身份
+Release 的 `config-combined.yaml` 包含 Web 与 Node 双域名、本机 Node 公网 IP、独立 Node 身份
 凭据路径及共享入口端口。`node_identity_credential_file` 必须位于
 `/tpdata/trojan-panel/config/node-identities/` 下并保持 root-only。
 
-外部 TLS 模式使用 [external-web.yaml](examples/external-web.yaml) 与
-[external-node.yaml](examples/external-node.yaml)，它们在模板基础上增加以下键：
+外部 TLS 模式仍使用 `config-web.yaml` 或 `config-node.yaml`，并在复制出的工作文件中设置以下键：
 
 | 键 | 默认值 | 说明 |
 | --- | --- | --- |

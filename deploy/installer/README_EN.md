@@ -29,8 +29,8 @@ With `tls_mode: external` the installer still copies the certificates from `tls_
 installation, and writes a host-specific contract summary to
 `/tpdata/trojanpanelnext-external/README.md`.
 
-Templates: [external-web.yaml](examples/external-web.yaml) and
-[external-node.yaml](examples/external-node.yaml). The full list of behaviour the external entry
+The Release archive contains `config-web.yaml`, `config-node.yaml`, and `config-combined.yaml`; copy
+the matching template into a working file before editing. The full list of behaviour the external entry
 point has to implement is in [the external contract](../../docs/外部入口实现契约.md), with a short
 form in [EXTERNAL.md](EXTERNAL.md).
 
@@ -52,9 +52,26 @@ fallback rendering. It is not an nginx `stream` configuration source. Only route
 
 The installer checks configuration, dependencies, and deployment health, but it does not configure DNS, cloud security groups, or the host firewall. The operator must confirm DNS, open ports, and the target host first; the default ACME entry needs public access to ports 80 and 443. Install, removal, and certificate changes modify the target host directly and require operator review before execution in production.
 
+After a successful install, the current topology's network allowlist is written to
+`/tpdata/trojanpanelnext-network/allowlist.json` and `allowlist.md`. Review it first, then have the
+host or cloud-security operator apply the rules; the installer never changes the firewall:
+
+```bash
+sudo sed -n '1,240p' /tpdata/trojanpanelnext-network/allowlist.md
+sudo jq . /tpdata/trojanpanelnext-network/allowlist.json
+sudo test ! -e /tpdata/trojan-panel-core/external/routes.json || \
+  sudo jq '.routes[] | {network,port,external_fallback_listener_required}' \
+    /tpdata/trojan-panel-core/external/routes.json
+```
+
+`ingress` entries are host inbound rules and `egress` lists DNS/HTTPS required for installation;
+never expose MariaDB, Redis, panel API/UI, Core API, or gRPC to `0.0.0.0/0`. Node protocol ports
+are direct kernel listeners: open only ports declared by `routes.json`. Fill missing or invalid
+sources and rerun `validate` before applying any rule.
+
 ## Versioned Releases and the candidate
 
-Production deployments should use one matching Release archive, `release-manifest.json`, `SHA256SUMS`, and `bootstrap.sh`. The archive provides `config-web.yaml`, `config-node.yaml`, and `config-combined.yaml`; copy the matching template for each deployment mode. Do not substitute `latest` images or an unfixed script from a Git branch. The current candidate tag is `v0.1.0-rc.1`; its asset version is `0.1.0-rc.1`, and its images and configuration are pinned to that version and their digests. An RC does not update Docker `latest`.
+Production deployments should use one matching Release archive, `release-manifest.json`, `SHA256SUMS`, and `bootstrap.sh`. The archive provides `config-web.yaml`, `config-node.yaml`, and `config-combined.yaml`; copy the matching template for each deployment mode. Do not substitute `latest` images or an unfixed script from a Git branch. The planned candidate tag is `v0.1.0-rc.1`; do not treat it as published until the tag and Release have actually been created and verified. Its asset version is `0.1.0-rc.1`, and its images and configuration are pinned to that version and their digests. An RC does not update Docker `latest`.
 
 Pushing a version tag runs `.github/workflows/publish-images.yml` and creates the GitHub Release. Only an authorised release maintainer should create and push a candidate tag from an approved commit:
 
@@ -123,7 +140,7 @@ Use a candidate only for isolated-environment acceptance. Complete acceptance, l
 ## Install the Web control plane
 
 ```bash
-cp examples/web.yaml ./web.yaml
+cp ./config-web.yaml ./web.yaml
 chmod 600 ./web.yaml
 ```
 
@@ -230,6 +247,17 @@ sudo ./install.sh remove --mode node --config ./node-agent.yaml --purge-data
 `--keep-data` overrides `purge_data` in the config for a recoverable removal;
 `--purge-data` explicitly deletes generated data.
 
+After removing one role from a combined deployment, replaying the original combined configuration does
+not restore that role implicitly. Confirm that its domain, ports, and retained data still belong to this
+deployment, then request the role explicitly:
+
+```bash
+sudo ./install.sh install --mode combined --config ./combined-site.yaml --restore-role web
+```
+
+`--restore-role` accepts only the currently inactive `web` or `node` role. A normal replay or certificate
+refresh never restores a removed role implicitly.
+
 Combined mode requires two different domains that both resolve to the host's public IP. One shared
 Entry owns ports 80/443, while Node kernel protocol listeners remain direct. The local Node uses its
 own MariaDB and Redis identities issued by the Web control plane. Copy the Release archive's
@@ -253,16 +281,15 @@ Combined installation rejects an existing standalone Node Entry and verifies Web
 
 ## Configuration files
 
-[Web control-plane template](examples/web.yaml) contains the hostname, images, ports, mTLS identity directory, and internal credentials.
+The Release `config-web.yaml` contains the hostname, images, ports, mTLS identity directory, and internal credentials.
 
-[Node Agent template](examples/node-agent.yaml) contains the node hostname, control-plane database and Redis connections, gRPC settings, public CA directory, and certificate paths.
+The Release `config-node.yaml` contains the node hostname, control-plane database and Redis connections, gRPC settings, public CA directory, and certificate paths.
 
-[Combined template](examples/combined.yaml) contains both domains, the local Node public IP, its
+The Release `config-combined.yaml` contains both domains, the local Node public IP, its
 dedicated identity credential path, and shared Entry ports. `node_identity_credential_file` must remain
 under `/tpdata/trojan-panel/config/node-identities/` and root-only.
 
-External TLS mode uses [external-web.yaml](examples/external-web.yaml) and
-[external-node.yaml](examples/external-node.yaml), which add these keys:
+For external TLS, use a copied `config-web.yaml` or `config-node.yaml` and set these keys:
 
 | Key | Default | Meaning |
 | --- | --- | --- |
@@ -312,6 +339,7 @@ example. The Release tar.gz preserves executable modes and is accompanied by the
 SHA256SUMS. As in the candidate procedure above, verify the three Release-file attestations before extracting and checking the bundled digests. Download RC and stable versions by their explicit tag; do not select a candidate through `latest`:
 
 ```bash
+archive=trojanpanelnext-installer-<version>.tar.gz
 mkdir trojanpanelnext-installer
 tar -xzf "${archive}" -C trojanpanelnext-installer
 cd trojanpanelnext-installer
