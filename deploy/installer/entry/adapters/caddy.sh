@@ -780,17 +780,34 @@ caddy_adapter_retire_node_consumer() {
 
 caddy_adapter_purge_retired_roles() {
   local old_spec="$1" new_spec="$2" root registry deployment role domain cert key marker consumer
-  local storage_root storage_dir storage_domain temp
+  local storage_root storage_dir storage_domain temp stage stage_storage root_uid index path
+  local -a storage_paths=() storage_stage_paths=() artifact_paths=() artifact_stage_paths=()
   [[ "${CADDY_ADAPTER_PURGE_RETIRED_ROLES:-0}" == 1 ]] || return 0
   root="$(caddy_adapter_root "$new_spec")"
   deployment="$(jq -r '.deployment_id' "$old_spec")"
   [[ "$deployment" == "$(jq -r '.deployment_id' "$new_spec")" ]] || return 1
   registry="$(caddy_adapter_consumer_registry "$root")"
-  [[ ! -e "$registry" || ! -L "$registry" ]] || return 1
-  if [[ -f "$registry" ]]; then caddy_adapter_validate_consumer_registry "$registry" || return 1; fi
+  [[ ! -L "$registry" ]] || return 1
+  if [[ "${CADDY_ADAPTER_FAKE:-0}" != 1 ]]; then
+    [[ -f "$registry" ]] || return 1
+    caddy_adapter_validate_consumer_registry "$registry" || return 1
+  elif [[ -f "$registry" ]]; then
+    caddy_adapter_validate_consumer_registry "$registry" || return 1
+  fi
+  storage_root="${root%/}/data/caddy/certificates"
+  if [[ -e "$storage_root" ]]; then
+    [[ -d "$storage_root" && ! -L "$storage_root" ]] || return 1
+    root_uid="$(stat -c %u "$storage_root")" || return 1
+  fi
   while IFS= read -r role; do
     [[ -n "$role" ]] || continue
     jq -e --arg role "$role" '.active_roles | index($role) == null' "$new_spec" >/dev/null || continue
+    domain="$(jq -r --arg role "$role" '.domains[$role]' "$old_spec")"
+    if [[ "${CADDY_ADAPTER_FAKE:-0}" != 1 ]]; then
+      jq -e --arg d "$deployment" --arg role "$role" --arg domain "$domain" \
+        'any(.domains[]; .deployment_id == $d and .role == $role and .domain == $domain and .owner == "provider" and .active == false)' \
+        "$registry" >/dev/null || return 1
+    fi
     cert="$(jq -r --arg role "$role" '.certificate_targets[$role].cert_path' "$old_spec")"
     key="$(jq -r --arg role "$role" '.certificate_targets[$role].key_path' "$old_spec")"
     caddy_adapter_safe_path "$cert" && caddy_adapter_safe_path "$key" || return 1
@@ -799,7 +816,10 @@ caddy_adapter_purge_retired_roles() {
     if [[ -e "$cert" || -e "$key" || -e "$marker" ]]; then
       [[ -f "$marker" && "$(cat "$marker" 2>/dev/null)" == "deployment=${deployment};role=${role}" ]] || return 1
       fuser -s "$cert" "$key" 2>/dev/null && return 1
-      rm -f -- "$cert" "$key" "$marker" || return 1
+      [[ ! -e "$cert" || -f "$cert" ]] && [[ ! -e "$key" || -f "$key" ]] && [[ ! -e "$marker" || -f "$marker" ]] || return 1
+      [[ -e "$cert" ]] && artifact_paths+=("$cert")
+      [[ -e "$key" ]] && artifact_paths+=("$key")
+      [[ -e "$marker" ]] && artifact_paths+=("$marker")
     fi
     if [[ "$role" == node ]]; then
       consumer="$(jq -r '.roles.node.certificate_consumer // empty' "$old_spec")"
@@ -809,30 +829,103 @@ caddy_adapter_purge_retired_roles() {
         if [[ -e "$consumer/fullchain.pem" || -e "$consumer/privkey.pem" || -e "$marker" ]]; then
           [[ -f "$marker" && "$(cat "$marker" 2>/dev/null)" == "deployment=${deployment}" ]] || return 1
           fuser -s "$consumer/fullchain.pem" "$consumer/privkey.pem" 2>/dev/null && return 1
-          rm -f -- "$consumer/fullchain.pem" "$consumer/privkey.pem" "$marker" || return 1
+          [[ ! -e "$consumer/fullchain.pem" || -f "$consumer/fullchain.pem" ]] &&
+            [[ ! -e "$consumer/privkey.pem" || -f "$consumer/privkey.pem" ]] &&
+            [[ ! -e "$marker" || -f "$marker" ]] || return 1
+          [[ -e "$consumer/fullchain.pem" ]] && artifact_paths+=("$consumer/fullchain.pem")
+          [[ -e "$consumer/privkey.pem" ]] && artifact_paths+=("$consumer/privkey.pem")
+          [[ -e "$marker" ]] && artifact_paths+=("$marker")
         fi
       fi
     fi
-    domain="$(jq -r --arg role "$role" '.domains[$role]' "$old_spec")"
-    storage_root="${root%/}/data/caddy/certificates"
     if [[ -d "$storage_root" && ! -L "$storage_root" ]]; then
       while IFS= read -r storage_dir; do
         [[ -d "$storage_dir" && ! -L "$storage_dir" ]] || return 1
         storage_domain="${storage_dir##*/}"
         [[ "$storage_domain" == "$domain" ]] || continue
         [[ "$(realpath -m -- "$storage_dir")" == "$(realpath -m -- "$storage_root")"/* ]] || return 1
-        rm -rf -- "$storage_dir" || return 1
+        [[ "$(stat -c %u "$storage_dir")" == "$root_uid" ]] || return 1
+        storage_paths+=("$storage_dir")
       done < <(find "$storage_root" -mindepth 2 -maxdepth 2 -type d -print)
     fi
   done < <(jq -r '.active_roles[]' "$old_spec")
+  if [[ "${CADDY_ADAPTER_FAKE:-0}" != 1 ]]; then
+    stage="${root%/}/.purge-retired-${deployment}"
+    [[ ! -e "$stage" && ! -L "$stage" ]] || return 1
+    mkdir -m 0700 "$stage" || return 1
+    mkdir -m 0700 "$stage/artifacts" || return 1
+    mkdir -m 0700 "$stage/storage" || return 1
+    index=0
+    for path in "${artifact_paths[@]}"; do
+      artifact_stage_paths+=("$stage/artifacts/$index")
+      mv -f -- "$path" "${artifact_stage_paths[$index]}" || {
+        for ((index = 0; index < ${#artifact_stage_paths[@]}; index++)); do
+          [[ -e "${artifact_stage_paths[$index]}" ]] && mv -f -- "${artifact_stage_paths[$index]}" "${artifact_paths[$index]}" || true
+        done
+        rm -rf -- "$stage"
+        return 1
+      }
+      index=$((index + 1))
+    done
+    index=0
+    for storage_dir in "${storage_paths[@]}"; do
+      storage_stage_paths+=("$stage/storage/$index")
+      mv -f -- "$storage_dir" "${storage_stage_paths[$index]}" || {
+        for ((index = 0; index < ${#artifact_stage_paths[@]}; index++)); do
+          [[ -e "${artifact_stage_paths[$index]}" ]] && mv -f -- "${artifact_stage_paths[$index]}" "${artifact_paths[$index]}" || true
+        done
+        for ((index = 0; index < ${#storage_stage_paths[@]}; index++)); do
+          [[ -e "${storage_stage_paths[$index]}" ]] && mv -f -- "${storage_stage_paths[$index]}" "${storage_paths[$index]}" || true
+        done
+        rm -rf -- "$stage"
+        return 1
+      }
+      index=$((index + 1))
+    done
+  fi
   if [[ -f "$registry" ]]; then
     temp="$(mktemp)" || return 1
     jq --arg deployment "$deployment" --argjson roles "$(jq -c '.active_roles' "$new_spec")" '
       .domains |= map(select(.deployment_id != $deployment or (.role as $role | $roles | index($role) != null))) |
       .consumers |= map(select(.deployment_id != $deployment or (.role as $role | $roles | index($role) != null)))
-    ' "$registry" >"$temp" || { rm -f "$temp"; return 1; }
-    caddy_adapter_validate_consumer_registry "$temp" || { rm -f "$temp"; return 1; }
-    chmod 0600 "$temp" && mv -f -- "$temp" "$registry" || { rm -f "$temp"; return 1; }
+    ' "$registry" >"$temp" || {
+      rm -f "$temp"
+      for ((index = 0; index < ${#artifact_stage_paths[@]}; index++)); do
+        [[ -e "${artifact_stage_paths[$index]}" ]] && mv -f -- "${artifact_stage_paths[$index]}" "${artifact_paths[$index]}" || true
+      done
+      for ((index = 0; index < ${#storage_stage_paths[@]}; index++)); do
+        [[ -e "${storage_stage_paths[$index]}" ]] && mv -f -- "${storage_stage_paths[$index]}" "${storage_paths[$index]}" || true
+      done
+      rm -rf -- "$stage"
+      return 1
+    }
+    caddy_adapter_validate_consumer_registry "$temp" || {
+      rm -f "$temp"
+      for ((index = 0; index < ${#artifact_stage_paths[@]}; index++)); do
+        [[ -e "${artifact_stage_paths[$index]}" ]] && mv -f -- "${artifact_stage_paths[$index]}" "${artifact_paths[$index]}" || true
+      done
+      for ((index = 0; index < ${#storage_stage_paths[@]}; index++)); do
+        [[ -e "${storage_stage_paths[$index]}" ]] && mv -f -- "${storage_stage_paths[$index]}" "${storage_paths[$index]}" || true
+      done
+      rm -rf -- "$stage"
+      return 1
+    }
+    chmod 0600 "$temp" && mv -f -- "$temp" "$registry" || {
+      rm -f "$temp"
+      for ((index = 0; index < ${#artifact_stage_paths[@]}; index++)); do
+        [[ -e "${artifact_stage_paths[$index]}" ]] && mv -f -- "${artifact_stage_paths[$index]}" "${artifact_paths[$index]}" || true
+      done
+      for ((index = 0; index < ${#storage_stage_paths[@]}; index++)); do
+        [[ -e "${storage_stage_paths[$index]}" ]] && mv -f -- "${storage_stage_paths[$index]}" "${storage_paths[$index]}" || true
+      done
+      rm -rf -- "$stage"
+      return 1
+    }
+  fi
+  if [[ "${CADDY_ADAPTER_FAKE:-0}" != 1 ]]; then
+    rm -rf -- "$stage" || return 1
+  else
+    for path in "${artifact_paths[@]}"; do rm -f -- "$path" || return 1; done
   fi
 }
 
