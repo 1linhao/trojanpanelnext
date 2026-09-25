@@ -3,7 +3,7 @@
   "topology": "combined",
   "revision": 1,
   "deployment_id": "trojanpanelnext-combined",
-  "owner_token": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "owner_token": "0000000000000000000000000000000000000000000000000000000000000000",
   "provider": "caddy-legacy",
   "domains": {"web": "panel.example.com", "node": "node.example.com"},
   "active_roles": ["web", "node"],
