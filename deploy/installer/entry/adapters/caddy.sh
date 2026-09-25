@@ -795,6 +795,9 @@ caddy_adapter_purge_retired_roles() {
     caddy_adapter_validate_consumer_registry "$registry" || return 1
   fi
   storage_root="${root%/}/data/caddy/certificates"
+  if [[ "${CADDY_ADAPTER_FAKE:-0}" != 1 ]]; then
+    caddy_adapter_owner_status "$new_spec" "$root" | grep -qx owned || return 1
+  fi
   if [[ -e "$storage_root" ]]; then
     [[ -d "$storage_root" && ! -L "$storage_root" ]] || return 1
     root_uid="$(stat -c %u "$storage_root")" || return 1
@@ -824,6 +827,11 @@ caddy_adapter_purge_retired_roles() {
     if [[ "$role" == node ]]; then
       consumer="$(jq -r '.roles.node.certificate_consumer // empty' "$old_spec")"
       if [[ -n "$consumer" ]]; then
+        if [[ "${CADDY_ADAPTER_FAKE:-0}" != 1 ]]; then
+          jq -e --arg d "$deployment" --arg p "$consumer" \
+            'any(.consumers[]; .deployment_id == $d and .role == "node" and .path == $p and .owner == "provider" and .active == false and .removed == true)' \
+            "$registry" >/dev/null || return 1
+        fi
         caddy_adapter_safe_path "$consumer" || return 1
         marker="$consumer/.tpn-${deployment}-consumer.owner"
         if [[ -e "$consumer/fullchain.pem" || -e "$consumer/privkey.pem" || -e "$marker" ]]; then
@@ -845,6 +853,8 @@ caddy_adapter_purge_retired_roles() {
         [[ "$storage_domain" == "$domain" ]] || continue
         [[ "$(realpath -m -- "$storage_dir")" == "$(realpath -m -- "$storage_root")"/* ]] || return 1
         [[ "$(stat -c %u "$storage_dir")" == "$root_uid" ]] || return 1
+        ! find "$storage_dir" -type l -print -quit | grep -q . || return 1
+        fuser -s "$storage_dir" 2>/dev/null && return 1
         storage_paths+=("$storage_dir")
       done < <(find "$storage_root" -mindepth 2 -maxdepth 2 -type d -print)
     fi
@@ -926,6 +936,7 @@ caddy_adapter_purge_retired_roles() {
     rm -rf -- "$stage" || return 1
   else
     for path in "${artifact_paths[@]}"; do rm -f -- "$path" || return 1; done
+    for path in "${storage_paths[@]}"; do rm -rf -- "$path" || return 1; done
   fi
 }
 
@@ -1273,17 +1284,17 @@ entry_v2_adapter_verify() {
   [[ -s "$(caddy_adapter_config "$root")" ]] || return 1
   caddy_adapter_check_ports || return 1
   caddy_adapter_verify_runtime "$spec" || return 1
+  local observation
+  observation="$(caddy_adapter_observation "$spec" "$root" 1)" || return 1
+  rm -f -- "$(caddy_adapter_candidate "$root")" || return 1
+  local result
+  result="$(caddy_adapter_apply_generations "$observation" "$state")" || return 1
   if [[ "${CADDY_ADAPTER_PURGE_RETIRED_ROLES:-0}" == 1 && "$(jq -r '.committed_target == null' <<<"$state")" == false ]]; then
     old_spec="$(mktemp)" || return 1
     jq -c '.committed_target.spec' <<<"$state" >"$old_spec" || { rm -f "$old_spec"; return 1; }
     caddy_adapter_purge_retired_roles "$old_spec" "$spec" || { rm -f "$old_spec"; return 1; }
     rm -f "$old_spec"
   fi
-  local observation
-  observation="$(caddy_adapter_observation "$spec" "$root" 1)" || return 1
-  rm -f -- "$(caddy_adapter_candidate "$root")" || return 1
-  local result
-  result="$(caddy_adapter_apply_generations "$observation" "$state")" || return 1
   caddy_adapter_commit_renewal_trigger "$root" || return 1
   printf '%s\n' "$result"
 }

@@ -451,9 +451,12 @@ grep -Fq -- 'requires explicit --restore-role' "${work}/implicit-restore.out" ||
 run_installer install --mode combined --restore-role web >"${work}/explicit-restore.out"
 grep -Fq 'panel.example.com' "${data}/custom/web-caddy/Caddyfile" || fail 'explicit Web restoration did not update the shared Entry'
 grep -Fq 'node.example.com' "${data}/custom/web-caddy/Caddyfile" || fail 'explicit Web restoration removed the Node Entry'
+mkdir -p "${data}/custom/web-caddy/data/caddy/certificates/acme.test/panel.example.com"
+printf 'retired lineage\n' >"${data}/custom/web-caddy/data/caddy/certificates/acme.test/panel.example.com/cert.pem"
 run_installer remove --mode web --purge-data >"${work}/remove-restored-web.out"
 test ! -e "${data}/trojanpanelnext-entry/cert/web/fullchain.pem" || fail 'purged Web role retained its certificate'
 test -e "${data}/trojanpanelnext-entry/cert/node/fullchain.pem" || fail 'purged Web role removed active Node certificate'
+test ! -e "${data}/custom/web-caddy/data/caddy/certificates/acme.test/panel.example.com" || fail 'purged Web role retained its ACME lineage'
 
 # Node removal still revokes its identity after Web removal through the
 # control-plane CLI in a one-shot container.
