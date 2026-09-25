@@ -16,6 +16,7 @@ expect_fail() { if "$@" >"$tmp/out" 2>&1; then cat "$tmp/out" >&2; cat "$trace" 
 make_spec() { jq "$1" "$fixture" >"$2"; chmod 0600 "$2"; }
 make_spec '.' "$tmp/spec"
 entry_validate_spec "$tmp/spec" || fail 'valid combined spec rejected'
+
 for change in '.domains.node = .domains.web' '.active_roles = ["web","web"]' 'del(.roles.node)' '.active_roles = ["web"]' '.certificate_targets.node.cert_path = .certificate_targets.web.cert_path' '.roles.node.node_exposure = "proxy"'; do
   make_spec "$change" "$tmp/bad"
   expect_fail entry_validate_spec "$tmp/bad"
@@ -56,6 +57,17 @@ fake_observation() {
        .resources[0].identity.digest = ($resource_digest*64)
      else . end'
 }
+
+# The first Caddy bootstrap can issue both certificates before Core has started
+# writing its observed Node listeners.  Only the bootstrap probe may accept that
+# temporary absence; the normal verify path must remain strict.
+bootstrap_observation="$(fake_observation "$tmp/spec" null verify | jq 'del(.listeners[] | select(.owner == "kernel" and .role == "node"))')"
+if entry_v2_validate_observation "$bootstrap_observation" "$tmp/spec" verify; then
+  fail 'normal verification accepted a missing Node listener'
+fi
+CADDY_ADAPTER_BOOTSTRAP=1 entry_v2_validate_observation "$bootstrap_observation" "$tmp/spec" verify ||
+  fail 'bootstrap verification rejected a not-yet-started Node listener'
+
 entry_v2_adapter_probe() {
   printf 'probe\n' >>"$trace"
   if [[ "${FAKE_REMOVE_BAD:-0}" == 1 ]]; then

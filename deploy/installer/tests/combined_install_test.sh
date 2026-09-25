@@ -188,6 +188,10 @@ docker() {
         printf 'fake key for %s\n' "${domain}" >"${cert_dir}/${domain}.key"
       done
     fi
+    if [[ "${name}" == trojan-panel-core ]]; then
+      mkdir -p "${TP_TEST_DATA}/trojan-panel-core/external"
+      printf '{"routes":[{"network":"tcp","port":2443}]}\n' >"${TP_TEST_DATA}/trojan-panel-core/external/routes.json"
+    fi
     printf 'fake-container-id\n'
     ;;
   exec)
@@ -263,9 +267,6 @@ export CADDY_ADAPTER_FAKE_ISSUER="$(realpath "${BASH_SOURCE[0]}")"
 
 run_installer() {
   mkdir -p "${data}/trojan-panel-core/external"
-  if [[ ! -s "${data}/trojan-panel-core/external/routes.json" ]]; then
-    printf '{"routes":[{"network":"tcp","port":2443}]}\n' >"${data}/trojan-panel-core/external/routes.json"
-  fi
   TP_DATA="${data}" \
     TP_OS_RELEASE_FILE="${os_release}" \
     TP_HEALTH_ATTEMPTS=2 \

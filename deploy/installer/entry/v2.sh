@@ -281,7 +281,8 @@ entry_v2_check_target() {
 
 entry_v2_validate_observation() {
   local observation="$1" spec="$2" mode="$3" journal="${4:-}"
-  jq -e --argjson spec "$(jq -c . "$spec")" --arg mode "$mode" '
+  jq -e --argjson spec "$(jq -c . "$spec")" --arg mode "$mode" \
+    --arg bootstrap "${CADDY_ADAPTER_BOOTSTRAP:-0}" '
     .schema_version == 2 and .deployment_id == $spec.deployment_id and
     .provider == $spec.provider and .ownership_verified == true and
     (.resources | type == "array") and (.candidate_resources | type == "array") and
@@ -306,8 +307,10 @@ entry_v2_validate_observation() {
       ([.listeners[] | select(.owner == "provider" and .scope == "shared" and .port == 80)] | length == 1) and
       ([.listeners[] | select(.owner == "provider" and .scope == "shared" and .port == 443)] | length == 1) and
       (if $spec.active_roles | index("node") then
-        ([.listeners[] | select(.owner == "kernel" and .scope == "role" and .role == "node") ] |
-          length >= 1 and all(.[]; .purpose == "node-direct"))
+        if $bootstrap == "1" then true else
+          ([.listeners[] | select(.owner == "kernel" and .scope == "role" and .role == "node") ] |
+            length >= 1 and all(.[]; .purpose == "node-direct"))
+        end
        else true end)
      else true end)
   ' <<<"$observation" >/dev/null 2>&1 || return 1
