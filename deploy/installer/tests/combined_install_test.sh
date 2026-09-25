@@ -358,6 +358,16 @@ run_installer install --mode combined >"${work}/install.out" 2>&1 || {
   fail 'combined installation failed'
 }
 grep -Fq 'Combined deployment is healthy' "${work}/install.out" || fail 'combined health marker is missing'
+test -s "${data}/trojanpanelnext-network/allowlist.json" || fail 'combined network allowlist was not generated'
+test -s "${data}/trojanpanelnext-network/allowlist.md" || fail 'combined network allowlist Markdown was not generated'
+jq -e '.firewall_mutation_by_installer == false and (.rules | any(.name == "web-https" and .port == 443 and (.sources | index("0.0.0.0/0"))))' \
+  "${data}/trojanpanelnext-network/allowlist.json" >/dev/null || fail 'combined allowlist omitted public HTTPS rule'
+jq -e 'all(.rules[]; (.name == "web-http" or .name == "web-https" or (.sources | index("127.0.0.1/32") != null)))' \
+  "${data}/trojanpanelnext-network/allowlist.json" >/dev/null || fail 'combined allowlist exposed an internal service'
+grep -Fq 'does not modify nftables, ufw, or cloud security groups' "${data}/trojanpanelnext-network/allowlist.md" || fail 'allowlist omitted firewall responsibility boundary'
+if grep -Eq '(^| )nft(ables)?|(^| )ufw|iptables' "${trace}"; then
+  fail 'installer attempted to mutate a host firewall'
+fi
 grep -Fq 'panel.example.com' "${data}/custom/web-caddy/Caddyfile" || fail 'shared Entry omitted the Web domain'
 grep -Fq 'node.example.com' "${data}/custom/web-caddy/Caddyfile" || fail 'shared Entry omitted the Node domain'
 test -s "${data}/trojanpanelnext-entry/cert/web/fullchain.pem" || fail 'Web certificate is missing'
