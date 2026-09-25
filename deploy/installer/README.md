@@ -80,6 +80,7 @@ git push origin "refs/tags/$TAG"
 当前发布工作流创建 Release 时未自动设置 GitHub 的 prerelease 标记。流水线成功后、分发或安装候选版前，发布维护者必须检查并将 Release 标记为预发布：
 
 ```bash
+TAG=v0.1.0-rc.1
 gh release view "$TAG" --repo 1linhao/trojanpanelnext --json tagName,isPrerelease
 gh release edit "$TAG" --repo 1linhao/trojanpanelnext --prerelease
 gh release view "$TAG" --repo 1linhao/trojanpanelnext --json tagName,isPrerelease
@@ -212,7 +213,7 @@ Node 服务端证书；Node 的 `/healthz` 只在身份 ID、代次、服务器 
 仅当外部宿主管理系统已生成 Protocol v1 EntrySpec 时，才通过 `--entry-spec` 把它交给安装器；普通独立部署不需要此参数：
 
 ```bash
-sudo ./install.sh install --mode node --config ./node-agent.yaml \
+sudo ./install.sh install --mode node --config ./node-sg.yaml \
   --entry-spec /var/lib/vps-factory/service-specs/trojanpanelnext-node.json
 ```
 
@@ -240,7 +241,8 @@ sudo ./install.sh remove --mode web --config ./web.yaml --keep-data
 `--keep-data` 会覆盖配置中的 `purge_data`，适合由外部管理系统执行可恢复卸载。
 
 combined 卸载后，使用原 combined 配置重跑不会自动恢复已移除的角色；必须明确指定恢复角色，
-并先确认该角色的域名、端口和数据仍属于本次部署：
+并先确认该角色的域名、端口和数据仍属于本次部署。Entry journal 必须仍有与当前目标匹配的
+`committed_target.digest`（64 位十六进制摘要），否则必须先做显式迁移：
 
 ```bash
 sudo ./install.sh install --mode combined --config ./combined-site.yaml --restore-role web
@@ -251,7 +253,7 @@ sudo ./install.sh install --mode combined --config ./combined-site.yaml --restor
 删除服务及生成数据：
 
 ```bash
-sudo ./install.sh remove --mode node --config ./node-agent.yaml --purge-data
+sudo ./install.sh remove --mode node --config ./node-sg.yaml --purge-data
 ```
 
 combined 使用两个不同且都解析到本机公网 IP 的域名。单个共享入口拥有 80/443，Node 内核协议

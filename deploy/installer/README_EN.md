@@ -84,6 +84,7 @@ git push origin "refs/tags/$TAG"
 The current workflow does not set GitHub's prerelease flag automatically. After the workflow succeeds and before distributing or installing the candidate, the release maintainer must inspect and mark the Release as a prerelease:
 
 ```bash
+TAG=v0.1.0-rc.1
 gh release view "$TAG" --repo 1linhao/trojanpanelnext --json tagName,isPrerelease
 gh release edit "$TAG" --repo 1linhao/trojanpanelnext --prerelease
 gh release view "$TAG" --repo 1linhao/trojanpanelnext --json tagName,isPrerelease
@@ -232,7 +233,7 @@ the encrypted `--bundle` for a production Node's initial install.
 Only when an external host manager has generated a Protocol v1 EntrySpec should you pass it explicitly; a standalone deployment does not need this option:
 
 ```bash
-sudo ./install.sh install --mode node --config ./node-agent.yaml \
+sudo ./install.sh install --mode node --config ./node-sg.yaml \
   --entry-spec /var/lib/vps-factory/service-specs/trojanpanelnext-node.json
 ```
 
@@ -249,7 +250,7 @@ differ. Legacy `purpose` remains accepted only as compatibility input.
 ```bash
 sudo ./install.sh install --mode web --config ./web.yaml --force
 sudo ./install.sh remove --mode web --config ./web.yaml --keep-data
-sudo ./install.sh remove --mode node --config ./node-agent.yaml --purge-data
+sudo ./install.sh remove --mode node --config ./node-sg.yaml --purge-data
 ```
 
 `--keep-data` overrides `purge_data` in the config for a recoverable removal;
@@ -263,8 +264,9 @@ deployment, then request the role explicitly:
 sudo ./install.sh install --mode combined --config ./combined-site.yaml --restore-role web
 ```
 
-`--restore-role` accepts only the currently inactive `web` or `node` role. A normal replay or certificate
-refresh never restores a removed role implicitly.
+`--restore-role` accepts only the currently inactive `web` or `node` role. Before restoring, the Entry
+journal must still contain a matching 64-hex `committed_target.digest`; otherwise perform an explicit
+migration first. A normal replay or certificate refresh never restores a removed role implicitly.
 
 Combined mode requires two different domains that both resolve to the host's public IP. One shared
 Entry owns ports 80/443, while Node kernel protocol listeners remain direct. The local Node uses its
