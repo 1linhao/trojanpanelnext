@@ -2197,7 +2197,7 @@ network_plan_write() {
         {name:("node-protocol-" + ($route.kernel // "kernel") + "-" + (($route.port // 0)|tostring)),
          direction:"inbound", protocol:($route.network // "tcp"), port:($route.port // 0),
          sources:["0.0.0.0/0","::/0"], purpose:"Node direct kernel listener"}])
-    ' "${json_file}" >"${route_tmp}" && mv -f -- "${route_tmp}" "${json_file}"
+    ' "${tmp_json}" >"${route_tmp}" && mv -f -- "${route_tmp}" "${tmp_json}"
   fi
   mv -f -- "${tmp_json}" "${json_file}"
 
