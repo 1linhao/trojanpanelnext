@@ -22,6 +22,9 @@ ENTRY_SPEC_FILE="${ENTRY_SPEC_FILE:-}"
 EXTERNAL_MANAGED_DIR="${EXTERNAL_MANAGED_DIR:-${TP_DATA}/trojanpanelnext-external}"
 EXTERNAL_ROUTES_DIR="${EXTERNAL_ROUTES_DIR:-${TP_DATA}/trojan-panel-core/external}"
 MANAGED_CERT_DIR="${MANAGED_CERT_DIR:-${TP_DATA}/trojan-panel-core/cert}"
+NETWORK_PLAN_DIR="${NETWORK_PLAN_DIR:-${TP_DATA}/trojanpanelnext-network}"
+INSTALLER_STATE_DIR="${INSTALLER_STATE_DIR:-${TP_DATA}/trojanpanelnext-installer}"
+INSTALLER_STATE_FILE=""
 
 MARIADB_CONTAINER="${MARIADB_CONTAINER:-trojan-panel-mariadb}"
 REDIS_CONTAINER="${REDIS_CONTAINER:-trojan-panel-redis}"
@@ -73,6 +76,7 @@ NODE_CADDY_HTTP_PORT="${NODE_CADDY_HTTP_PORT:-80}"
 NODE_CADDY_HTTPS_PORT="${NODE_CADDY_HTTPS_PORT:-8863}"
 TP_NODE_NAME="${TP_NODE_NAME:-}"
 TP_NODE_PUBLIC_IP="${TP_NODE_PUBLIC_IP:-}"
+CONTROL_PLANE_PUBLIC_IP="${CONTROL_PLANE_PUBLIC_IP:-}"
 NODE_IDENTITY_CREDENTIAL_FILE="${NODE_IDENTITY_CREDENTIAL_FILE:-}"
 WEB_MARIADB_USER="${WEB_MARIADB_USER:-}"
 WEB_MARIADB_PASSWORD="${WEB_MARIADB_PASSWORD:-}"
@@ -785,6 +789,7 @@ load_config() {
     MARIADB_PASSWORD=""
     REDIS_PASSWORD=""
     SYSADMIN_PASSWORD=""
+    CONTROL_PLANE_PUBLIC_IP=""
     cfg_apply "${file}" MARIADB_USER mariadb_user
     cfg_apply "${file}" TP_WEB_DOMAIN hostname
     cfg_apply "${file}" TP_EMAIL email
@@ -813,6 +818,7 @@ load_config() {
     cfg_apply "${file}" REDIS_PASSWORD redis_password
     cfg_apply "${file}" REDIS_AUTH_USERNAME redis_auth_username
     cfg_apply "${file}" REDIS_AUTH_PASSWORD redis_auth_password
+    cfg_apply "${file}" CONTROL_PLANE_PUBLIC_IP control_plane_public_ip
     ;;
   combined)
     TP_WEB_DOMAIN=""
@@ -823,6 +829,7 @@ load_config() {
     MARIADB_PASSWORD=""
     REDIS_PASSWORD=""
     SYSADMIN_PASSWORD=""
+    CONTROL_PLANE_PUBLIC_IP=""
     cfg_apply "${file}" TP_WEB_DOMAIN web_hostname
     cfg_apply "${file}" TP_NODE_DOMAIN node_hostname
     cfg_apply "${file}" TP_EMAIL email
@@ -1227,6 +1234,8 @@ combined_owned_paths() {
     "${TP_DATA}/mariadb" \
     "${TP_DATA}/redis" \
     "${TP_DATA}/trojanpanelnext-entry" \
+    "${INSTALLER_STATE_DIR}" \
+    "${NETWORK_PLAN_DIR}" \
     "$(dirname "${NODE_IDENTITY_CREDENTIAL_FILE:-${TP_DATA}/trojan-panel/config/node-identities/combined-node.json}")"
 }
 
@@ -1496,6 +1505,9 @@ validate_config() {
     if [[ ! "${NODE_IDENTITY_GENERATION}" =~ ^[1-9][0-9]*$ ]]; then
       echo_content red "node_identity_generation must be a positive integer"
       exit 1
+    fi
+    if [[ -n "${CONTROL_PLANE_PUBLIC_IP}" ]]; then
+      require_public_ip CONTROL_PLANE_PUBLIC_IP
     fi
     require_value CORE_IMAGE
     require_port CORE_PORT
@@ -2066,6 +2078,364 @@ warn_external_ports() {
     echo_content yellow "---> Warning: bind_address is 0.0.0.0; set bind_address: 127.0.0.1"
     echo_content yellow "    for a Web deployment unless its ingress runs on another host"
   fi
+}
+
+# The installer writes a machine-readable plan for the operator to apply to
+# nftables, ufw, or a cloud security group. It never invokes those tools. Keep
+# this output deterministic so a same-version replay only changes it when the
+# topology or configured addresses change.
+json_quote() {
+  local value="${1:-}"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  value="${value//$'\n'/\\n}"
+  value="${value//$'\r'/\\r}"
+  printf '"%s"' "${value}"
+}
+
+network_sources_for_host() {
+  local host="${1:-}" address
+  if [[ -n "${CONTROL_PLANE_PUBLIC_IP:-}" ]]; then
+    printf '%s\n' "${CONTROL_PLANE_PUBLIC_IP}"
+    return
+  fi
+  if [[ -n "${host}" ]] && command -v getent >/dev/null 2>&1; then
+    getent ahosts "${host}" 2>/dev/null | awk '{print $1}' | awk '!seen[$0]++'
+  fi
+}
+
+network_sources_for_web_nodes() {
+  local identity_dir="${TP_DATA}/trojan-panel/config/node-identities" file address found=0
+  if [[ -d "${identity_dir}" ]]; then
+    while IFS= read -r file; do
+      address="$(sed -n 's/.*"public_ip"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${file}" | head -n 1)"
+      if [[ -n "${address}" ]]; then
+        printf '%s\n' "${address}"
+        found=1
+      fi
+    done < <(find "${identity_dir}" -maxdepth 1 -type f -name '*.json' -print 2>/dev/null | sort)
+  fi
+  if [[ "${found}" == 0 ]]; then
+    printf '%s\n' 'operator-must-supply-node-public-ip'
+  fi
+}
+
+network_json_sources() {
+  local source first=1
+  printf '['
+  while IFS= read -r source; do
+    [[ -n "${source}" ]] || continue
+    [[ "${first}" == 1 ]] || printf ','
+    json_quote "${source}"
+    first=0
+  done
+  printf ']'
+}
+
+network_plan_write() {
+  local mode="$1" json_file="${NETWORK_PLAN_DIR}/allowlist.json" md_file="${NETWORK_PLAN_DIR}/allowlist.md"
+  local public_sources='["0.0.0.0/0","::/0"]' local_sources='["127.0.0.1/32","::1/128"]'
+  local peer_sources='[]' peer_label='the Web control plane'
+  local tmp_json tmp_md
+  [[ ! -L "${NETWORK_PLAN_DIR}" ]] || {
+    echo_content red "Network plan directory must not be a symbolic link"
+    return 1
+  }
+  installer_owned_dir_prepare "${NETWORK_PLAN_DIR}" "${mode}" || return 1
+
+  if [[ "${mode}" == web ]]; then
+    peer_sources="$(network_json_sources < <(network_sources_for_web_nodes))"
+    peer_label='registered Node public IPs'
+  elif [[ "${mode}" == node ]]; then
+    peer_sources="$(network_json_sources < <(network_sources_for_host "${MARIADB_HOST:-}"))"
+    [[ "${peer_sources}" != '[]' ]] || peer_sources='["operator-must-supply-control-plane-public-ip"]'
+  else
+    peer_sources="${local_sources}"
+    peer_label='local combined Web role'
+  fi
+
+  tmp_json="$(mktemp "${NETWORK_PLAN_DIR}/.allowlist.json.XXXXXX")"
+  tmp_md="$(mktemp "${NETWORK_PLAN_DIR}/.allowlist.md.XXXXXX")"
+  chmod 0600 "${tmp_json}" "${tmp_md}"
+  {
+    printf '{"schema_version":1,"deployment_mode":'
+    json_quote "${mode}"
+    printf ',"firewall_mutation_by_installer":false,"rules":['
+    local comma=''
+    if [[ "${mode}" == web || "${mode}" == combined || "${TLS_MODE}" == acme ]]; then
+      printf '%s{"name":"web-http","direction":"inbound","protocol":"tcp","port":80,"sources":%s,"purpose":"ACME HTTP-01 and plain HTTP entry"}' "${comma}" "${public_sources}"; comma=,
+    fi
+    if [[ "${mode}" == web || "${mode}" == combined ]]; then
+      printf '%s{"name":"web-https","direction":"inbound","protocol":"tcp","port":443,"sources":%s,"purpose":"HTTPS entry"}' "${comma}" "${public_sources}"; comma=,
+    elif [[ "${mode}" == node && "${TLS_MODE}" == acme ]]; then
+      printf '%s{"name":"node-https","direction":"inbound","protocol":"tcp","port":%s,"sources":%s,"purpose":"Node Entry HTTPS"}' "${comma}" "${NODE_CADDY_HTTPS_PORT}" "${public_sources}"; comma=,
+    fi
+    if [[ "${mode}" == node && "${TLS_MODE}" == acme ]]; then
+      printf '%s{"name":"node-http","direction":"inbound","protocol":"tcp","port":%s,"sources":%s,"purpose":"Node Entry HTTP and ACME HTTP-01"}' "${comma}" "${NODE_CADDY_HTTP_PORT}" "${public_sources}"; comma=,
+    fi
+    printf '%s{"name":"mariadb","direction":"inbound","protocol":"tcp","port":%s,"sources":%s,"purpose":"database; allow only %s"}' "${comma}" "${MARIADB_PORT}" "${peer_sources}" "${peer_label}"; comma=,
+    printf '%s{"name":"redis","direction":"inbound","protocol":"tcp","port":%s,"sources":%s,"purpose":"Redis ACL; allow only %s"}' "${comma}" "${REDIS_PORT}" "${peer_sources}" "${peer_label}"; comma=,
+    if [[ "${mode}" == web ]]; then
+      printf '%s{"name":"panel-api","direction":"inbound","protocol":"tcp","port":%s,"sources":%s,"purpose":"panel API; keep private behind the Entry"}' "${comma}" "${PANEL_PORT}" "${local_sources}"; comma=,
+      printf '%s{"name":"panel-ui","direction":"inbound","protocol":"tcp","port":%s,"sources":%s,"purpose":"panel UI; keep private behind the Entry"}' "${comma}" "${UI_PORT}" "${local_sources}"; comma=,
+    elif [[ "${mode}" == node ]]; then
+      printf '%s{"name":"core-api","direction":"inbound","protocol":"tcp","port":%s,"sources":%s,"purpose":"Core API; allow only %s"}' "${comma}" "${CORE_PORT}" "${peer_sources}" "${peer_label}"; comma=,
+      printf '%s{"name":"core-grpc","direction":"inbound","protocol":"tcp","port":%s,"sources":%s,"purpose":"control-plane gRPC; allow only %s"}' "${comma}" "${GRPC_PORT}" "${peer_sources}" "${peer_label}"; comma=,
+    else
+      printf '%s{"name":"panel-api","direction":"inbound","protocol":"tcp","port":%s,"sources":%s,"purpose":"combined local panel API"}' "${comma}" "${PANEL_PORT}" "${local_sources}"; comma=,
+      printf '%s{"name":"panel-ui","direction":"inbound","protocol":"tcp","port":%s,"sources":%s,"purpose":"combined local panel UI"}' "${comma}" "${UI_PORT}" "${local_sources}"; comma=,
+      printf '%s{"name":"core-api","direction":"inbound","protocol":"tcp","port":%s,"sources":%s,"purpose":"combined local Core API"}' "${comma}" "${CORE_PORT}" "${local_sources}"; comma=,
+      printf '%s{"name":"core-grpc","direction":"inbound","protocol":"tcp","port":%s,"sources":%s,"purpose":"combined local control-plane gRPC"}' "${comma}" "${GRPC_PORT}" "${local_sources}"; comma=,
+    fi
+    printf '],"notes":["All listed rules are inbound host rules; apply them outside the installer.","The egress entries are advisory prerequisites, not host-firewall mutations; peer data-plane flows are represented as inbound rules on the receiving host.","Do not expose MariaDB, Redis, panel API, panel UI, Core API, or gRPC to 0.0.0.0/0.","Node protocol ports are direct kernel listeners; inspect the generated routes.json and add only declared ports."],"egress":[{"name":"dns-udp","protocol":"udp","port":53,"destinations":["configured DNS resolvers"],"purpose":"name resolution"},{"name":"dns-tcp","protocol":"tcp","port":53,"destinations":["configured DNS resolvers"],"purpose":"large or fallback DNS responses"},{"name":"https","protocol":"tcp","port":443,"destinations":["configured registries and ACME endpoints"],"purpose":"image, release, and certificate retrieval"}]}\n'
+  } >"${tmp_json}"
+  if [[ "${mode}" == node || "${mode}" == combined ]] && [[ -s "${EXTERNAL_ROUTES_DIR}/routes.json" ]] && jq -e '.routes | type == "array"' "${EXTERNAL_ROUTES_DIR}/routes.json" >/dev/null 2>&1; then
+    local route_tmp
+    route_tmp="$(mktemp "${NETWORK_PLAN_DIR}/.allowlist-route.XXXXXX")"
+    jq --slurpfile routes "${EXTERNAL_ROUTES_DIR}/routes.json" '
+      .rules += ([($routes[0].routes[]? // empty) as $route |
+        {name:("node-protocol-" + ($route.kernel // "kernel") + "-" + (($route.port // 0)|tostring)),
+         direction:"inbound", protocol:(($route.network // "tcp") | if . == "udp" then "udp" else "tcp" end), port:($route.port // 0),
+         sources:["0.0.0.0/0","::/0"], purpose:"Node direct kernel listener"}])
+    ' "${tmp_json}" >"${route_tmp}" && mv -f -- "${route_tmp}" "${tmp_json}"
+  fi
+  mv -f -- "${tmp_json}" "${json_file}"
+
+  {
+    printf '# Network allowlist plan (%s)\n\n' "${mode}"
+    printf 'Generated by TrojanPanel Next. The installer does not modify nftables, ufw, or cloud security groups. Apply and audit these rules with the host or cloud operator.\n\n'
+    printf '| Service | Port | Allowed sources | Purpose |\n| --- | ---: | --- | --- |\n'
+    tr -d '\n' <"${json_file}" | sed 's/},{"name"/}\n{"name"/g' |
+      sed -n 's/.*"name":"\([^\"]*\)".*"port":\([0-9]*\).*"sources":\(\[[^]]*\]\).*"purpose":"\([^\"]*\)".*/| \1 | \2 | \3 | \4 |/p'
+    printf '\nThe Node direct listener list is read from `%s/routes.json`; only routes marked for public exposure should be opened.\n' "${EXTERNAL_ROUTES_DIR}"
+  } >"${tmp_md}"
+  mv -f -- "${tmp_md}" "${md_file}"
+  chmod 0600 "${json_file}" "${md_file}"
+  echo_content skyBlue "---> Network allowlist written to ${json_file}"
+  echo_content yellow "    The installer does not change host firewalls or cloud security groups; apply this plan manually."
+}
+
+installer_state_path_for() {
+  printf '%s/%s.state\n' "${INSTALLER_STATE_DIR}" "$1"
+}
+
+installer_owned_marker_path() {
+  printf '%s/.installer-owner\n' "$1"
+}
+
+installer_owned_dir_prepare() {
+  local dir="$1" mode="$2" marker temporary
+  [[ "$dir" == "${TP_DATA%/}/"* && "$(realpath -m -- "$dir")" == "$dir" && ! -L "$dir" ]] || {
+    echo_content red "Installer-owned directory is not canonical: ${dir}"
+    return 1
+  }
+  if [[ -e "$dir" && ! -d "$dir" ]]; then
+    echo_content red "Installer-owned path is not a directory: ${dir}"
+    return 1
+  fi
+  if [[ ! -e "$dir" ]]; then
+    install -d -m 0700 "$dir" || return 1
+  else
+    [[ "$(stat -c %u "$dir")" == "$EUID" ]] || return 1
+  fi
+  if [[ "$mode" == combined ]]; then
+    combined_owner_check_data_path "$dir" || return 1
+    return 0
+  fi
+  marker="$(installer_owned_marker_path "$dir")"
+  if [[ -e "$marker" || -L "$marker" ]]; then
+    installer_owned_dir_require "$dir" "$mode"
+    return $?
+  fi
+  if find "$dir" -mindepth 1 -maxdepth 1 -print -quit | grep -q .; then
+    echo_content red "Installer-owned directory has no ownership marker: ${dir}"
+    return 1
+  fi
+  chmod 0700 "$dir" || return 1
+  temporary="$(mktemp "${dir}/.owner.XXXXXX")"
+  chmod 0600 "$temporary"
+  printf 'deployment_mode=%s\nasset_version=%s\ntp_data=%s\n' \
+    "$mode" "${TP_ASSET_VERSION:-development}" "$TP_DATA" >"$temporary"
+  mv -f -- "$temporary" "$marker"
+  chmod 0600 "$marker"
+}
+
+installer_owned_dir_require() {
+  local dir="$1" mode="$2" marker
+  [[ "$dir" == "${TP_DATA%/}/"* && "$(realpath -m -- "$dir")" == "$dir" && ! -L "$dir" ]] || return 1
+  [[ ! -e "$dir" && ! -L "$dir" ]] && return 0
+  marker="$(installer_owned_marker_path "$dir")"
+  [[ -d "$dir" && ! -L "$dir" && -f "$marker" && ! -L "$marker" ]] || {
+    echo_content red "Installer-owned directory is missing a safe marker: ${dir}"
+    return 1
+  }
+  [[ "$(stat -c %u "$dir")" == "${EUID}" && "$(stat -c %a "$dir")" == 700 &&
+    "$(stat -c %u "$marker")" == "${EUID}" && "$(stat -c %a "$marker")" == 600 ]] || {
+    echo_content red "Installer-owned directory has unsafe ownership or permissions: ${dir}"
+    return 1
+  }
+  [[ "$(installer_state_value deployment_mode "$marker")" == "$mode" &&
+    "$(installer_state_value tp_data "$marker")" == "$TP_DATA" ]] || {
+    echo_content red "Installer-owned directory belongs to another deployment: ${dir}"
+    return 1
+  }
+}
+
+installer_state_value() {
+  local key="$1" file="$2"
+  sed -n "s/^${key}=//p" "${file}" | head -n 1
+}
+
+check_same_version_replay_preconditions() {
+  local mode="$1" state expected actual key
+  state="$(installer_state_path_for "${mode}")"
+  INSTALLER_STATE_FILE="${state}"
+  [[ ! -e "${state}" && ! -L "${state}" ]] && return 0
+  [[ -f "${state}" && ! -L "${state}" ]] || {
+    echo_content red "Installer state is not a safe regular file: ${state}"
+    return 1
+  }
+  [[ "$(stat -c %u "${state}")" == "${EUID}" && "$(stat -c %a "${state}")" == 600 ]] || {
+    echo_content red "Installer state must be owned by root and mode 0600: ${state}"
+    return 1
+  }
+  [[ "$(installer_state_value schema_version "${state}")" == 1 ]] || {
+    echo_content red "Unsupported installer state schema; explicit migration is required"
+    return 1
+  }
+  [[ "$(installer_state_value mode "${state}")" == "${mode}" ]] || {
+    echo_content red "Installer state deployment mode changed; explicit migration is required"
+    return 1
+  }
+  for key in asset_version tp_data; do
+    case "${key}" in
+    asset_version) expected="${TP_ASSET_VERSION:-development}" ;;
+    tp_data) expected="${TP_DATA}" ;;
+    esac
+    actual="$(installer_state_value "${key}" "${state}")"
+    [[ "${actual}" == "${expected}" ]] || {
+      echo_content red "Same-version ${mode} replay rejected immutable ${key} change; explicit migration is required"
+      return 1
+    }
+  done
+  case "${mode}" in
+  web)
+    expected="${TP_WEB_DOMAIN}"; key=domain ;;
+  node)
+    expected="${TP_NODE_DOMAIN}"; key=domain ;;
+  combined)
+    expected="${TP_WEB_DOMAIN}"
+    actual="$(installer_state_value web_domain "${state}")"
+    [[ "${actual}" == "${expected}" ]] || {
+      echo_content red "Same-version combined Web domain changes require an explicit migration"
+      return 1
+    }
+    expected="${TP_NODE_DOMAIN}"
+    actual="$(installer_state_value node_domain "${state}")"
+    [[ "${actual}" == "${expected}" ]] || {
+      echo_content red "Same-version combined Node domain changes require an explicit migration"
+      return 1
+    }
+    ;;
+  esac
+  if [[ "${mode}" != combined ]]; then
+    actual="$(installer_state_value "${key}" "${state}")"
+    [[ "${actual}" == "${expected}" ]] || {
+      echo_content red "Same-version ${mode} domain changes require an explicit migration"
+      return 1
+    }
+  fi
+  if [[ "${mode}" == combined ]]; then
+    for key in node_identity_id node_server_id; do
+      case "$key" in
+      node_identity_id) expected="$NODE_IDENTITY_ID" ;;
+      node_server_id) expected="$NODE_SERVER_ID" ;;
+      esac
+      actual="$(installer_state_value "${key}" "${state}")"
+      [[ "${actual}" == "${expected}" ]] || {
+        echo_content red "Same-version combined Node identity changes require explicit revoke and registration"
+        return 1
+      }
+    done
+  fi
+  local path_key path_expected
+  for path_key in web_path pki_bundle_dir managed_cert_dir external_routes_dir kernel_runtime_path node_identity_credential_file; do
+    case "${path_key}" in
+    web_path) path_expected="${WEB_PATH}" ;;
+    pki_bundle_dir) path_expected="$(installer_state_pki_path)" ;;
+    managed_cert_dir) path_expected="${MANAGED_CERT_DIR}" ;;
+    external_routes_dir) path_expected="${EXTERNAL_ROUTES_DIR}" ;;
+    kernel_runtime_path) path_expected="${KERNEL_RUNTIME_PATH}" ;;
+    node_identity_credential_file) path_expected="${NODE_IDENTITY_CREDENTIAL_FILE}" ;;
+    esac
+    [[ -z "${path_expected}" ]] && continue
+    actual="$(installer_state_value "${path_key}" "${state}")"
+    [[ "${actual}" == "${path_expected}" ]] || {
+      echo_content red "Same-version ${mode} data path changes require an explicit migration"
+      return 1
+    }
+  done
+  if [[ "${mode}" == node ]]; then
+    for key in node_identity_id node_server_id; do
+      case "$key" in
+      node_identity_id) expected="$NODE_IDENTITY_ID" ;;
+      node_server_id) expected="$NODE_SERVER_ID" ;;
+      esac
+      actual="$(installer_state_value "${key}" "${state}")"
+      [[ "${actual}" == "${expected}" ]] || {
+        echo_content red "Same-version Node identity changes require explicit revoke and registration"
+        return 1
+      }
+    done
+  fi
+  if [[ "${mode}" == node || "${mode}" == combined ]]; then
+    local stored_generation
+    stored_generation="$(installer_state_value node_identity_generation "${state}")"
+    if [[ ! "${stored_generation}" =~ ^[1-9][0-9]*$ ]]; then
+      echo_content red "Installer state lacks a valid Node identity generation; explicit migration is required"
+      return 1
+    fi
+    if (( NODE_IDENTITY_GENERATION < stored_generation )); then
+      echo_content red "Same-version Node identity generation rollback requires explicit migration"
+      return 1
+    fi
+  fi
+}
+
+installer_state_pki_path() {
+  # Bundle extraction uses a fresh temporary directory on every invocation;
+  # the installed trust path, not that temporary input, defines replay identity.
+  if [[ "$TP_NODE_BUNDLE_ACTIVE" == 1 ]]; then
+    dirname -- "$GRPC_CLIENT_CA_PATH"
+  else
+    printf '%s\n' "$TP_PKI_BUNDLE_DIR"
+  fi
+}
+
+write_installer_state() {
+  local mode="$1" state temporary
+  state="${INSTALLER_STATE_FILE:-$(installer_state_path_for "${mode}")}"
+  installer_owned_dir_prepare "${INSTALLER_STATE_DIR}" "${mode}" || return 1
+  [[ ! -L "${INSTALLER_STATE_DIR}" && ! -L "${state}" ]] || {
+    echo_content red "Installer state path must not be a symbolic link"
+    return 1
+  }
+  temporary="$(mktemp "${INSTALLER_STATE_DIR}/.${mode}.state.XXXXXX")"
+  chmod 0600 "${temporary}"
+  {
+    printf 'schema_version=1\nmode=%s\nasset_version=%s\ntp_data=%s\n' \
+      "${mode}" "${TP_ASSET_VERSION:-development}" "${TP_DATA}"
+    printf 'web_path=%s\npki_bundle_dir=%s\nmanaged_cert_dir=%s\nexternal_routes_dir=%s\nkernel_runtime_path=%s\nnode_identity_credential_file=%s\n' \
+      "${WEB_PATH}" "$(installer_state_pki_path)" "${MANAGED_CERT_DIR}" "${EXTERNAL_ROUTES_DIR}" \
+      "${KERNEL_RUNTIME_PATH}" "${NODE_IDENTITY_CREDENTIAL_FILE}"
+    case "${mode}" in
+    web) printf 'domain=%s\n' "${TP_WEB_DOMAIN}" ;;
+    node) printf 'domain=%s\nnode_identity_id=%s\nnode_server_id=%s\nnode_identity_generation=%s\n' "${TP_NODE_DOMAIN}" "${NODE_IDENTITY_ID}" "${NODE_SERVER_ID}" "${NODE_IDENTITY_GENERATION}" ;;
+    combined) printf 'web_domain=%s\nnode_domain=%s\nnode_identity_id=%s\nnode_server_id=%s\nnode_identity_generation=%s\n' "${TP_WEB_DOMAIN}" "${TP_NODE_DOMAIN}" "${NODE_IDENTITY_ID}" "${NODE_SERVER_ID}" "${NODE_IDENTITY_GENERATION}" ;;
+    esac
+  } >"${temporary}"
+  mv -f -- "${temporary}" "${state}"
+  chmod 0600 "${state}"
 }
 
 generate_web_client_pki() {
@@ -2754,6 +3124,16 @@ prepare_combined_node_identity() {
   }
 }
 
+load_combined_identity_metadata() {
+  local credential_file="${NODE_IDENTITY_CREDENTIAL_FILE}"
+  [[ -f "${credential_file}" && ! -L "${credential_file}" ]] || return 0
+  command -v jq >/dev/null 2>&1 || return 0
+  NODE_IDENTITY_ID="$(jq -r '.node_identity_id // empty' "${credential_file}")"
+  NODE_SERVER_ID="$(jq -r '.node_server_id // empty' "${credential_file}")"
+  NODE_IDENTITY_GENERATION="$(jq -r '.generation // empty' "${credential_file}")"
+  export NODE_IDENTITY_ID NODE_SERVER_ID NODE_IDENTITY_GENERATION
+}
+
 revoke_combined_node_identity() {
   local credential_file="${NODE_IDENTITY_CREDENTIAL_FILE}"
   if [[ ! -e "${credential_file}" ]] && ! container_exists "${CORE_CONTAINER}"; then
@@ -3214,25 +3594,33 @@ deploy_combined() {
 }
 
 remove_web() {
+  if [[ "${TP_PURGE_DATA}" == 1 ]]; then
+    installer_owned_dir_require "${NETWORK_PLAN_DIR}" web || return 1
+    installer_owned_dir_require "${INSTALLER_STATE_DIR}" web || return 1
+  fi
   local containers=("${UI_CONTAINER}" "${PANEL_CONTAINER}" "${REDIS_CONTAINER}" "${MARIADB_CONTAINER}")
   if [[ "${TLS_MODE}" != "external" ]]; then
     containers=("${WEB_CADDY_CONTAINER}" "${containers[@]}")
   fi
   docker rm -f "${containers[@]}" >/dev/null 2>&1 || true
   if [[ "${TP_PURGE_DATA}" == "1" ]]; then
-    rm -rf "${TP_DATA}/custom/web-caddy" "${TP_DATA}/trojan-panel" "${TP_DATA}/trojan-panel-ui" "${TP_DATA}/mariadb" "${TP_DATA}/redis" "${EXTERNAL_MANAGED_DIR}"
+    rm -rf "${TP_DATA}/custom/web-caddy" "${TP_DATA}/trojan-panel" "${TP_DATA}/trojan-panel-ui" "${TP_DATA}/mariadb" "${TP_DATA}/redis" "${EXTERNAL_MANAGED_DIR}" "${NETWORK_PLAN_DIR}" "${INSTALLER_STATE_DIR}"
   fi
   echo_content skyBlue "---> Trojan Panel web side removed"
 }
 
 remove_node() {
+  if [[ "${TP_PURGE_DATA}" == 1 ]]; then
+    installer_owned_dir_require "${NETWORK_PLAN_DIR}" node || return 1
+    installer_owned_dir_require "${INSTALLER_STATE_DIR}" node || return 1
+  fi
   local containers=("${CORE_CONTAINER}")
   if [[ "${TLS_MODE}" != "external" ]]; then
     containers+=("${NODE_CADDY_CONTAINER}")
   fi
   docker rm -f "${containers[@]}" >/dev/null 2>&1 || true
   if [[ "${TP_PURGE_DATA}" == "1" ]]; then
-    rm -rf "${TP_DATA}/custom/node-caddy" "${TP_DATA}/trojan-panel-core" "${EXTERNAL_MANAGED_DIR}"
+    rm -rf "${TP_DATA}/custom/node-caddy" "${TP_DATA}/trojan-panel-core" "${EXTERNAL_MANAGED_DIR}" "${NETWORK_PLAN_DIR}" "${INSTALLER_STATE_DIR}"
   fi
   echo_content skyBlue "---> Trojan Panel node side removed"
 }
@@ -3283,6 +3671,9 @@ remove_combined_role() {
     fi
     if [[ "${TP_PURGE_DATA}" == 1 ]]; then
       rm -rf "${TP_DATA}/trojan-panel-ui"
+      if [[ "${roles}" == web ]]; then
+        rm -rf "${NETWORK_PLAN_DIR}" "${INSTALLER_STATE_DIR}"
+      fi
     fi
     ;;
   node)
@@ -3305,6 +3696,9 @@ remove_combined_role() {
     if [[ "${TP_PURGE_DATA}" == 1 ]]; then
       rm -rf "${TP_DATA}/trojan-panel-core"
       rm -f "${NODE_IDENTITY_CREDENTIAL_FILE}"
+      if [[ "${roles}" == node ]]; then
+        rm -rf "${NETWORK_PLAN_DIR}" "${INSTALLER_STATE_DIR}"
+      fi
     fi
     ;;
   combined)
@@ -3323,7 +3717,8 @@ remove_combined_role() {
       rm -rf "${TP_DATA}/custom/web-caddy" "${TP_DATA}/custom/node-caddy" \
         "${TP_DATA}/trojan-panel" "${TP_DATA}/trojan-panel-ui" \
         "${TP_DATA}/trojan-panel-core" "${TP_DATA}/mariadb" "${TP_DATA}/redis" \
-        "${TP_DATA}/trojanpanelnext-entry" "$(dirname "${NODE_IDENTITY_CREDENTIAL_FILE}")"
+        "${TP_DATA}/trojanpanelnext-entry" "$(dirname "${NODE_IDENTITY_CREDENTIAL_FILE}")" \
+        "${NETWORK_PLAN_DIR}" "${INSTALLER_STATE_DIR}"
     fi
     ;;
   *)
@@ -3489,6 +3884,13 @@ main() {
   validate_config "${validation_mode}"
   validate_entry_spec_binding "${mode}"
 
+  if [[ "${command}" == install ]]; then
+    if [[ "${mode}" == combined ]]; then
+      load_combined_identity_metadata
+    fi
+    check_same_version_replay_preconditions "${mode}"
+  fi
+
   if [[ "${command}:${mode}" == install:combined ]]; then
     check_combined_host_preconditions
   fi
@@ -3559,12 +3961,18 @@ main() {
   fi
   if [[ "${command}:${mode}" == install:web ]]; then
     verify_web_health
+    network_plan_write "${mode}"
+    write_installer_state "${mode}"
     print_web_success
   elif [[ "${command}:${mode}" == install:node ]]; then
     verify_node_health
+    network_plan_write "${mode}"
+    write_installer_state "${mode}"
     print_node_success
   elif [[ "${command}:${mode}" == install:combined ]]; then
     verify_combined_health
+    network_plan_write "${mode}"
+    write_installer_state "${mode}"
     print_combined_success
   fi
 }

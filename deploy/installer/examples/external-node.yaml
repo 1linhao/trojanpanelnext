@@ -45,6 +45,7 @@ trojanpanelnext:
   redis_password: replace-cache-from-node-credential-file
   redis_auth_username: replace-auth-from-node-credential-file
   redis_auth_password: replace-auth-from-node-credential-file
+  control_plane_public_ip: ""
 
   grpc_port: 8100
   core_port: 8082
