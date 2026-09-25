@@ -88,7 +88,7 @@ chmod 0600 "$tmp/changed"
 if foreign_error="$(entry_v2_reconcile "$tmp/changed" "$ENTRY_STATE_ROOT" 2>&1)"; then
   fail 'foreign Caddy root was adopted'
 fi
-printf 'deployment=trojanpanelnext-combined\n' >"$CADDY_ADAPTER_ROOT/.trojanpanelnext-owner"
+printf 'deployment=trojanpanelnext-combined\nowner_token=%s\n' "$(jq -r '.owner_token' "$tmp/spec")" >"$CADDY_ADAPTER_ROOT/.trojanpanelnext-owner"
 
 cp "$tmp/certs/node/cert.pem" "$tmp/node-cert-backup"
 rm -f "$tmp/certs/node/cert.pem"
