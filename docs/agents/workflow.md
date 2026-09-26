@@ -54,12 +54,13 @@ Luna 遇到 ADR 冲突、跨模块重构、安全选择、无法稳定复现的�
 
 ## Git 基线与 worktree
 
-- 本功能的固定代码基线为 `50d039098efcc7a2feebee87248cad2ca2348f4e`，位于 `codex/entry-provider-nginx-certbot`。
+- 本功能的固定代码基线为 `50d039098efcc7a2feebee87248cad2ca2348f4e`，历史上位于 `codex/entry-provider-nginx-certbot`；该旧分支已归并。
 - 该提交相对 `origin/main` 领先 8 个入口、external TLS、EntrySpec、Node route manifest 和 mTLS 相关提交，是本规格依赖的现有能力。
-- 本轮 `AGENTS.md`、领域词汇、ADR、协作规则和规格形成独立的协作基线提交；远端集成分支为 `codex/entry-provider-nginx-certbot`。
+- 当前唯一成果集成分支为 `feat/standalone-deployment`，包含 `v0.1.0-rc.2` 的交付成果；`main` 保持原基线，等待 VPS 验收后再决定合入。
 - 本功能完成前，每张实现工单的 branch 与 worktree 必须从远端集成分支的最新已合并状态派生，PR 也以该集成分支为 base；禁止从脏工作区复制。
 - blocker PR 合并后，下游分支先同步集成分支并重跑测试。整组功能验收后，再由集成分支向 `main` 提交最终 PR。
 - `/code-review` 的固定点使用该 PR 创建时的集成分支 merge-base，并在审查前同步 blocker 的合并结果。
+- 长期只保留 `main` 和 `feat/standalone-deployment`。临时任务分支完成合并并确认无独有成果后，清理本地与远端分支；有未提交文件的 worktree 保留现场。
 
 ## 分支、审查与合并
 
