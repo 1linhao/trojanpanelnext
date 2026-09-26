@@ -14,6 +14,96 @@ The installer deploys TrojanPanel Next directly on a supported Linux host withou
 
 Deploy `web` and `node` on separate hosts by installing Web first, then registering each Node and issuing dedicated MariaDB and Redis identities; a Node never reuses the Web root or default users. `combined` runs both roles on one host and uses two different domains that resolve to that host's public IP. Standalone deployments use the installer-managed Caddy and ACME entry by default; use `tls_mode: external` only when an operator already owns and manages the entry. `--entry-spec` is an optional external-entry integration, not a standalone prerequisite.
 
+## Download the Release and example configurations
+
+The current VPS acceptance candidate is [v0.1.0-rc.2](https://github.com/1linhao/trojanpanelnext/releases/tag/v0.1.0-rc.2). Run these commands on a trusted workstation or a target Debian 12 x86_64 host. The archive already contains matching `config-web.yaml`, `config-node.yaml`, and `config-combined.yaml`; do not fetch examples from a source branch. For separate Web and Node hosts, use the same Release on both.
+
+```bash
+set -euo pipefail
+TAG=v0.1.0-rc.2
+VERSION="${TAG#v}"
+WORKDIR="./trojanpanelnext-${VERSION}"
+ARCHIVE="trojanpanelnext-installer-${VERSION}.tar.gz"
+mkdir -m 700 "$WORKDIR"
+gh release download "$TAG" --repo 1linhao/trojanpanelnext \
+  --pattern "$ARCHIVE" --pattern release-manifest.json --pattern SHA256SUMS \
+  --dir "$WORKDIR"
+for file in "$ARCHIVE" release-manifest.json SHA256SUMS; do
+  gh attestation verify "$WORKDIR/$file" \
+    --repo 1linhao/trojanpanelnext \
+    --signer-workflow 1linhao/trojanpanelnext/.github/workflows/publish-images.yml
+done
+mkdir "$WORKDIR/assets"
+tar -xzf "$WORKDIR/$ARCHIVE" -C "$WORKDIR/assets"
+cmp "$WORKDIR/release-manifest.json" "$WORKDIR/assets/release-manifest.json"
+cmp "$WORKDIR/SHA256SUMS" "$WORKDIR/assets/SHA256SUMS"
+(cd "$WORKDIR/assets" && sha256sum -c SHA256SUMS)
+cd "$WORKDIR/assets"
+```
+
+Stop if verification fails. Leave the scripts, manifest, and original templates unchanged. Copy the required template to a mode `0600` working configuration and edit only that copy. `gh` is used for download and verification; running `bootstrap.sh` on the target host does not need a Git repository.
+
+## Choose a deployment mode
+
+Run the following commands from the verified `assets` directory. Check DNS, ports 80/443, and any Node protocol ports before `validate`; `install` modifies the host and requires root. See [Configuration options](#configuration-options) for every template field.
+
+### Web control plane
+
+```bash
+cp ./config-web.yaml ./web.yaml
+chmod 600 ./web.yaml
+# Edit web.yaml: at least hostname and email; keep the pinned images and asset_version.
+./bootstrap.sh validate --mode web --config ./web.yaml
+sudo ./bootstrap.sh install --mode web --config ./web.yaml
+```
+
+### Separate Node
+
+Install Web first. On the Web host, in the verified assets directory, create a Node identity and encrypted bootstrap bundle. Replace the example domain, public IP, and Web data-service addresses with real values. The control plane issues the identity ID, generation, and three dedicated credentials; do not manually use the template placeholders.
+
+```bash
+sudo install -d -m 0700 /tpdata/trojan-panel/config/node-identities
+sudo docker exec trojan-panel /tpdata/trojan-panel/trojan-panel node-identity register \
+  --name node-sg --domain node.example.com --public-ip 203.0.113.10 \
+  --credential-file /tpdata/trojan-panel/config/node-identities/node-sg.g1.json
+cp ./config-node.yaml ./node-sg.yaml
+chmod 600 ./node-sg.yaml
+# Edit node-sg.yaml: hostname, email, mariadb_host, redis_host, grpc_tls_server_name;
+# Set control_plane_public_ip for a precise network allowlist;
+# also set mariadb_port and redis_port if Web uses non-default ports.
+sudo ./node-bundle create \
+  --credential-file /tpdata/trojan-panel/config/node-identities/node-sg.g1.json \
+  --node-config ./node-sg.yaml \
+  --client-ca /tpdata/trojanpanelnext-pki/client-ca.crt \
+  --output ./node-sg.g1.age
+```
+
+The credential file is root-managed, so the bundle command above also uses `sudo`. Transfer only `node-sg.g1.age` over a trusted channel into the Node host's verified `assets` directory. Download and verify the same Release on Node, then run:
+
+```bash
+sudo ./bootstrap.sh validate --mode node --bundle ./node-sg.g1.age
+sudo ./bootstrap.sh install --mode node --bundle ./node-sg.g1.age
+```
+
+Installation waits for Web-to-Node mTLS verification. In another terminal on Web, use the identity ID and challenge printed by this Node installation:
+
+```bash
+sudo docker exec trojan-panel /tpdata/trojan-panel/trojan-panel \
+  node-identity verify --id "<node-identity-id>" --challenge "<installer-printed-challenge>"
+```
+
+### Single-host combined
+
+Run Web and Node on one host. The domains must differ and both resolve to that host's public IP. Shared Caddy owns ports 80/443; the installer registers the local Node identity.
+
+```bash
+cp ./config-combined.yaml ./combined.yaml
+chmod 600 ./combined.yaml
+# Edit combined.yaml: web_hostname, node_hostname, node_name, node_public_ip, email.
+./bootstrap.sh validate --mode combined --config ./combined.yaml
+sudo ./bootstrap.sh install --mode combined --config ./combined.yaml
+```
+
 ## External TLS mode
 
 `tls_mode` decides who owns certificates and the public entry point:
@@ -69,62 +159,9 @@ never expose MariaDB, Redis, panel API/UI, Core API, or gRPC to `0.0.0.0/0`. Nod
 are direct kernel listeners: open only ports declared by `routes.json`. Fill missing or invalid
 sources and rerun `validate` before applying any rule.
 
-## Versioned Releases and the candidate
+## Version and verification
 
-Production deployments should use one matching Release archive, `release-manifest.json`, `SHA256SUMS`, and `bootstrap.sh`. The archive provides `config-web.yaml`, `config-node.yaml`, and `config-combined.yaml`; copy the matching template for each deployment mode. Do not substitute `latest` images or an unfixed script from a Git branch. The planned candidate tag is `v0.1.0-rc.1`; do not treat it as published until the tag and Release have actually been created and verified. Its asset version is `0.1.0-rc.1`, and its images and configuration are pinned to that version and their digests. An RC does not update Docker `latest`.
-
-Pushing a version tag runs `.github/workflows/publish-images.yml` and creates the GitHub Release. Only an authorised release maintainer should create and push a candidate tag from an approved commit:
-
-```bash
-TAG=v0.1.0-rc.1
-git tag -a "$TAG" -m "TrojanPanel Next $TAG"
-git push origin "refs/tags/$TAG"
-```
-
-The current workflow does not set GitHub's prerelease flag automatically. After the workflow succeeds and before distributing or installing the candidate, the release maintainer must inspect and mark the Release as a prerelease:
-
-```bash
-TAG=v0.1.0-rc.1
-gh release view "$TAG" --repo 1linhao/trojanpanelnext --json tagName,isPrerelease
-gh release edit "$TAG" --repo 1linhao/trojanpanelnext --prerelease
-gh release view "$TAG" --repo 1linhao/trojanpanelnext --json tagName,isPrerelease
-```
-
-Distribute only after `tagName` is `v0.1.0-rc.1` and `isPrerelease` is `true`. A candidate is for isolated-environment acceptance and is not production approval; the release maintainer decides whether to publish a stable version after acceptance and review.
-
-From a trusted administration workstation, download and verify the three signed Release files, then extract and verify every asset digest:
-
-```bash
-TAG=v0.1.0-rc.1
-VERSION="${TAG#v}"
-WORKDIR="./trojanpanelnext-${VERSION}"
-ARCHIVE="trojanpanelnext-installer-${VERSION}.tar.gz"
-mkdir -m 700 "$WORKDIR"
-gh release download "$TAG" --repo 1linhao/trojanpanelnext \
-  --pattern "$ARCHIVE" --pattern release-manifest.json --pattern SHA256SUMS \
-  --dir "$WORKDIR"
-for file in "$ARCHIVE" release-manifest.json SHA256SUMS; do
-  gh attestation verify "$WORKDIR/$file" \
-    --repo 1linhao/trojanpanelnext \
-    --signer-workflow 1linhao/trojanpanelnext/.github/workflows/publish-images.yml
-done
-mkdir "$WORKDIR/assets"
-tar -xzf "$WORKDIR/$ARCHIVE" -C "$WORKDIR/assets"
-(cd "$WORKDIR/assets" && sha256sum -c SHA256SUMS)
-```
-
-Copy a versioned template to a mode-`0600` configuration file and edit domains and deployment values. Run the read-only validation first, review its output and the target host, then explicitly run the root-required install:
-
-```bash
-cd "$WORKDIR/assets"
-cp ./config-web.yaml ./web-site.yaml
-chmod 600 ./web-site.yaml
-# edit ./web-site.yaml
-./bootstrap.sh validate --mode web --config ./web-site.yaml
-sudo ./bootstrap.sh install --mode web --config ./web-site.yaml
-```
-
-`bootstrap.sh` verifies the version, fixed asset set, digests, image references, and configuration before invoking the installer. The installer verifies the secure configuration snapshot again before crossing the host mutation boundary. Attestations verify release provenance and SHA256 verifies archive contents; both must pass. Do not continue when the signer, version, or digest check fails.
+`v0.1.0-rc.2` is the current prerelease candidate. It pins installation assets and image digests and does not update Docker `latest`. The old `v0.1.0-rc.1` never produced a complete Release and is unsuitable for this VPS test. The download commands above verify provenance for all three Release files, equality of the manifests inside and outside the archive, and every asset digest. `bootstrap.sh` also checks asset versions, image references, and the configuration before running the installer. Stop if any check fails.
 
 ## Security and manual gates
 
@@ -138,19 +175,9 @@ The following checks are human release points for every real deployment. The ins
 
 Use a candidate only for isolated-environment acceptance. Complete acceptance, log review, certificate checks, and the production traffic decision before treating it as a stable release.
 
-## Install the Web control plane
+## After installing Web
 
-```bash
-cp ./config-web.yaml ./web.yaml
-chmod 600 ./web.yaml
-```
-
-Set `hostname` and `email`, then validate and install:
-
-```bash
-./install.sh validate --mode web --config ./web.yaml
-sudo ./install.sh install --mode web --config ./web.yaml
-```
+For Web download, configuration, validation, and installation commands, see [Web control plane](#web-control-plane) above.
 
 The first installation generates random `sysadmin`, MariaDB, and Redis passwords, writes them back
 to `web.yaml`, and changes its permissions to `600`. The terminal reports only where the secrets
@@ -179,13 +206,13 @@ declared in `routes.json`.
 
 After registering the Node on the Web control plane, use `node-bundle` from the same Release to create
 an encrypted bootstrap bundle. Copy the Node template to a mode-`0600` working file and set the Node
-domain, Web MariaDB/Redis addresses, and images. The identity ID, generation, and three dedicated
+domain and Web MariaDB/Redis addresses; retain the archive's pinned image digests. The identity ID, generation, and three dedicated
 credentials are injected from the file produced by `node-identity register|rotate`:
 
 ```bash
 cp ./config-node.yaml ./node-sg.yaml
 chmod 600 ./node-sg.yaml
-./node-bundle create \
+sudo ./node-bundle create \
   --credential-file /tpdata/trojan-panel/config/node-identities/node-sg.g1.json \
   --node-config ./node-sg.yaml \
   --client-ca /tpdata/trojanpanelnext-pki/client-ca.crt \
@@ -216,7 +243,7 @@ this from another terminal on the Web control plane:
 
 ```bash
 sudo docker exec trojan-panel /tpdata/trojan-panel/trojan-panel \
-  node-identity verify --id <node-identity-id> --challenge <installer-printed-challenge>
+  node-identity verify --id "<node-identity-id>" --challenge "<installer-printed-challenge>"
 ```
 
 The challenge is random for this installation and must be copied from that installation's output.
@@ -244,7 +271,7 @@ the encrypted `--bundle` for a production Node's initial install.
 Only when an external host manager has generated a Protocol v1 EntrySpec should you pass it explicitly; a standalone deployment does not need this option:
 
 ```bash
-sudo ./install.sh install --mode node --config ./node-sg.yaml \
+sudo ./bootstrap.sh install --mode node --config ./node-sg.yaml \
   --entry-spec /var/lib/vps-factory/service-specs/trojanpanelnext-node.json
 ```
 
@@ -259,9 +286,9 @@ differ. Legacy `purpose` remains accepted only as compatibility input.
 ## Recreate or remove
 
 ```bash
-sudo ./install.sh install --mode web --config ./web.yaml --force
-sudo ./install.sh remove --mode web --config ./web.yaml --keep-data
-sudo ./install.sh remove --mode node --config ./node-installed.yaml --purge-data
+sudo ./bootstrap.sh install --mode web --config ./web.yaml --force
+sudo ./bootstrap.sh remove --mode web --config ./web.yaml --keep-data
+sudo ./bootstrap.sh remove --mode node --config ./node-installed.yaml --purge-data
 ```
 
 `--keep-data` overrides `purge_data` in the config for a recoverable removal;
@@ -272,7 +299,7 @@ not restore that role implicitly. Confirm that its domain, ports, and retained d
 deployment, then request the role explicitly:
 
 ```bash
-sudo ./install.sh install --mode combined --config ./combined-site.yaml --restore-role web
+sudo ./bootstrap.sh install --mode combined --config ./combined-site.yaml --restore-role web
 ```
 
 `--restore-role` accepts only the currently inactive `web` or `node` role. Before restoring, the Entry
@@ -300,17 +327,68 @@ preserves shared MariaDB/Redis resources. Node removal revokes its control-plane
 If Web was removed first, a one-shot control-plane CLI revokes the remaining Node identity.
 Combined installation rejects an existing standalone Node Entry and verifies Web-to-Node mTLS/gRPC before success.
 
-## Configuration files
+## Configuration options
 
-The Release `config-web.yaml` contains the hostname, images, ports, mTLS identity directory, and internal credentials.
+All keys live under `trojanpanelnext:` in the YAML file. Use the templates from the Release archive. The `example.com` domains and `203.0.113.10` IP are placeholders to replace before installation. The archive already pins image fields to digests; retain them. The repository's `examples/` files use `latest` and are not candidate-release configurations.
 
-The Release `config-node.yaml` contains the node hostname, control-plane database and Redis connections, gRPC settings, public CA directory, and certificate paths.
+### Shared by all three modes
 
-The Release `config-combined.yaml` contains both domains, the local Node public IP, its
-dedicated identity credential path, and shared Entry ports. `node_identity_credential_file` must remain
-under `/tpdata/trojan-panel/config/node-identities/` and root-only.
+| Key | Purpose and value |
+| --- | --- |
+| `schema_version` | Configuration format version; currently fixed at `1`. |
+| `asset_version` | Must match the installer assets; already set by the rc.2 archive. Leave unchanged. |
+| `deployment_mode` | Host role: `web`, `node`, or `combined`; must match `--mode`. |
+| `email` | Contact address for Caddy/ACME; use an address that receives notifications. |
+| `caddy_image`, `mariadb_image`, `redis_image` | Entry and data-service images, pinned to digests in the archive. |
+| `api_image`, `web_image`, `node_agent_image` | Product images, pinned to digests. Every template keeps all three keys, though a mode may run only some services. |
+| `force` | `0` for normal reconciliation; `1` to recreate existing containers and pull images again. A single install may also use `--force`. |
+| `purge_data` | `0` retains generated data on removal; `1` removes it. `--keep-data` or `--purge-data` overrides it for one removal. |
 
-For external TLS, use a copied `config-web.yaml` or `config-node.yaml` and set these keys:
+### Web template `config-web.yaml`
+
+| Key | Purpose and value |
+| --- | --- |
+| `hostname` | Public Web domain resolving to the Web host; Caddy serves HTTPS for it. |
+| `mariadb_port`, `redis_port` | Web data-service ports; a separate Node must use the same ports, with access restricted to authorised Nodes. |
+| `panel_port`, `ui_port` | Local API and Web UI ports proxied by the Entry; do not expose them to all sources. |
+| `mariadb_password`, `redis_password`, `sysadmin_password` | May stay empty on first install; the installer generates and writes them back. Retain the written values on replay and protect the file. |
+| `grpc_client_cert_path`, `grpc_client_key_path` | Web's client certificate and private-key paths for Node gRPC; the private key stays on Web. |
+| `grpc_server_ca_path` | CA path for verifying the Node gRPC server certificate; the installer PKI flow handles the empty default. |
+| `pki_bundle_dir` | Web mTLS/CA material, default `/tpdata/trojanpanelnext-pki`; Node bundling reads `client-ca.crt` here. |
+
+### Node template `config-node.yaml`
+
+| Key | Purpose and value |
+| --- | --- |
+| `hostname` | Node domain; it must match the registered `--domain` and certificate name. |
+| `node_caddy_http_port`, `node_caddy_https_port` | Node HTTP/ACME and HTTPS Entry ports; template values are `80` and `8863`. Review the resulting allowlist. |
+| `mariadb_host`, `mariadb_port`, `database`, `account_table` | Web database address, port, database, and account table. Set the actual Web host/port; keep the default database/table. |
+| `mariadb_user`, `mariadb_password` | Dedicated Node database identity injected from registration into the encrypted bundle. Placeholders are unusable; never use Web root. |
+| `redis_host`, `redis_port` | Web Redis address and port; set actual Web values. |
+| `redis_username`, `redis_password` | Dedicated Node cache ACL identity injected from registration; never use Redis `default`. |
+| `redis_auth_username`, `redis_auth_password` | Separate read-only auth ACL identity injected from registration; distinct from the cache identity. |
+| `control_plane_public_ip` | Optional public Web IP for the data-plane inbound source plan; review the generated network plan if left empty. |
+| `grpc_port`, `core_port` | Node gRPC management and internal Core ports; restrict gRPC to the Web control plane. |
+| `node_server_id`, `node_identity_id`, `node_identity_generation` | Web-issued server ID, identity UUID, and credential generation; injected by `node-bundle`. Do not use template placeholders. |
+| `grpc_tls_mode`, `grpc_tls_server_name` | Currently `mtls` only; server name must match the Node domain. |
+| `grpc_client_ca_path` | Public CA file on the Node that verifies the Web client certificate. The bundle includes no Web private key. |
+| `pki_bundle_dir`, `kernel_runtime_path` | Node PKI and proxy-kernel runtime directories; defaults suit standalone deployment. |
+
+### Combined template `config-combined.yaml`
+
+| Key | Purpose and value |
+| --- | --- |
+| `web_hostname`, `node_hostname` | Two distinct domains resolving to this host's public IP; shared Caddy owns 80/443. |
+| `node_name`, `node_public_ip` | Stable local Node name and real public IP; the installer registers its dedicated identity. |
+| `node_identity_credential_file` | Root-only local identity file under `/tpdata/trojan-panel/config/node-identities/`; the default directory is suitable. |
+| `mariadb_port`, `redis_port`, `panel_port`, `ui_port` | Local data-service, API, and UI ports; they must not conflict with 80/443. |
+| `core_port`, `grpc_port`, `grpc_tls_mode` | Local Core and gRPC ports; TLS mode is `mtls`. |
+| `node_caddy_http_port`, `node_caddy_https_port` | Shared Entry ports; combined requires exactly `80` and `443`. |
+| `pki_bundle_dir` | Local Web/Node PKI material, default `/tpdata/trojanpanelnext-pki`. |
+
+### Optional external TLS keys
+
+Add these keys to a copied `web` or separate `node` working configuration only when you manage the Entry yourself. Combined currently requires installer-managed Caddy.
 
 | Key | Default | Meaning |
 | --- | --- | --- |

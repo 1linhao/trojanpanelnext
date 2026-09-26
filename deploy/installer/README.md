@@ -2,7 +2,7 @@
 
 简体中文 | [English](README_EN.md)
 
-安装器可直接在受支持的 Linux 主机上部署 TrojanPanel Next，不依赖外部 VPS 管理系统、控制台或编排后台。部署使用一个版本化 Release、一份 YAML 配置和一个明确的部署模式，全程无交互。
+安装器可直接在受支持的 Linux 主机上部署 TrojanPanel Next，不依赖外部 VPS 管理系统、控制台或编排后台。部署使用一个版本化 Release、一份 YAML 配置和一个明确的部署模式；Node 引导包默认交互读取加密口令，也支持通过环境变量进行无交互调用。
 
 ## 用途模式
 
@@ -13,6 +13,96 @@
 | `combined` | 单机主控与节点 | Web 主控、Node Agent、共享入口及本机数据服务 |
 
 `web` 与 `node` 可部署在不同主机，先部署 Web 主控，再为每个 Node 登记并签发独立 MariaDB/Redis 身份；Node 不复用 Web 的 root 或 default 用户。`combined` 在同一主机运行两种职责，使用两个不同且解析到该机公网 IP 的域名。独立部署默认由安装器管理 Caddy 与 ACME 入口；`tls_mode: external` 仅在操作者已有并自行管理入口时使用。`--entry-spec` 是可选的外部入口集成，不是安装前提。
+
+## 下载 Release 与示例配置
+
+当前可用于 VPS 验收的版本是 [v0.1.0-rc.2](https://github.com/1linhao/trojanpanelnext/releases/tag/v0.1.0-rc.2)。以下命令在可信工作站或目标 Debian 12 x86_64 主机运行。归档内已带对应版本的 `config-web.yaml`、`config-node.yaml`、`config-combined.yaml`，无需从源码分支另取示例配置。Web 和 Node 分机部署时，两台主机都使用同一版本归档。
+
+```bash
+set -euo pipefail
+TAG=v0.1.0-rc.2
+VERSION="${TAG#v}"
+WORKDIR="./trojanpanelnext-${VERSION}"
+ARCHIVE="trojanpanelnext-installer-${VERSION}.tar.gz"
+mkdir -m 700 "$WORKDIR"
+gh release download "$TAG" --repo 1linhao/trojanpanelnext \
+  --pattern "$ARCHIVE" --pattern release-manifest.json --pattern SHA256SUMS \
+  --dir "$WORKDIR"
+for file in "$ARCHIVE" release-manifest.json SHA256SUMS; do
+  gh attestation verify "$WORKDIR/$file" \
+    --repo 1linhao/trojanpanelnext \
+    --signer-workflow 1linhao/trojanpanelnext/.github/workflows/publish-images.yml
+done
+mkdir "$WORKDIR/assets"
+tar -xzf "$WORKDIR/$ARCHIVE" -C "$WORKDIR/assets"
+cmp "$WORKDIR/release-manifest.json" "$WORKDIR/assets/release-manifest.json"
+cmp "$WORKDIR/SHA256SUMS" "$WORKDIR/assets/SHA256SUMS"
+(cd "$WORKDIR/assets" && sha256sum -c SHA256SUMS)
+cd "$WORKDIR/assets"
+```
+
+验证失败就停止；不要改归档内的脚本、清单或原始模板。把所需模板复制为权限 `0600` 的工作配置，只编辑副本。`gh` 只用于下载和验证，目标主机运行 `bootstrap.sh` 时不需要 Git 仓库。
+
+## 选择部署模式
+
+以下命令均在已验证的 `assets` 目录执行。先检查域名解析、80/443 和所需 Node 协议端口，再运行 `validate`；`install` 会修改宿主机并需要 root。具体字段见下方[配置选项](#配置选项)。
+
+### Web 主控
+
+```bash
+cp ./config-web.yaml ./web.yaml
+chmod 600 ./web.yaml
+# 编辑 web.yaml：至少填写 hostname、email；保留镜像和 asset_version 的固定值。
+./bootstrap.sh validate --mode web --config ./web.yaml
+sudo ./bootstrap.sh install --mode web --config ./web.yaml
+```
+
+### 独立 Node
+
+先完成 Web 主控安装。在 Web 主机的已验证资产目录中创建 Node 身份和加密引导包；把示例域名、公网 IP 和 Web 数据服务地址换成实际值。身份 ID、代次和三组专用凭据由控制面签发，不要手填模板中的占位值。
+
+```bash
+sudo install -d -m 0700 /tpdata/trojan-panel/config/node-identities
+sudo docker exec trojan-panel /tpdata/trojan-panel/trojan-panel node-identity register \
+  --name node-sg --domain node.example.com --public-ip 203.0.113.10 \
+  --credential-file /tpdata/trojan-panel/config/node-identities/node-sg.g1.json
+cp ./config-node.yaml ./node-sg.yaml
+chmod 600 ./node-sg.yaml
+# 编辑 node-sg.yaml：hostname、email、mariadb_host、redis_host、grpc_tls_server_name；
+# 填写 control_plane_public_ip 便于生成精确的网络放行清单；
+# Web 非默认端口时同步 mariadb_port、redis_port。
+sudo ./node-bundle create \
+  --credential-file /tpdata/trojan-panel/config/node-identities/node-sg.g1.json \
+  --node-config ./node-sg.yaml \
+  --client-ca /tpdata/trojanpanelnext-pki/client-ca.crt \
+  --output ./node-sg.g1.age
+```
+
+身份文件由 root 管理，因此上面的打包命令也使用 `sudo`。通过可信通道仅把 `node-sg.g1.age` 传到 Node 主机已验证的 `assets` 目录。Node 主机也下载并验证同一 Release，然后执行：
+
+```bash
+sudo ./bootstrap.sh validate --mode node --bundle ./node-sg.g1.age
+sudo ./bootstrap.sh install --mode node --bundle ./node-sg.g1.age
+```
+
+安装会等待 Web→Node mTLS 验证；从 Web 主机的另一终端使用 Node 安装输出的身份 ID 和 challenge：
+
+```bash
+sudo docker exec trojan-panel /tpdata/trojan-panel/trojan-panel \
+  node-identity verify --id "<node-identity-id>" --challenge "<installer-printed-challenge>"
+```
+
+### 单机 combined
+
+在一台主机上部署 Web 与 Node。两个域名必须不同且都指向该主机公网 IP；共享 Caddy 占用 80/443，Node 身份由安装器在本机登记。
+
+```bash
+cp ./config-combined.yaml ./combined.yaml
+chmod 600 ./combined.yaml
+# 编辑 combined.yaml：web_hostname、node_hostname、node_name、node_public_ip、email。
+./bootstrap.sh validate --mode combined --config ./combined.yaml
+sudo ./bootstrap.sh install --mode combined --config ./combined.yaml
+```
 
 ## 外部 TLS 模式
 
@@ -65,62 +155,9 @@ sudo test ! -e /tpdata/trojan-panel-core/external/routes.json || \
 API/UI、Core API 和 gRPC 不得对 `0.0.0.0/0` 开放。Node 协议端口是内核直连，仅按
 `routes.json` 中实际声明的端口放行。来源为空或解析异常时，先补齐配置并重新执行 `validate`。
 
-## 版本化 Release 与候选版本
+## 版本与校验
 
-生产部署应使用同一个版本的 Release 归档、`release-manifest.json`、`SHA256SUMS` 和 `bootstrap.sh`。归档提供 `config-web.yaml`、`config-node.yaml` 和 `config-combined.yaml`；三种部署模式都从对应模板复制配置副本。不要用 `latest` 镜像或从 Git 分支取未固定版本的安装脚本替代 Release。计划中的候选版本标签为 `v0.1.0-rc.1`；在标签和 Release 实际创建并验证前，不应把它当作已发布版本。标签中的版本号为 `0.1.0-rc.1`，此版本生成的镜像和配置会固定到该版本及其摘要，RC 不会更新 Docker `latest`。
-
-推送版本标签会触发 `.github/workflows/publish-images.yml` 并自动创建 GitHub Release。只有获准的发布维护者才应在审核过的提交上创建并推送候选标签：
-
-```bash
-TAG=v0.1.0-rc.1
-git tag -a "$TAG" -m "TrojanPanel Next $TAG"
-git push origin "refs/tags/$TAG"
-```
-
-当前发布工作流创建 Release 时未自动设置 GitHub 的 prerelease 标记。流水线成功后、分发或安装候选版前，发布维护者必须检查并将 Release 标记为预发布：
-
-```bash
-TAG=v0.1.0-rc.1
-gh release view "$TAG" --repo 1linhao/trojanpanelnext --json tagName,isPrerelease
-gh release edit "$TAG" --repo 1linhao/trojanpanelnext --prerelease
-gh release view "$TAG" --repo 1linhao/trojanpanelnext --json tagName,isPrerelease
-```
-
-确认 `tagName` 为 `v0.1.0-rc.1` 且 `isPrerelease` 为 `true` 后再分发。候选版本用于隔离环境验收，不代表已获生产批准；候选验收及人工审核通过后，才由发布维护者决定是否发布稳定版本。
-
-在可信的管理工作站下载并验证三个已签名 Release 文件，然后解包并检查归档内全部资产摘要：
-
-```bash
-TAG=v0.1.0-rc.1
-VERSION="${TAG#v}"
-WORKDIR="./trojanpanelnext-${VERSION}"
-ARCHIVE="trojanpanelnext-installer-${VERSION}.tar.gz"
-mkdir -m 700 "$WORKDIR"
-gh release download "$TAG" --repo 1linhao/trojanpanelnext \
-  --pattern "$ARCHIVE" --pattern release-manifest.json --pattern SHA256SUMS \
-  --dir "$WORKDIR"
-for file in "$ARCHIVE" release-manifest.json SHA256SUMS; do
-  gh attestation verify "$WORKDIR/$file" \
-    --repo 1linhao/trojanpanelnext \
-    --signer-workflow 1linhao/trojanpanelnext/.github/workflows/publish-images.yml
-done
-mkdir "$WORKDIR/assets"
-tar -xzf "$WORKDIR/$ARCHIVE" -C "$WORKDIR/assets"
-(cd "$WORKDIR/assets" && sha256sum -c SHA256SUMS)
-```
-
-复制版本化模板到权限为 `0600` 的配置副本，编辑域名和其他部署值；先运行只读的 `validate`，检查输出及目标主机后，再明确执行需要 root 的安装：
-
-```bash
-cd "$WORKDIR/assets"
-cp ./config-web.yaml ./web-site.yaml
-chmod 600 ./web-site.yaml
-# 编辑 ./web-site.yaml
-./bootstrap.sh validate --mode web --config ./web-site.yaml
-sudo ./bootstrap.sh install --mode web --config ./web-site.yaml
-```
-
-`bootstrap.sh` 会在执行安装器前校验版本、固定资产集、摘要、镜像引用及配置；安装器越过主机变更边界前还会再次验证安全配置快照。归档 attestation 验证发布来源，SHA256 校验归档内资产完整性，两者都应通过。不要在未核实签名者、版本或摘要失败时继续安装。
+当前 `v0.1.0-rc.2` 是预发布候选版。它固定了安装资产和镜像摘要，不更新 Docker `latest`。旧 `v0.1.0-rc.1` 没有生成完整 Release，不应用于本次 VPS 测试。上面的下载命令会验证三个发布文件的来源证明、包内外清单一致性及全部资产摘要；`bootstrap.sh` 在执行安装器前还会验证资产版本、镜像引用和配置。任何一步失败都应停止。
 
 ## 安全与人工门禁
 
@@ -134,21 +171,9 @@ sudo ./bootstrap.sh install --mode web --config ./web-site.yaml
 
 候选版只用于隔离环境验收。验收、日志检查、证书状态检查和生产流量切换完成前，不应把候选版当作稳定版使用。
 
-## Web 主控安装
+## Web 安装后的行为
 
-从已验证的 Release 归档目录复制配置模板：
-
-```bash
-cp ./config-web.yaml ./web.yaml
-chmod 600 ./web.yaml
-```
-
-编辑 `hostname` 和 `email`，然后先校验再安装：
-
-```bash
-./install.sh validate --mode web --config ./web.yaml
-sudo ./install.sh install --mode web --config ./web.yaml
-```
+Web 的下载、配置、校验和安装命令见上方[Web 主控](#web-主控)。
 
 首次安装会生成 `sysadmin`、MariaDB 与 Redis 的随机密码，写回 `web.yaml`
 并将文件权限设为 `600`。终端只显示密码保存位置，不显示密码。
@@ -164,13 +189,13 @@ sudo ./install.sh install --mode web --config ./web.yaml
 ## Node Agent 安装
 
 在 Web 主控登记 Node 后，使用同一版本 Release 中的 `node-bundle` 生成加密引导包。先把
-Node 模板复制到权限为 `0600` 的工作文件，填写节点域名、Web MariaDB/Redis 地址和镜像；
+Node 模板复制到权限为 `0600` 的工作文件，填写节点域名和 Web MariaDB/Redis 地址，保留归档固定的镜像摘要；
 身份 ID、代次及三组专用凭据会从 `node-identity register|rotate` 生成的文件中注入：
 
 ```bash
 cp ./config-node.yaml ./node-sg.yaml
 chmod 600 ./node-sg.yaml
-./node-bundle create \
+sudo ./node-bundle create \
   --credential-file /tpdata/trojan-panel/config/node-identities/node-sg.g1.json \
   --node-config ./node-sg.yaml \
   --client-ca /tpdata/trojanpanelnext-pki/client-ca.crt \
@@ -198,7 +223,7 @@ Web→Node mTLS/gRPC 验证。在 Node 安装等待期间，从 Web 主控的另
 
 ```bash
 sudo docker exec trojan-panel /tpdata/trojan-panel/trojan-panel \
-  node-identity verify --id <node-identity-id> --challenge <installer-printed-challenge>
+  node-identity verify --id "<node-identity-id>" --challenge "<installer-printed-challenge>"
 ```
 
 challenge 由本次安装随机生成并打印，只能使用该次输出。调用使用 Web 持有的客户端证书并校验
@@ -223,7 +248,7 @@ rm -rf ./node-bundle-extracted
 仅当外部宿主管理系统已生成 Protocol v1 EntrySpec 时，才通过 `--entry-spec` 把它交给安装器；普通独立部署不需要此参数：
 
 ```bash
-sudo ./install.sh install --mode node --config ./node-sg.yaml \
+sudo ./bootstrap.sh install --mode node --config ./node-sg.yaml \
   --entry-spec /var/lib/vps-factory/service-specs/trojanpanelnext-node.json
 ```
 
@@ -239,13 +264,13 @@ sudo ./install.sh install --mode node --config ./node-sg.yaml \
 重新创建已有容器：
 
 ```bash
-sudo ./install.sh install --mode web --config ./web.yaml --force
+sudo ./bootstrap.sh install --mode web --config ./web.yaml --force
 ```
 
 保留数据卸载服务：
 
 ```bash
-sudo ./install.sh remove --mode web --config ./web.yaml --keep-data
+sudo ./bootstrap.sh remove --mode web --config ./web.yaml --keep-data
 ```
 
 `--keep-data` 会覆盖配置中的 `purge_data`，适合由外部管理系统执行可恢复卸载。
@@ -255,7 +280,7 @@ combined 卸载后，使用原 combined 配置重跑不会自动恢复已移除�
 `committed_target.digest`（64 位十六进制摘要），否则必须先做显式迁移：
 
 ```bash
-sudo ./install.sh install --mode combined --config ./combined-site.yaml --restore-role web
+sudo ./bootstrap.sh install --mode combined --config ./combined-site.yaml --restore-role web
 ```
 
 `--restore-role` 只接受当前处于 inactive 状态的 `web` 或 `node`，普通重跑和证书刷新不会隐式恢复角色。
@@ -263,7 +288,7 @@ sudo ./install.sh install --mode combined --config ./combined-site.yaml --restor
 删除服务及生成数据：
 
 ```bash
-sudo ./install.sh remove --mode node --config ./node-installed.yaml --purge-data
+sudo ./bootstrap.sh remove --mode node --config ./node-installed.yaml --purge-data
 ```
 
 combined 使用两个不同且都解析到本机公网 IP 的域名。单个共享入口拥有 80/443，Node 内核协议
@@ -285,17 +310,68 @@ MariaDB/Redis 等共享资源不会被单角色卸载误删；Node 移除会先�
 即使先移除 Web，再移除 Node，安装器也会用一次性控制面 CLI 撤销该身份。combined 安装
 拒绝接管已有的独立 Node 入口；成功前还会验证 Web→Node mTLS/gRPC。
 
-## 配置文件
+## 配置选项
 
-Release 的 `config-web.yaml` 包含域名、镜像、服务端口、mTLS 身份目录以及主控内部凭据。
+所有字段都位于 YAML 的 `trojanpanelnext:` 下。以 Release 归档内的模板为准；下面的 `example.com` 域名和 `203.0.113.10` IP 只是占位示例，安装前必须替换。镜像字段在归档中已是固定 digest，保留原值；不要把仓库 `examples/` 中的 `latest` 示例当成候选版配置。
 
-Release 的 `config-node.yaml` 包含节点域名、主控数据库连接、Redis 连接、gRPC、公开 CA 目录与证书路径。
+### 三种模式共用
 
-Release 的 `config-combined.yaml` 包含 Web 与 Node 双域名、本机 Node 公网 IP、独立 Node 身份
-凭据路径及共享入口端口。`node_identity_credential_file` 必须位于
-`/tpdata/trojan-panel/config/node-identities/` 下并保持 root-only。
+| 键 | 功能与填写方式 |
+| --- | --- |
+| `schema_version` | 配置格式版本，当前固定为 `1`。 |
+| `asset_version` | 与安装包版本严格一致；`rc.2` 归档已填好，保持不变。 |
+| `deployment_mode` | 本机职责：`web`、`node` 或 `combined`；须与命令的 `--mode` 匹配。 |
+| `email` | Caddy/ACME 联系邮箱；填写可接收通知的地址。 |
+| `caddy_image`、`mariadb_image`、`redis_image` | 入口和数据服务的运行镜像；归档中固定为 digest。 |
+| `api_image`、`web_image`、`node_agent_image` | 三个产品镜像；归档中固定为 digest。模板在三种模式都保留这三个字段，不表示每种模式都会运行全部容器。 |
+| `force` | `0` 为常规收敛；`1` 要求重建已有容器/重新拉取镜像。单次安装也可显式传 `--force`。 |
+| `purge_data` | `0` 为移除服务时保留生成数据；`1` 为移除时清理数据。单次移除可用 `--keep-data` 或 `--purge-data` 覆盖。 |
 
-外部 TLS 模式仍使用 `config-web.yaml` 或 `config-node.yaml`，并在复制出的工作文件中设置以下键：
+### Web 配置 `config-web.yaml`
+
+| 键 | 功能与填写方式 |
+| --- | --- |
+| `hostname` | Web 主控公网域名，解析到 Web 主机；Caddy 用于 HTTPS。 |
+| `mariadb_port`、`redis_port` | Web 数据服务端口；分机 Node 中必须填写相同端口，并只对授权 Node 开放。 |
+| `panel_port`、`ui_port` | 本机 API 与 Web UI 内部端口，由入口反代；不要公开给所有来源。 |
+| `mariadb_password`、`redis_password`、`sysadmin_password` | 首装可保留空串，由安装器生成并写回配置；后续重跑保留写回的值。配置文件为敏感文件。 |
+| `grpc_client_cert_path`、`grpc_client_key_path` | Web 用于访问 Node gRPC 的客户端证书与私钥路径；私钥只留在 Web。 |
+| `grpc_server_ca_path` | 验证 Node gRPC 服务端证书的 CA 路径；默认空值由安装器的 PKI 流程处理。 |
+| `pki_bundle_dir` | Web 端 mTLS/CA 材料目录，默认 `/tpdata/trojanpanelnext-pki`；生成 Node 包时读取其中的 `client-ca.crt`。 |
+
+### Node 配置 `config-node.yaml`
+
+| 键 | 功能与填写方式 |
+| --- | --- |
+| `hostname` | Node 域名，须与身份登记时的 `--domain` 和证书名称一致。 |
+| `node_caddy_http_port`、`node_caddy_https_port` | Node 入口的 HTTP/ACME 与 HTTPS 端口；模板为 `80`、`8863`，按实际放行清单检查。 |
+| `mariadb_host`、`mariadb_port`、`database`、`account_table` | Web 数据库地址、端口及业务库/账号表；主机和端口按 Web 实际值填写，默认库表保持不变。 |
+| `mariadb_user`、`mariadb_password` | Node 专用数据库身份，由登记凭据注入加密包；模板占位符不是可用凭据，禁止使用 Web `root`。 |
+| `redis_host`、`redis_port` | Web Redis 地址和端口，按 Web 实际值填写。 |
+| `redis_username`、`redis_password` | Node cache ACL 身份，由登记凭据注入；不得使用 Redis `default`。 |
+| `redis_auth_username`、`redis_auth_password` | 独立的只读 auth ACL 身份，由登记凭据注入；与 cache 身份不同。 |
+| `control_plane_public_ip` | 可选的 Web 主控公网 IP，用于生成数据层入站来源清单；留空时先审阅生成的网络计划。 |
+| `grpc_port`、`core_port` | Node gRPC 管理接口与 Core 内部端口；gRPC 只允许 Web 主控访问。 |
+| `node_server_id`、`node_identity_id`、`node_identity_generation` | Web 登记产生的 Node 服务器 ID、身份 UUID 和凭据代次；由 `node-bundle` 注入，勿沿用模板占位值。 |
+| `grpc_tls_mode`、`grpc_tls_server_name` | 当前支持 `mtls`；证书服务端名称应与 Node 域名一致。 |
+| `grpc_client_ca_path` | Node 上验证 Web 客户端证书的公开 CA 文件路径；引导包提供证书，不含 Web 私钥。 |
+| `pki_bundle_dir`、`kernel_runtime_path` | Node PKI 文件目录与内核运行目录；默认值适用于独立部署。 |
+
+### 单机配置 `config-combined.yaml`
+
+| 键 | 功能与填写方式 |
+| --- | --- |
+| `web_hostname`、`node_hostname` | 两个不同域名，都必须解析到本机公网 IP；共享 Caddy 管理 80/443。 |
+| `node_name`、`node_public_ip` | 本机 Node 的稳定名称和实际公网 IP；安装器据此登记独立身份。 |
+| `node_identity_credential_file` | 本机 Node 身份文件的 root-only 路径，必须位于 `/tpdata/trojan-panel/config/node-identities/` 下；保持默认目录即可。 |
+| `mariadb_port`、`redis_port`、`panel_port`、`ui_port` | 本机数据服务、API、UI 端口；不能与入口的 80/443 冲突。 |
+| `core_port`、`grpc_port`、`grpc_tls_mode` | 本机 Core 和 gRPC 端口；TLS 模式为 `mtls`。 |
+| `node_caddy_http_port`、`node_caddy_https_port` | 共享入口端口，combined 固定要求 `80`、`443`。 |
+| `pki_bundle_dir` | 本机 Web/Node PKI 材料目录，默认 `/tpdata/trojanpanelnext-pki`。 |
+
+### 可选的外部 TLS 配置
+
+仅 `web` 或独立 `node` 使用已自管的入口时，在复制出的工作配置中增加下列键；combined 当前只支持安装器管理的 Caddy。
 
 | 键 | 默认值 | 说明 |
 | --- | --- | --- |
