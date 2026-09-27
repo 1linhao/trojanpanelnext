@@ -92,18 +92,17 @@ EXTERNAL_ROUTES_NOTE=""
 
 TP_FORCE="${TP_FORCE:-0}"
 TP_PURGE_DATA="${TP_PURGE_DATA:-0}"
-TP_INSTALL_DEPS="${TP_INSTALL_DEPS:-1}"
 TP_HEALTH_ATTEMPTS="${TP_HEALTH_ATTEMPTS:-30}"
 TP_HEALTH_DELAY_SECONDS="${TP_HEALTH_DELAY_SECONDS:-2}"
 TP_CONTAINER_ATTEMPTS="${TP_CONTAINER_ATTEMPTS:-60}"
 TP_CONTAINER_DELAY_SECONDS="${TP_CONTAINER_DELAY_SECONDS:-2}"
-TP_OS_RELEASE_FILE="${TP_OS_RELEASE_FILE:-/etc/os-release}"
 TP_DEPLOYMENT_MODE=""
 TP_CONFIG_ROOT="${TP_CONFIG_ROOT:-}"
 TP_CONFIG_FILE=""
 TP_CONFIG_READ_FILE=""
 TP_CONFIG_IDENTITY=""
 TP_REQUEST_COMMAND=""
+TP_REQUEST_MODE=""
 INSTALLER_ASSET_VERSION="development"
 TP_ASSET_VERSION=""
 TP_TEMP_TOOLS_DIR=""
@@ -112,14 +111,17 @@ TP_NODE_BUNDLE_DIR=""
 TP_NODE_BUNDLE_TMP_ROOT="${TP_NODE_BUNDLE_TMP_ROOT:-/dev/shm}"
 TP_NODE_BUNDLE_ACTIVE=0
 TP_DEPENDENCY_PLAN=(
-  'docker|docker|install|docker|-|download and run the Docker installer from https://get.docker.com'
-  'age|age|install|package|age|apt-get install -y age'
-  'curl|curl|base|package|curl|apt-get install -y curl'
-  'tar|tar|base|package|tar|apt-get install -y tar'
-  'coreutils|od sha256sum install realpath|base|package|coreutils|apt-get install -y coreutils'
-  'openssl|openssl|base|package|openssl|apt-get install -y openssl'
-  "yq|yq|install|yq|-|install the pinned ${YQ_VERSION} linux_amd64 binary from github.com/mikefarah/yq to /usr/local/bin/yq"
-  'jq|jq|entry|package|jq|apt-get install -y jq'
+  'docker|docker|all|install Docker and start its daemon'
+  'curl|curl|all|install curl'
+  'tar|tar|all|install tar'
+  'coreutils|od sha256sum install realpath cp mv mktemp sort dirname chmod mkdir rm head wc tr date stat id touch|all|install GNU coreutils'
+  'awk|awk|all|install awk'
+  'grep|grep|all|install grep'
+  'sed|sed|all|install sed'
+  'findutils|find|all|install findutils'
+  'openssl|openssl|all|install OpenSSL'
+  "yq|yq|all|install yq ${YQ_VERSION} (mikefarah/yq)"
+  'jq|jq|entry|install jq'
 )
 
 cleanup() {
@@ -198,42 +200,26 @@ require_root() {
   fi
 }
 
-require_supported_install_platform() {
-  local os_id=""
-  local os_version=""
-  local architecture
-  architecture="$(uname -m)"
-
-  if [[ ! -r "${TP_OS_RELEASE_FILE}" ]]; then
-    echo_content red "Cannot identify the operating system: ${TP_OS_RELEASE_FILE} is not readable"
+require_supported_asset_architecture() {
+  if [[ "$(uname -s)" != Linux ]]; then
+    echo_content red "Bundled secure-file helper requires Linux; host kernel: $(uname -s)"
     exit 1
   fi
-
-  os_id="$(sed -nE 's/^ID="?([^"[:space:]]+)"?$/\1/p' "${TP_OS_RELEASE_FILE}" | head -n 1)"
-  os_version="$(sed -nE 's/^VERSION_ID="?([^"[:space:]]+)"?$/\1/p' "${TP_OS_RELEASE_FILE}" | head -n 1)"
-  if [[ "${os_id}" != debian || "${os_version}" != 12 || "${architecture}" != x86_64 ]]; then
-    echo_content red "Unsupported platform: ${os_id:-unknown} ${os_version:-unknown} ${architecture}"
-    echo_content yellow "Bare VPS installation currently supports Debian 12 x86_64 only"
+  case "$(uname -m)" in
+  x86_64 | amd64) ;;
+  *)
+    echo_content red "Bundled secure-file helper supports Linux x86_64 only; host architecture: $(uname -m)"
     exit 1
-  fi
-}
-
-append_unique_word() {
-  local array_name="$1"
-  local value="$2"
-  local known
-  local -n words="${array_name}"
-  for known in "${words[@]}"; do
-    [[ "${known}" == "${value}" ]] && return
-  done
-  words+=("${value}")
+    ;;
+  esac
 }
 
 required_dependency_plan() {
-  local record name commands scope method target advice
+  local record name commands scope advice
   for record in "${TP_DEPENDENCY_PLAN[@]}"; do
-    IFS='|' read -r name commands scope method target advice <<<"${record}"
-    if [[ "${scope}" == entry && -z "${ENTRY_SPEC_FILE:-}" ]]; then
+    IFS='|' read -r name commands scope advice <<<"${record}"
+    if [[ "${scope}" == entry && -z "${ENTRY_SPEC_FILE:-}" &&
+      "${TP_REQUEST_MODE}" != node && "${TP_REQUEST_MODE}" != combined ]]; then
       continue
     fi
     printf '%s\n' "${record}"
@@ -242,8 +228,8 @@ required_dependency_plan() {
 
 dependency_record_is_missing() {
   local record="$1"
-  local name commands scope method target advice required_command
-  IFS='|' read -r name commands scope method target advice <<<"${record}"
+  local name commands scope advice required_command
+  IFS='|' read -r name commands scope advice <<<"${record}"
   for required_command in ${commands}; do
     command -v "${required_command}" >/dev/null 2>&1 || return 0
   done
@@ -252,13 +238,8 @@ dependency_record_is_missing() {
 
 missing_install_dependencies() {
   TP_MISSING_DEPENDENCY_PLAN=()
-  local method_filter="${1:-}"
-  local record name commands scope method target advice
+  local record
   while IFS= read -r record; do
-    IFS='|' read -r name commands scope method target advice <<<"${record}"
-    if [[ -n "${method_filter}" && "${method}" != "${method_filter}" ]]; then
-      continue
-    fi
     if dependency_record_is_missing "${record}"; then
       TP_MISSING_DEPENDENCY_PLAN+=("${record}")
     fi
@@ -266,77 +247,22 @@ missing_install_dependencies() {
 }
 
 print_dependency_installation_advice() {
-  local record name commands scope method target advice
-  echo_content red "Missing required Debian 12 dependencies:"
+  local record name commands scope advice
+  echo_content red "Missing required software dependencies:"
   for record in "${TP_MISSING_DEPENDENCY_PLAN[@]}"; do
-    IFS='|' read -r name commands scope method target advice <<<"${record}"
+    IFS='|' read -r name commands scope advice <<<"${record}"
     echo_content yellow "- ${name}: ${advice}"
   done
 }
 
-install_missing_package_dependencies() {
-  local record name commands scope method target advice
-  local -a packages=()
-
-  for record in "${TP_MISSING_DEPENDENCY_PLAN[@]}"; do
-    IFS='|' read -r name commands scope method target advice <<<"${record}"
-    [[ "${method}" == package ]] && append_unique_word packages "${target}"
-  done
-
-  install_packages "${packages[@]}"
-}
-
-install_missing_special_dependencies() {
-  local record name commands scope method target advice
-  local docker_missing=0
-  local yq_missing=0
-
-  for record in "${TP_MISSING_DEPENDENCY_PLAN[@]}"; do
-    IFS='|' read -r name commands scope method target advice <<<"${record}"
-    case "${method}" in
-    docker) docker_missing=1 ;;
-    yq) yq_missing=1 ;;
-    esac
-  done
-
-  if [[ "${docker_missing}" == 1 ]]; then
-    install_docker
-  fi
-  if [[ "${yq_missing}" == 1 ]]; then
-    install_yq
-  fi
-}
-
 preflight_install_dependencies() {
-  require_one_of TP_INSTALL_DEPS "${TP_INSTALL_DEPS}" 0 1
   missing_install_dependencies
   if [[ ${#TP_MISSING_DEPENDENCY_PLAN[@]} -eq 0 ]]; then
     return
   fi
-
-  if [[ "${TP_INSTALL_DEPS}" == 0 ]]; then
-    print_dependency_installation_advice
-    echo_content yellow "Set TP_INSTALL_DEPS=1 to let the installer add only these dependencies"
-    exit 1
-  fi
-
-  missing_install_dependencies package
-  install_missing_package_dependencies
-  missing_install_dependencies package
-  if [[ ${#TP_MISSING_DEPENDENCY_PLAN[@]} -ne 0 ]]; then
-    print_dependency_installation_advice
-    echo_content yellow "Package installation completed, but the commands above are still unavailable"
-    exit 1
-  fi
-
-  missing_install_dependencies
-  install_missing_special_dependencies
-  missing_install_dependencies
-  if [[ ${#TP_MISSING_DEPENDENCY_PLAN[@]} -ne 0 ]]; then
-    print_dependency_installation_advice
-    echo_content yellow "Dependency installation completed, but the commands above are still unavailable"
-    exit 1
-  fi
+  print_dependency_installation_advice
+  echo_content yellow "Install the missing software using your system package manager, then retry"
+  exit 1
 }
 
 require_value() {
@@ -374,40 +300,6 @@ remove_container_if_force() {
   if container_exists "${name}" && [[ "${TP_FORCE}" == "1" ]]; then
     docker rm -fv "${name}" >/dev/null 2>&1 || true
   fi
-}
-
-install_packages() {
-  local packages=("$@")
-  if [[ ${#packages[@]} -eq 0 ]]; then
-    return
-  fi
-
-  if command -v apt-get >/dev/null 2>&1; then
-    DEBIAN_FRONTEND=noninteractive apt-get update
-    DEBIAN_FRONTEND=noninteractive apt-get install -y "${packages[@]}"
-  elif command -v apt >/dev/null 2>&1; then
-    DEBIAN_FRONTEND=noninteractive apt update
-    DEBIAN_FRONTEND=noninteractive apt install -y "${packages[@]}"
-  elif command -v dnf >/dev/null 2>&1; then
-    dnf install -y "${packages[@]}"
-  elif command -v yum >/dev/null 2>&1; then
-    yum install -y "${packages[@]}"
-  else
-    echo_content red "No supported package manager found"
-    exit 1
-  fi
-}
-
-install_base_tools() {
-  local record name commands scope method target advice
-  local -a packages=()
-  while IFS= read -r record; do
-    IFS='|' read -r name commands scope method target advice <<<"${record}"
-    if [[ "${scope}" != install ]] && dependency_record_is_missing "${record}"; then
-      append_unique_word packages "${target}"
-    fi
-  done < <(required_dependency_plan)
-  install_packages "${packages[@]}"
 }
 
 validate_entry_spec_binding() {
@@ -490,38 +382,6 @@ install_entry_runtime_assets() {
   install -m 0644 "${INSTALLER_DIR}/entry/adapters/external.sh" "${target}/adapters/external.sh" || return 1
   install -m 0755 "${INSTALLER_DIR}/entry/adapters/nginx_certbot.sh" "${target}/adapters/nginx_certbot.sh" || return 1
   install -m 0755 "${INSTALLER_DIR}/entry/adapters/caddy.sh" "${target}/adapters/caddy.sh" || return 1
-}
-
-install_yq() {
-  local destination="${1:-/usr/local/bin/yq}"
-  if command -v yq >/dev/null 2>&1; then
-    return
-  fi
-
-  install_base_tools
-  local arch checksum
-  case "$(uname -m)" in
-  x86_64 | amd64)
-    arch="amd64"
-    checksum="c5f056448f973ae7d39b5401949648a78f2dc1947d6a8eb65be60d5c504b9385"
-    ;;
-  aarch64 | arm64)
-    arch="arm64"
-    checksum="88a1016bc1d657375a35864e4f44b6f333df8ff97b559f51bba0adcb2169df09"
-    ;;
-  *)
-    echo_content red "Unsupported architecture for yq: $(uname -m)"
-    exit 1
-    ;;
-  esac
-
-  echo_content green "---> Install yq ${YQ_VERSION}"
-  local download
-  download="$(mktemp)"
-  curl -fsSL "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${arch}" -o "${download}"
-  printf '%s  %s\n' "${checksum}" "${download}" | sha256sum -c -
-  install -m 0755 "${download}" "${destination}"
-  rm -f "${download}"
 }
 
 yaml_read_raw() {
@@ -712,7 +572,6 @@ prepare_secure_config() {
 load_config() {
   local action="$1"
   local file="${2:-}"
-  local allow_yq_install="${3:-1}"
   if [[ -z "${file}" ]]; then
     echo_content red "Config file is required"
     usage
@@ -724,13 +583,8 @@ load_config() {
   fi
 
   if ! command -v yq >/dev/null 2>&1; then
-    if [[ "${allow_yq_install}" == "1" ]]; then
-      install_yq
-    else
-      TP_TEMP_TOOLS_DIR="$(mktemp -d /tmp/trojanpanelnext-tools.XXXXXX)"
-      install_yq "${TP_TEMP_TOOLS_DIR}/yq"
-      export PATH="${TP_TEMP_TOOLS_DIR}:${PATH}"
-    fi
+    echo_content red "Missing required software dependency: yq (${YQ_VERSION})"
+    exit 1
   fi
   detect_config_root "${file}"
 
@@ -1546,25 +1400,6 @@ validate_config() {
     UI_LISTEN="[${BIND_ADDRESS}]:${UI_PORT}"
   else
     UI_LISTEN="${BIND_ADDRESS}:${UI_PORT}"
-  fi
-}
-
-install_docker() {
-  if command -v docker >/dev/null 2>&1; then
-    echo_content skyBlue "---> Docker already installed"
-    return
-  fi
-
-  echo_content green "---> Install Docker"
-  if [[ "${DOCKER_INSTALL_MIRROR:-}" == "aliyun" ]]; then
-    sh <(curl -fsSL https://get.docker.com) --mirror Aliyun
-  else
-    sh <(curl -fsSL https://get.docker.com)
-  fi
-
-  if command -v systemctl >/dev/null 2>&1; then
-    systemctl enable docker >/dev/null 2>&1 || true
-    systemctl restart docker >/dev/null 2>&1 || true
   fi
 }
 
@@ -3494,8 +3329,6 @@ EOF
 deploy_web() {
   require_value TP_WEB_DOMAIN
 
-  install_base_tools
-  install_docker
   init_web_secrets
   load_image_archives
   prepare_dirs
@@ -3527,8 +3360,6 @@ deploy_node() {
   require_value REDIS_HOST
   require_value REDIS_PASSWORD
 
-  install_base_tools
-  install_docker
   load_image_archives
   prepare_dirs
   install_pki_material node
@@ -3559,8 +3390,6 @@ deploy_combined() {
   # Establish ownership before any data/container mutation so a failed first
   # deployment remains safely retryable.
   combined_owner_write_marker
-  install_base_tools
-  install_docker
   init_web_secrets
   load_image_archives
   ensure_image "${CADDY_IMAGE}"
@@ -3808,6 +3637,7 @@ main() {
   done
 
   require_one_of mode "${mode}" web node combined
+  TP_REQUEST_MODE="${mode}"
   if [[ -n "${COMBINED_RESTORE_ROLE}" ]]; then
     require_one_of restore_role "${COMBINED_RESTORE_ROLE}" web node
     [[ "${command}" == install && "${mode}" == combined ]] || {
@@ -3843,6 +3673,11 @@ main() {
     verify_release_assets_before_host_change "${config_file}"
   fi
   apply_executable_asset_policy
+  require_supported_asset_architecture
+  if [[ "${command}" != validate ]]; then
+    require_root
+  fi
+  preflight_install_dependencies
   if [[ -n "${bundle_file}" ]]; then
     prepare_node_bundle "${bundle_file}"
     config_file="${TP_NODE_BUNDLE_DIR}/config-node.yaml"
@@ -3851,14 +3686,9 @@ main() {
   fi
   verify_release_assets_before_host_change "${TP_CONFIG_READ_FILE}"
   if [[ "${command}" == validate ]]; then
-    load_config "${mode}" "${TP_CONFIG_READ_FILE}" 0
+    load_config "${mode}" "${TP_CONFIG_READ_FILE}"
   else
     if [[ "${command}" == install ]]; then
-      require_supported_install_platform
-    fi
-    require_root
-    if [[ "${command}" == install ]]; then
-      preflight_install_dependencies
       if [[ -n "${ENTRY_SPEC_FILE}" && "${INSTALLER_ASSET_VERSION}" != development ]]; then
         install_entry_runtime_assets || {
           echo_content red "Could not persist verified EntryController runtime assets"
@@ -3869,7 +3699,7 @@ main() {
     if [[ "${command}" != validate && -x "${ENTRY_RUNTIME_DIR}/entryctl.sh" && ! -L "${ENTRY_RUNTIME_DIR}/entryctl.sh" ]]; then
       ENTRYCTL_PATH="${ENTRY_RUNTIME_DIR}/entryctl.sh"
     fi
-    load_config "${mode}" "${TP_CONFIG_READ_FILE}" 1
+    load_config "${mode}" "${TP_CONFIG_READ_FILE}"
   fi
   if [[ "${TP_NODE_BUNDLE_ACTIVE}" == 1 ]]; then
     TP_PKI_BUNDLE_DIR="${TP_NODE_BUNDLE_DIR}/pki"

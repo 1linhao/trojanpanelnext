@@ -4,52 +4,31 @@
 
 ## 非 combined：分别部署 Web 和 Node
 
-两台 VPS 均使用 Debian 12 x86_64，至少 1 GiB 内存。以下命令以 root SSH 登录为例；把 WEB_IP、NODE_IP、panel.example.com 和 node.example.com 换成实际值，域名提前解析到相应 VPS。若只能以普通用户登录，传输后运行 sudo -i，并把 VPS 命令中的 cd ~/tpnext-upload 改为该用户上传目录的绝对路径。
+两台 VPS 均使用 Linux x86_64，至少 1 GiB 内存。把 WEB_IP、NODE_IP、panel.example.com 和 node.example.com 换成实际值，域名提前解析到相应 VPS。以下以 root SSH 登录为例；若只能以普通用户登录，传输后运行 sudo -i，并把 VPS 命令中的 cd ~/tpnext-upload 改为该用户上传目录的绝对路径。**已发布的 rc.2 包仍含旧版 Debian 12 限制**；新版依赖检查须等下一版安装包发布后才能用于其他发行版。
 
 ### 本地电脑：下载安装包，填写 Web 配置
 
-本地需要 curl、tar、ssh/scp 和 SHA-256 校验工具；macOS 可使用 shasum。下载 [v0.1.0-rc.2](https://github.com/1linhao/trojanpanelnext/releases/tag/v0.1.0-rc.2) 的安装包并校验：
+本地需要 curl、tar、ssh/scp 和 SHA-256 校验工具；macOS 可使用 shasum。先下载本仓库的 [下载脚本](client/download-assets.sh) 和 [上传脚本](client/upload-assets.sh)，再运行下载脚本。默认下载 [v0.1.0-rc.2](https://github.com/1linhao/trojanpanelnext/releases/tag/v0.1.0-rc.2)；换版本时给下载脚本传入 --tag 和该版本发布的 --sha256。
 
 ~~~bash
-set -e
-umask 077
 WORK="$HOME/trojanpanelnext-rc2"
-ARCHIVE=trojanpanelnext-installer-0.1.0-rc.2.tar.gz
-EXPECTED_SHA256=84366904c9884fdb7bb9d6767c7d3d6958b83e530fccb73e156b4d3d90b59471
-mkdir -p "$WORK/assets" "$WORK/config"
-chmod 700 "$WORK" "$WORK/config"
-curl -fL --retry 3 "https://github.com/1linhao/trojanpanelnext/releases/download/v0.1.0-rc.2/$ARCHIVE" -o "$WORK/$ARCHIVE"
-if command -v sha256sum >/dev/null 2>&1; then
-  printf '%s  %s\n' "$EXPECTED_SHA256" "$WORK/$ARCHIVE" | sha256sum -c -
-else
-  printf '%s  %s\n' "$EXPECTED_SHA256" "$WORK/$ARCHIVE" | shasum -a 256 -c -
-fi
-tar -xzf "$WORK/$ARCHIVE" -C "$WORK/assets"
-if command -v sha256sum >/dev/null 2>&1; then
-  (cd "$WORK/assets" && sha256sum -c SHA256SUMS)
-else
-  (cd "$WORK/assets" && shasum -a 256 -c SHA256SUMS)
-fi
-cp "$WORK/assets/config-web.yaml" "$WORK/config/web.yaml"
-chmod 600 "$WORK/config/web.yaml"
+curl -fL https://raw.githubusercontent.com/1linhao/trojanpanelnext/feat/standalone-deployment/deploy/installer/client/download-assets.sh -o download-assets.sh
+curl -fL https://raw.githubusercontent.com/1linhao/trojanpanelnext/feat/standalone-deployment/deploy/installer/client/upload-assets.sh -o upload-assets.sh
+bash download-assets.sh --work-dir "$WORK"
 ~~~
 
-编辑 $WORK/config/web.yaml：hostname 填 Web 域名，email 填联系邮箱；密码首装可留空。保留 asset_version 和镜像摘要，不修改 assets 目录中的原始模板。任一校验失败就停止。后续本地命令在同一个终端执行，以保留 WORK、ARCHIVE 和 SSH 变量。
+编辑 $WORK/config/web.yaml：hostname 填 Web 域名，email 填联系邮箱；密码首装可留空。保留 asset_version 和镜像摘要，不修改 assets 目录中的原始模板。任一校验失败就停止。后续本地命令在同一个终端执行，以保留 WORK 变量。
 
 ~~~bash
-WEB_SSH=root@WEB_IP
-ssh "$WEB_SSH" 'mkdir -p ~/tpnext-upload && chmod 700 ~/tpnext-upload'
-scp "$WORK/$ARCHIVE" "$WORK/config/web.yaml" "$WEB_SSH:tpnext-upload/"
+bash upload-assets.sh --mode web --host root@WEB_IP --work-dir "$WORK"
 ~~~
 
 ### Web VPS：安装并登记 Node
 
-登录 Web VPS，在 root shell 执行。新系统可能没有 curl，先安装它；VPS 无需安装 gh 或 Git。
+登录 Web VPS，在 root shell 执行。先确保有 Bash、tar 和 sha256sum，以便解包校验；安装器会列出其他缺失的软件，不会自动安装。VPS 无需 gh 或 Git。
 
 ~~~bash
 set -e
-apt-get update
-apt-get install -y ca-certificates curl
 cd ~/tpnext-upload
 ARCHIVE=trojanpanelnext-installer-0.1.0-rc.2.tar.gz
 printf '%s  %s\n' '84366904c9884fdb7bb9d6767c7d3d6958b83e530fccb73e156b4d3d90b59471' "$ARCHIVE" | sha256sum -c -
@@ -61,7 +40,7 @@ chmod 600 web.yaml
 ./assets/bootstrap.sh install --mode web --config "$PWD/web.yaml"
 ~~~
 
-安装器会安装其他缺失依赖；生成的密码会写回 Web VPS 的 web.yaml，不要再用本地空密码配置覆盖。确认面板 HTTPS 可访问后，修改下面的 Node 域名和公网 IP，登记身份并记下输出的身份 ID：
+若提示缺失软件，使用当前系统的包管理器安装后重新执行 validate/install。生成的密码会写回 Web VPS 的 web.yaml，不要再用本地空密码配置覆盖。确认面板 HTTPS 可访问后，修改下面的 Node 域名和公网 IP，登记身份并记下输出的身份 ID：
 
 ~~~bash
 install -d -m 700 /tpdata/trojan-panel/config/node-identities
@@ -80,7 +59,7 @@ chmod 600 "$WORK/config/node.yaml"
 必须先编辑 Node 配置，再制作加密包；加密后修改本地 YAML 不会改变包内配置。编辑完成后发送到 Web VPS：
 
 ~~~bash
-scp "$WORK/config/node.yaml" "$WEB_SSH:tpnext-upload/node.yaml"
+bash upload-assets.sh --mode node-config --host root@WEB_IP --work-dir "$WORK"
 ~~~
 
 ### Web VPS：生成加密引导包
@@ -98,11 +77,9 @@ chmod 600 node.yaml
 ### 本地电脑：发送安装包和加密包到 Node
 
 ~~~bash
-scp "$WEB_SSH:tpnext-upload/node-1.g1.age" "$WORK/node-1.g1.age"
+scp root@WEB_IP:tpnext-upload/node-1.g1.age "$WORK/node-1.g1.age"
 chmod 600 "$WORK/node-1.g1.age"
-NODE_SSH=root@NODE_IP
-ssh "$NODE_SSH" 'mkdir -p ~/tpnext-upload && chmod 700 ~/tpnext-upload'
-scp "$WORK/$ARCHIVE" "$WORK/node-1.g1.age" "$NODE_SSH:tpnext-upload/"
+bash upload-assets.sh --mode node --host root@NODE_IP --work-dir "$WORK" --bundle "$WORK/node-1.g1.age"
 ~~~
 
 ### Node VPS：安装；Web VPS：验证身份
@@ -111,8 +88,6 @@ scp "$WORK/$ARCHIVE" "$WORK/node-1.g1.age" "$NODE_SSH:tpnext-upload/"
 
 ~~~bash
 set -e
-apt-get update
-apt-get install -y ca-certificates curl
 cd ~/tpnext-upload
 ARCHIVE=trojanpanelnext-installer-0.1.0-rc.2.tar.gz
 printf '%s  %s\n' '84366904c9884fdb7bb9d6767c7d3d6958b83e530fccb73e156b4d3d90b59471' "$ARCHIVE" | sha256sum -c -
@@ -157,34 +132,17 @@ docker exec trojan-panel /tpdata/trojan-panel/trojan-panel node-identity verify 
 
 ## combined：在一台 VPS 部署 Web 和 Node
 
-VPS 使用 Debian 12 x86_64、至少 1 GiB 内存。准备两个不同的域名，均解析到这台 VPS。命令以 root SSH 登录为例；若使用普通用户，传输后运行 sudo -i，并将 cd ~/tpnext-upload 改为该用户上传目录的绝对路径。
+VPS 使用 Linux x86_64、至少 1 GiB 内存。准备两个不同的域名，均解析到这台 VPS。命令以 root SSH 登录为例；若使用普通用户，传输后运行 sudo -i，并将 cd ~/tpnext-upload 改为该用户上传目录的绝对路径。已发布的 rc.2 包仍含旧版 Debian 12 限制；新版依赖检查须等下一版安装包发布。
 
 ### 本地电脑：下载安装包，填写 combined 配置
 
 本地需要 curl、tar、ssh/scp 和 SHA-256 校验工具；macOS 可使用 shasum。此流程可独立执行：
 
 ~~~bash
-set -e
-umask 077
 WORK="$HOME/trojanpanelnext-rc2"
-ARCHIVE=trojanpanelnext-installer-0.1.0-rc.2.tar.gz
-EXPECTED_SHA256=84366904c9884fdb7bb9d6767c7d3d6958b83e530fccb73e156b4d3d90b59471
-mkdir -p "$WORK/assets" "$WORK/config"
-chmod 700 "$WORK" "$WORK/config"
-curl -fL --retry 3 "https://github.com/1linhao/trojanpanelnext/releases/download/v0.1.0-rc.2/$ARCHIVE" -o "$WORK/$ARCHIVE"
-if command -v sha256sum >/dev/null 2>&1; then
-  printf '%s  %s\n' "$EXPECTED_SHA256" "$WORK/$ARCHIVE" | sha256sum -c -
-else
-  printf '%s  %s\n' "$EXPECTED_SHA256" "$WORK/$ARCHIVE" | shasum -a 256 -c -
-fi
-tar -xzf "$WORK/$ARCHIVE" -C "$WORK/assets"
-if command -v sha256sum >/dev/null 2>&1; then
-  (cd "$WORK/assets" && sha256sum -c SHA256SUMS)
-else
-  (cd "$WORK/assets" && shasum -a 256 -c SHA256SUMS)
-fi
-cp "$WORK/assets/config-combined.yaml" "$WORK/config/combined.yaml"
-chmod 600 "$WORK/config/combined.yaml"
+curl -fL https://raw.githubusercontent.com/1linhao/trojanpanelnext/feat/standalone-deployment/deploy/installer/client/download-assets.sh -o download-assets.sh
+curl -fL https://raw.githubusercontent.com/1linhao/trojanpanelnext/feat/standalone-deployment/deploy/installer/client/upload-assets.sh -o upload-assets.sh
+bash download-assets.sh --work-dir "$WORK"
 ~~~
 
 编辑 $WORK/config/combined.yaml：web_hostname 填面板域名，node_hostname 填 Node 域名，node_public_ip 填 VPS 公网 IP，node_name 填 Node 名称，email 填联系邮箱。保留镜像摘要、asset_version 和身份文件路径。只编辑 config 目录中的副本，校验失败则停止。
@@ -192,9 +150,7 @@ chmod 600 "$WORK/config/combined.yaml"
 在同一个本地终端发送安装包和配置：
 
 ~~~bash
-COMBINED_SSH=root@COMBINED_IP
-ssh "$COMBINED_SSH" 'mkdir -p ~/tpnext-upload && chmod 700 ~/tpnext-upload'
-scp "$WORK/$ARCHIVE" "$WORK/config/combined.yaml" "$COMBINED_SSH:tpnext-upload/"
+bash upload-assets.sh --mode combined --host root@COMBINED_IP --work-dir "$WORK"
 ~~~
 
 ### combined VPS：安装
@@ -203,8 +159,6 @@ scp "$WORK/$ARCHIVE" "$WORK/config/combined.yaml" "$COMBINED_SSH:tpnext-upload/"
 
 ~~~bash
 set -e
-apt-get update
-apt-get install -y ca-certificates curl
 cd ~/tpnext-upload
 ARCHIVE=trojanpanelnext-installer-0.1.0-rc.2.tar.gz
 printf '%s  %s\n' '84366904c9884fdb7bb9d6767c7d3d6958b83e530fccb73e156b4d3d90b59471' "$ARCHIVE" | sha256sum -c -

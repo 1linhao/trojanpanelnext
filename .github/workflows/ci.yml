@@ -138,6 +138,7 @@ jobs:
           bash deploy/installer/tests/entry_caddy_adapter_test.sh
           bash deploy/installer/tests/combined_install_test.sh
           bash deploy/installer/tests/dependency_preflight_test.sh
+          bash deploy/installer/tests/client_scripts_test.sh
           bash deploy/installer/tests/secure_file_test.sh
           bash deploy/installer/tests/web_bare_install_test.sh
           bash deploy/installer/tests/release_assets_test.sh

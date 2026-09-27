@@ -99,6 +99,10 @@ if find "${work}/plain" -type f -iname '*key*' -print -quit | grep -q .; then
 fi
 
 test -z "$(find "${bundle_tmpfs_root}" -mindepth 1 -maxdepth 1 -print -quit)"
+yq() { "${TP_TEST_FAKE_YQ_READER}" "$@"; }
+export -f yq
+TP_TEST_FAKE_YQ_READER="${INSTALLER_DIR}/tests/fixtures/fake_yq_reader.sh"
+export TP_TEST_FAKE_YQ_READER
 TP_NODE_BUNDLE_PASSWORD="${password}" NODE_BUNDLE_HELPER="${work}/node-bundle" \
   TP_NODE_BUNDLE_TMP_ROOT="${bundle_tmpfs_root}" \
   "${INSTALLER_DIR}/install.sh" validate --mode node --bundle "${work}/node.age" |
