@@ -16,45 +16,39 @@ Deploy `web` and `node` on separate hosts by installing Web first, then register
 
 ## Download the Release and example configurations
 
-The current VPS acceptance candidate is [v0.1.0-rc.2](https://github.com/1linhao/trojanpanelnext/releases/tag/v0.1.0-rc.2). Run these commands on a trusted workstation or a target Debian 12 x86_64 host. The archive already contains matching `config-web.yaml`, `config-node.yaml`, and `config-combined.yaml`; do not fetch examples from a source branch. For separate Web and Node hosts, use the same Release on both.
+The current VPS acceptance candidate is [v0.1.0-rc.3](https://github.com/1linhao/trojanpanelnext/releases/tag/v0.1.0-rc.3). Use the download and upload scripts on your local computer; the VPS does not need `gh` or Git. The archive contains matching `config-web.yaml`, `config-node.yaml`, and `config-combined.yaml`. For separate Web and Node hosts, use the same Release on both. The [Chinese guide](README.md) has the complete two-VPS and combined deployment sequence.
 
 ```bash
-set -euo pipefail
-TAG=v0.1.0-rc.2
-VERSION="${TAG#v}"
-WORKDIR="./trojanpanelnext-${VERSION}"
-ARCHIVE="trojanpanelnext-installer-${VERSION}.tar.gz"
-mkdir -m 700 "$WORKDIR"
-gh release download "$TAG" --repo 1linhao/trojanpanelnext \
-  --pattern "$ARCHIVE" --pattern release-manifest.json --pattern SHA256SUMS \
-  --dir "$WORKDIR"
-for file in "$ARCHIVE" release-manifest.json SHA256SUMS; do
-  gh attestation verify "$WORKDIR/$file" \
-    --repo 1linhao/trojanpanelnext \
-    --signer-workflow 1linhao/trojanpanelnext/.github/workflows/publish-images.yml
-done
-mkdir "$WORKDIR/assets"
-tar -xzf "$WORKDIR/$ARCHIVE" -C "$WORKDIR/assets"
-cmp "$WORKDIR/release-manifest.json" "$WORKDIR/assets/release-manifest.json"
-cmp "$WORKDIR/SHA256SUMS" "$WORKDIR/assets/SHA256SUMS"
-(cd "$WORKDIR/assets" && sha256sum -c SHA256SUMS)
-cd "$WORKDIR/assets"
+WORKDIR="$HOME/trojanpanelnext-rc3"
+curl -fL https://raw.githubusercontent.com/1linhao/trojanpanelnext/feat/standalone-deployment/deploy/installer/client/download-assets.sh -o download-assets.sh
+curl -fL https://raw.githubusercontent.com/1linhao/trojanpanelnext/feat/standalone-deployment/deploy/installer/client/upload-assets.sh -o upload-assets.sh
+bash download-assets.sh --work-dir "$WORKDIR"
 ```
 
-Stop if verification fails. Leave the scripts, manifest, and original templates unchanged. Copy the required template to a mode `0600` working configuration and edit only that copy. `gh` is used for download and verification; running `bootstrap.sh` on the target host does not need a Git repository.
+Stop if verification fails. Edit only the required configuration copy in `$WORKDIR/config`, leaving the archived templates unchanged. Upload the archive and configuration with `upload-assets.sh` as shown in the [Chinese guide](README.md). On each target VPS, verify and extract the archive before using the commands below:
+
+```bash
+set -e
+cd ~/tpnext-upload
+ARCHIVE=trojanpanelnext-installer-0.1.0-rc.3.tar.gz
+printf '%s  %s\n' 'fe4e2b297756bf3a58db31f69636dd1ca8034196ef14e1184db14c4f8362d668' "$ARCHIVE" | sha256sum -c -
+mkdir -p assets
+tar -xzf "$ARCHIVE" -C assets
+(cd assets && sha256sum -c SHA256SUMS)
+cd assets
+```
 
 ## Choose a deployment mode
 
-Run the following commands from the verified `assets` directory. Check DNS, ports 80/443, and any Node protocol ports before `validate`; `install` modifies the host and requires root. See [Configuration options](#configuration-options) for every template field.
+Run the following commands from the verified `assets` directory on the VPS. The edited YAML or encrypted Node bundle should be in its parent `tpnext-upload` directory. Check DNS, ports 80/443, and any Node protocol ports before `validate`; `install` modifies the host and requires root. See [Configuration options](#configuration-options) for every template field.
 
 ### Web control plane
 
 ```bash
-cp ./config-web.yaml ./web.yaml
-chmod 600 ./web.yaml
-# Edit web.yaml: at least hostname and email; keep the pinned images and asset_version.
-./bootstrap.sh validate --mode web --config ./web.yaml
-sudo ./bootstrap.sh install --mode web --config ./web.yaml
+chmod 600 ../web.yaml
+# Edit web.yaml on your local computer before uploading: at least hostname and email.
+./bootstrap.sh validate --mode web --config ../web.yaml
+sudo ./bootstrap.sh install --mode web --config ../web.yaml
 ```
 
 ### Separate Node
@@ -66,23 +60,22 @@ sudo install -d -m 0700 /tpdata/trojan-panel/config/node-identities
 sudo docker exec trojan-panel /tpdata/trojan-panel/trojan-panel node-identity register \
   --name node-sg --domain node.example.com --public-ip 203.0.113.10 \
   --credential-file /tpdata/trojan-panel/config/node-identities/node-sg.g1.json
-cp ./config-node.yaml ./node-sg.yaml
-chmod 600 ./node-sg.yaml
-# Edit node-sg.yaml: hostname, email, mariadb_host, redis_host, grpc_tls_server_name;
+chmod 600 ../node.yaml
+# Edit node.yaml on your local computer before uploading: hostname, email, mariadb_host, redis_host, grpc_tls_server_name;
 # Set control_plane_public_ip for a precise network allowlist;
 # also set mariadb_port and redis_port if Web uses non-default ports.
 sudo ./node-bundle create \
   --credential-file /tpdata/trojan-panel/config/node-identities/node-sg.g1.json \
-  --node-config ./node-sg.yaml \
+  --node-config ../node.yaml \
   --client-ca /tpdata/trojanpanelnext-pki/client-ca.crt \
-  --output ./node-sg.g1.age
+  --output ../node-sg.g1.age
 ```
 
-The credential file is root-managed, so the bundle command above also uses `sudo`. Transfer only `node-sg.g1.age` over a trusted channel into the Node host's verified `assets` directory. Download and verify the same Release on Node, then run:
+The credential file is root-managed, so the bundle command above also uses `sudo`. Transfer only `node-sg.g1.age` over a trusted channel into the Node host's `tpnext-upload` directory. Upload and verify the same Release on Node, then run:
 
 ```bash
-sudo ./bootstrap.sh validate --mode node --bundle ./node-sg.g1.age
-sudo ./bootstrap.sh install --mode node --bundle ./node-sg.g1.age
+sudo ./bootstrap.sh validate --mode node --bundle ../node-sg.g1.age
+sudo ./bootstrap.sh install --mode node --bundle ../node-sg.g1.age
 ```
 
 Installation waits for Web-to-Node mTLS verification. In another terminal on Web, use the identity ID and challenge printed by this Node installation:
@@ -97,11 +90,10 @@ sudo docker exec trojan-panel /tpdata/trojan-panel/trojan-panel \
 Run Web and Node on one host. The domains must differ and both resolve to that host's public IP. Shared Caddy owns ports 80/443; the installer registers the local Node identity.
 
 ```bash
-cp ./config-combined.yaml ./combined.yaml
-chmod 600 ./combined.yaml
-# Edit combined.yaml: web_hostname, node_hostname, node_name, node_public_ip, email.
-./bootstrap.sh validate --mode combined --config ./combined.yaml
-sudo ./bootstrap.sh install --mode combined --config ./combined.yaml
+chmod 600 ../combined.yaml
+# Edit combined.yaml on your local computer before uploading: web_hostname, node_hostname, node_name, node_public_ip, email.
+./bootstrap.sh validate --mode combined --config ../combined.yaml
+sudo ./bootstrap.sh install --mode combined --config ../combined.yaml
 ```
 
 ## External TLS mode
@@ -134,7 +126,7 @@ fallback rendering. It is not an nginx `stream` configuration source. Only route
 
 | Item | Requirement |
 | --- | --- |
-| OS | Debian 12 |
+| OS | Linux; required software is checked at runtime |
 | Privileges | Installation and removal require `root` |
 | CPU | `linux/amd64` (x86_64) |
 | Memory | At least 1 GiB |
@@ -161,14 +153,14 @@ sources and rerun `validate` before applying any rule.
 
 ## Version and verification
 
-`v0.1.0-rc.2` is the current prerelease candidate. It pins installation assets and image digests and does not update Docker `latest`. The old `v0.1.0-rc.1` never produced a complete Release and is unsuitable for this VPS test. The download commands above verify provenance for all three Release files, equality of the manifests inside and outside the archive, and every asset digest. `bootstrap.sh` also checks asset versions, image references, and the configuration before running the installer. Stop if any check fails.
+`v0.1.0-rc.3` is the current prerelease candidate. It pins installation assets and image digests and does not update Docker `latest`. The old `v0.1.0-rc.1` never produced a complete Release and is unsuitable for this VPS test. The download script verifies the archive SHA-256 and every asset digest. `bootstrap.sh` also checks asset versions, image references, and the configuration before running the installer. Stop if any check fails.
 
 ## Security and manual gates
 
 The following checks are human release points for every real deployment. The installer executes an approved local configuration and asset set; the operator owns these decisions:
 
 - **Release gate**: confirm the candidate tag, the GitHub Release `isPrerelease` state, the attestation signer, image digests in `release-manifest.json`, and a passing `sha256sum -c SHA256SUMS`.
-- **Host gate**: confirm a supported Debian 12 host with root access, no unauthorised existing containers or listeners, and operator-reviewed DNS, port 80/443, and Node-protocol firewall scope.
+- **Host gate**: confirm a Linux x86_64 host with root access, no unauthorised existing containers or listeners, and operator-reviewed DNS, port 80/443, and Node-protocol firewall scope. Install any software listed as missing by `validate`.
 - **Entry gate**: standalone deployments use the installer-managed Caddy; confirm that DNS records are live and Caddy may request and renew ACME certificates before running install. An external entry and `--entry-spec` are a separate integration path.
 - **Credential gate**: keep configuration and Node identity files at `0600`/root-only; transfer Node bootstrap bundles through a trusted channel, keep the password out of command arguments, and keep the CA and Web mTLS private keys on the Web control plane.
 - **Change gate**: run `validate` first and retain its secret-free output, then manually check Web, Node, and mTLS/gRPC health after installation. Confirm `--force`, `remove`, `--purge-data`, and stable-version transitions separately.
@@ -336,7 +328,7 @@ All keys live under `trojanpanelnext:` in the YAML file. Use the templates from 
 | Key | Purpose and value |
 | --- | --- |
 | `schema_version` | Configuration format version; currently fixed at `1`. |
-| `asset_version` | Must match the installer assets; already set by the rc.2 archive. Leave unchanged. |
+| `asset_version` | Must match the installer assets; already set by the rc.3 archive. Leave unchanged. |
 | `deployment_mode` | Host role: `web`, `node`, or `combined`; must match `--mode`. |
 | `email` | Contact address for Caddy/ACME; use an address that receives notifications. |
 | `caddy_image`, `mariadb_image`, `redis_image` | Entry and data-service images, pinned to digests in the archive. |
@@ -414,8 +406,8 @@ The release workflow uses `release/generate-assets.sh` to produce matching versi
 `name@sha256:<digest>`. Before invoking the installer, `bootstrap.sh` runs the bundled
 `verify-assets.sh` to verify versions, asset digests, image references, and configuration. The
 released `install.sh` runs the same preflight when called directly, before crossing the host
-mutation boundary. The verifier only depends on Bash, awk, grep, and coreutils from the Debian 12
-base system; it does not require a preinstalled `jq`. It checks `SHA256SUMS` against its fixed asset
+mutation boundary. The verifier only depends on Bash, awk, grep, and coreutils; it does not require
+a preinstalled `jq`. It checks `SHA256SUMS` against its fixed asset
 set, rejects symlink components in bundle paths, and accepts only the generator's printable ASCII +
 LF manifest bytes before sourcing or executing any other bundled program. Both entrypoints verify all
 15 assets, including `secure-file` and `node-bundle`, before a helper can first execute, then verify the configuration

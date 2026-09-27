@@ -4,14 +4,14 @@
 
 ## 非 combined：分别部署 Web 和 Node
 
-两台 VPS 均使用 Linux x86_64，至少 1 GiB 内存。把 WEB_IP、NODE_IP、panel.example.com 和 node.example.com 换成实际值，域名提前解析到相应 VPS。以下以 root SSH 登录为例；若只能以普通用户登录，传输后运行 sudo -i，并把 VPS 命令中的 cd ~/tpnext-upload 改为该用户上传目录的绝对路径。**已发布的 rc.2 包仍含旧版 Debian 12 限制**；新版依赖检查须等下一版安装包发布后才能用于其他发行版。
+两台 VPS 均使用 Linux x86_64，至少 1 GiB 内存。安装包不限 Debian 版本或发行版，但会检查运行所需软件并列出缺失项。把 WEB_IP、NODE_IP、panel.example.com 和 node.example.com 换成实际值，域名提前解析到相应 VPS。以下以 root SSH 登录为例；若只能以普通用户登录，传输后运行 sudo -i，并把 VPS 命令中的 cd ~/tpnext-upload 改为该用户上传目录的绝对路径。
 
 ### 本地电脑：下载安装包，填写 Web 配置
 
-本地需要 curl、tar、ssh/scp 和 SHA-256 校验工具；macOS 可使用 shasum。先下载本仓库的 [下载脚本](client/download-assets.sh) 和 [上传脚本](client/upload-assets.sh)，再运行下载脚本。默认下载 [v0.1.0-rc.2](https://github.com/1linhao/trojanpanelnext/releases/tag/v0.1.0-rc.2)；换版本时给下载脚本传入 --tag 和该版本发布的 --sha256。
+本地需要 curl、tar、ssh/scp 和 SHA-256 校验工具；macOS 可使用 shasum。先下载本仓库的 [下载脚本](client/download-assets.sh) 和 [上传脚本](client/upload-assets.sh)，再运行下载脚本。默认下载 [v0.1.0-rc.3](https://github.com/1linhao/trojanpanelnext/releases/tag/v0.1.0-rc.3)；换版本时给下载脚本传入 --tag 和该版本发布的 --sha256。
 
 ~~~bash
-WORK="$HOME/trojanpanelnext-rc2"
+WORK="$HOME/trojanpanelnext-rc3"
 curl -fL https://raw.githubusercontent.com/1linhao/trojanpanelnext/feat/standalone-deployment/deploy/installer/client/download-assets.sh -o download-assets.sh
 curl -fL https://raw.githubusercontent.com/1linhao/trojanpanelnext/feat/standalone-deployment/deploy/installer/client/upload-assets.sh -o upload-assets.sh
 bash download-assets.sh --work-dir "$WORK"
@@ -30,8 +30,8 @@ bash upload-assets.sh --mode web --host root@WEB_IP --work-dir "$WORK"
 ~~~bash
 set -e
 cd ~/tpnext-upload
-ARCHIVE=trojanpanelnext-installer-0.1.0-rc.2.tar.gz
-printf '%s  %s\n' '84366904c9884fdb7bb9d6767c7d3d6958b83e530fccb73e156b4d3d90b59471' "$ARCHIVE" | sha256sum -c -
+ARCHIVE=trojanpanelnext-installer-0.1.0-rc.3.tar.gz
+printf '%s  %s\n' 'fe4e2b297756bf3a58db31f69636dd1ca8034196ef14e1184db14c4f8362d668' "$ARCHIVE" | sha256sum -c -
 mkdir -p assets
 tar -xzf "$ARCHIVE" -C assets
 (cd assets && sha256sum -c SHA256SUMS)
@@ -89,8 +89,8 @@ bash upload-assets.sh --mode node --host root@NODE_IP --work-dir "$WORK" --bundl
 ~~~bash
 set -e
 cd ~/tpnext-upload
-ARCHIVE=trojanpanelnext-installer-0.1.0-rc.2.tar.gz
-printf '%s  %s\n' '84366904c9884fdb7bb9d6767c7d3d6958b83e530fccb73e156b4d3d90b59471' "$ARCHIVE" | sha256sum -c -
+ARCHIVE=trojanpanelnext-installer-0.1.0-rc.3.tar.gz
+printf '%s  %s\n' 'fe4e2b297756bf3a58db31f69636dd1ca8034196ef14e1184db14c4f8362d668' "$ARCHIVE" | sha256sum -c -
 mkdir -p assets
 tar -xzf "$ARCHIVE" -C assets
 (cd assets && sha256sum -c SHA256SUMS)
@@ -132,14 +132,14 @@ docker exec trojan-panel /tpdata/trojan-panel/trojan-panel node-identity verify 
 
 ## combined：在一台 VPS 部署 Web 和 Node
 
-VPS 使用 Linux x86_64、至少 1 GiB 内存。准备两个不同的域名，均解析到这台 VPS。命令以 root SSH 登录为例；若使用普通用户，传输后运行 sudo -i，并将 cd ~/tpnext-upload 改为该用户上传目录的绝对路径。已发布的 rc.2 包仍含旧版 Debian 12 限制；新版依赖检查须等下一版安装包发布。
+VPS 使用 Linux x86_64、至少 1 GiB 内存。安装包不限 Debian 版本或发行版，但会检查运行所需软件并列出缺失项。准备两个不同的域名，均解析到这台 VPS。命令以 root SSH 登录为例；若使用普通用户，传输后运行 sudo -i，并将 cd ~/tpnext-upload 改为该用户上传目录的绝对路径。
 
 ### 本地电脑：下载安装包，填写 combined 配置
 
 本地需要 curl、tar、ssh/scp 和 SHA-256 校验工具；macOS 可使用 shasum。此流程可独立执行：
 
 ~~~bash
-WORK="$HOME/trojanpanelnext-rc2"
+WORK="$HOME/trojanpanelnext-rc3"
 curl -fL https://raw.githubusercontent.com/1linhao/trojanpanelnext/feat/standalone-deployment/deploy/installer/client/download-assets.sh -o download-assets.sh
 curl -fL https://raw.githubusercontent.com/1linhao/trojanpanelnext/feat/standalone-deployment/deploy/installer/client/upload-assets.sh -o upload-assets.sh
 bash download-assets.sh --work-dir "$WORK"
@@ -160,8 +160,8 @@ bash upload-assets.sh --mode combined --host root@COMBINED_IP --work-dir "$WORK"
 ~~~bash
 set -e
 cd ~/tpnext-upload
-ARCHIVE=trojanpanelnext-installer-0.1.0-rc.2.tar.gz
-printf '%s  %s\n' '84366904c9884fdb7bb9d6767c7d3d6958b83e530fccb73e156b4d3d90b59471' "$ARCHIVE" | sha256sum -c -
+ARCHIVE=trojanpanelnext-installer-0.1.0-rc.3.tar.gz
+printf '%s  %s\n' 'fe4e2b297756bf3a58db31f69636dd1ca8034196ef14e1184db14c4f8362d668' "$ARCHIVE" | sha256sum -c -
 mkdir -p assets
 tar -xzf "$ARCHIVE" -C assets
 (cd assets && sha256sum -c SHA256SUMS)

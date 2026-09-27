@@ -2,11 +2,11 @@
 set -Eeuo pipefail
 
 usage() {
-  printf 'Usage: %s [--tag v0.1.0-rc.2] [--sha256 HEX] [--work-dir DIR]\n' "$0"
+  printf 'Usage: %s [--tag v0.1.0-rc.3] [--sha256 HEX] [--work-dir DIR]\n' "$0"
 }
 
-tag=v0.1.0-rc.2
-sha256=84366904c9884fdb7bb9d6767c7d3d6958b83e530fccb73e156b4d3d90b59471
+tag=v0.1.0-rc.3
+sha256=fe4e2b297756bf3a58db31f69636dd1ca8034196ef14e1184db14c4f8362d668
 work_dir=""
 sha_explicit=0
 while (($#)); do
@@ -23,7 +23,7 @@ done
   printf 'Invalid release tag: %s\n' "${tag}" >&2
   exit 2
 }
-if [[ "${tag}" != v0.1.0-rc.2 && "${sha_explicit}" != 1 ]]; then
+if [[ "${tag}" != v0.1.0-rc.3 && "${sha_explicit}" != 1 ]]; then
   printf 'A different release tag requires its published --sha256 value\n' >&2
   exit 2
 fi
