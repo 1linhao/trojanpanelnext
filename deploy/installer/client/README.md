@@ -1,6 +1,6 @@
 # 统一部署配置：本地初始化
 
-[English](README_EN.md)
+简体中文 | [English](README_EN.md)
 
 在 Linux、macOS 或 Windows WSL 操作机安装 Bash、curl、tar、OpenSSH、`sha256sum` 或 `shasum`，以及自行安装 [mikefarah yq v4](https://github.com/mikefarah/yq#install)。`init` 不安装依赖，也不连接 VPS。先从对应 GitHub Release 核对固定 tag 和安装包 SHA256；下例 SHA 只属于 rc.3。
 

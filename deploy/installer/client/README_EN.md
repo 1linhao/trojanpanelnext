@@ -1,6 +1,6 @@
 # Unified deployment configuration: local initialization
 
-[简体中文](README.md)
+[简体中文](README.md) | English
 
 On Linux, macOS, or Windows WSL, provide Bash, curl, tar, OpenSSH, `sha256sum` or `shasum`, and a user-installed [mikefarah yq v4](https://github.com/mikefarah/yq#install). `init` installs no dependencies and does not contact a VPS. Confirm the fixed tag and archive SHA256 from the matching GitHub Release. The SHA below belongs only to rc.3.
 
