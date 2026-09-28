@@ -111,9 +111,12 @@ openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=control-plane-ca \
   -addext basicConstraints=critical,CA:TRUE \
   -keyout "${work}/discarded-ca.key" -out "${work}/client-ca.crt" >/dev/null 2>&1
 release_bundle_password='release bundle helper trust password'
+openssl genpkey -algorithm ED25519 -out "${work}/test-revocation-private.pem" >/dev/null 2>&1
+printf 'TPNEXT-REVOCATION-ED25519-V1:%s\n' "$(openssl pkey -in "${work}/test-revocation-private.pem" -pubout -outform DER | tail -c 32 | base64 -w0 | tr '+/' '-_' | tr -d '=')" >"${work}/revocation-public-key.txt"
+chmod 0600 "${work}/revocation-public-key.txt"
 TP_NODE_BUNDLE_PASSWORD="${release_bundle_password}" "${bundle}/node-bundle" create \
   --credential-file "${work}/node-credential.json" --node-config "${work}/node-config.yaml" \
-  --client-ca "${work}/client-ca.crt" --output "${work}/node.age" >/dev/null
+  --client-ca "${work}/client-ca.crt" --revocation-public-key "${work}/revocation-public-key.txt" --output "${work}/node.age" >/dev/null
 malicious_helper="${work}/malicious-node-bundle"
 helper_sentinel="${work}/malicious-helper-ran"
 cat >"${malicious_helper}" <<'EOF'

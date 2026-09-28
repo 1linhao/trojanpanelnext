@@ -52,6 +52,7 @@ jobs:
       - name: Test Node identity lifecycle with MariaDB and Redis ACL
         run: |
           bash testing/node_server_delete_api_test.sh
+          bash testing/node_revocation_receipt_cli_test.sh
       - name: Build
         run: CGO_ENABLED=0 go build -trimpath -o /tmp/trojanpanelnext-api .
 
@@ -121,6 +122,11 @@ jobs:
           done < <(find deploy/installer -type f -name '*.sh' -print0)
           test "$count" -gt 0
           printf 'validated %d shell scripts\n' "$count"
+      - name: Test shared revocation receipt protocol
+        run: |
+          cd deploy/installer/revocationreceipt
+          go test ./...
+          go vet ./...
       - name: Regenerate example release manifest and reject drift
         shell: bash
         run: |
@@ -132,6 +138,7 @@ jobs:
         run: |
           bash deploy/installer/tests/installer_cli_test.sh
           bash deploy/installer/tests/node_bundle_cli_test.sh
+          bash deploy/installer/tests/node_revocation_remove_test.sh
           bash deploy/installer/tests/node_runtime_container_test.sh
           bash deploy/installer/tests/entry_controller_test.sh
           bash deploy/installer/tests/entry_combined_v2_test.sh

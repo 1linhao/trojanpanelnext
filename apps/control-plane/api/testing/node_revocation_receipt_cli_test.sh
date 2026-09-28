@@ -22,6 +22,7 @@ trap cleanup EXIT
 
 (cd "${api_dir}" && CGO_ENABLED=0 go build -trimpath -o "${work}/trojan-panel" .)
 (cd "${api_dir}" && CGO_ENABLED=0 go build -trimpath -o "${work}/verify-receipt" ./testing/node_revocation_receipt_verify.go)
+(cd "${api_dir}/../../../deploy/installer/nodebundle" && CGO_ENABLED=0 go build -trimpath -o "${work}/node-bundle" .)
 
 admin_db_password="$(openssl rand -hex 24)"
 admin_redis_password="$(openssl rand -hex 24)"
@@ -190,6 +191,15 @@ assert_revoked node-a
 assert_state node-a revoked 1
 assert_audit node-a revoke 1
 verify_receipt node-a "${node_a_receipt}" revoked
+"${work}/node-bundle" verify-receipt --receipt-file "${node_a_receipt}" \
+  --pinned-public-key "${public_key}" --identity-id "${node_a_id}" \
+  --server-id "$(jq -r .node_server_id "${work}/runtime/config/node-a.json")" --generation 1 >/dev/null ||
+  fail 'installed Node verifier rejected Web-issued terminal receipt'
+if "${work}/node-bundle" verify-receipt --receipt-file "${node_a_receipt}" \
+  --pinned-public-key "${public_key}" --identity-id "${node_a_id}" \
+  --server-id "$(jq -r .node_server_id "${work}/runtime/config/node-a.json")" --generation 2 >/dev/null 2>&1; then
+  fail 'installed Node verifier accepted a newer generation'
+fi
 if "${work}/verify-receipt" "${public_key}" "${node_a_receipt}" \
   "${node_a_id}" "$(jq -r .node_server_id "${work}/runtime/config/node-a.json")" \
   2 revoked >/dev/null 2>&1; then

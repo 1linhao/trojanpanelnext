@@ -169,7 +169,9 @@ docker() {
   exec)
     local stdin_payload
     stdin_payload="$(cat || true)"
-    if [[ "$*" == *TP_VERIFY_SYSADMIN_CREDENTIAL=1* ]]; then
+    if [[ "$*" == *'node-identity revocation-key-init'* ]]; then
+      return 0
+    elif [[ "$*" == *TP_VERIFY_SYSADMIN_CREDENTIAL=1* ]]; then
       [[ "${TP_TEST_FAIL_PROBE:-}" == sysadmin ]] && return 2
       return 0
     elif [[ " $* " == *' redis-cli '* ]]; then

@@ -51,12 +51,16 @@ openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=control-plane-ca \
   -addext basicConstraints=critical,CA:TRUE \
   -keyout "${work}/discarded-ca.key" -out "${work}/client-ca.crt" >/dev/null 2>&1
 chmod 0600 "${work}/credential.json" "${work}/config-node.yaml"
+openssl genpkey -algorithm ED25519 -out "${work}/test-revocation-private.pem" >/dev/null 2>&1
+printf 'TPNEXT-REVOCATION-ED25519-V1:%s\n' "$(openssl pkey -in "${work}/test-revocation-private.pem" -pubout -outform DER | tail -c 32 | base64 -w0 | tr '+/' '-_' | tr -d '=')" >"${work}/revocation-public-key.txt"
+chmod 0600 "${work}/revocation-public-key.txt"
 
 password='correct horse battery staple'
 TP_NODE_BUNDLE_PASSWORD="${password}" "${work}/node-bundle" create \
   --credential-file "${work}/credential.json" \
   --node-config "${work}/config-node.yaml" \
   --client-ca "${work}/client-ca.crt" \
+  --revocation-public-key "${work}/revocation-public-key.txt" \
   --output "${work}/node.age" >/dev/null
 test "$(stat -c '%a' "${work}/node.age")" = 600
 grep -a -q -- '-> scrypt ' "${work}/node.age"
@@ -72,6 +76,7 @@ assert_create_rejects_credential() {
     --credential-file "${invalid_credential}" \
     --node-config "${work}/config-node.yaml" \
     --client-ca "${work}/client-ca.crt" \
+    --revocation-public-key "${work}/revocation-public-key.txt" \
     --output "${invalid_output}" >/dev/null 2>&1; then
     fail "node-bundle create accepted invalid ${label} credential"
   fi
@@ -92,11 +97,27 @@ mkdir -m 0700 "${work}/plain"
 TP_NODE_BUNDLE_PASSWORD="${password}" "${work}/node-bundle" extract \
   --bundle "${work}/node.age" --directory "${work}/plain"
 mapfile -t entries < <(cd "${work}/plain" && find . -type f -printf '%P\n' | sort)
-test "${entries[*]}" = 'config-node.yaml manifest.json pki/client-ca.crt' ||
+test "${entries[*]}" = 'config-node.yaml manifest.json pki/client-ca.crt pki/revocation-public-key.txt' ||
   fail "unexpected plaintext inventory: ${entries[*]}"
-if find "${work}/plain" -type f -iname '*key*' -print -quit | grep -q .; then
+if find "${work}/plain" -type f \( -iname '*private*' -o -iname '*.key' \) -print -quit | grep -q .; then
   fail 'private key-like file leaked from Node bootstrap bundle'
 fi
+
+mkdir -p "${work}/installed/trojan-panel-core/pki" "${work}/installed/trojanpanelnext-installer"
+TP_DATA="${work}/installed" bash -c '
+  set -Eeuo pipefail
+  source "$1"
+  TP_NODE_BUNDLE_ACTIVE=1
+  TP_NODE_BUNDLE_DIR="$2"
+  pin_node_revocation_key
+  cmp -s "${TP_NODE_BUNDLE_DIR}/pki/revocation-public-key.txt" "${NODE_REVOCATION_PUBLIC_KEY}"
+  printf "schema_version=1\nmode=node\n" >"${INSTALLER_STATE_DIR}/node.state"
+  chmod 0600 "${INSTALLER_STATE_DIR}/node.state"
+  rm -- "${NODE_REVOCATION_PUBLIC_KEY}"
+  if check_installed_node_revocation_key >/dev/null 2>&1; then
+    exit 1
+  fi
+' pin-test "${INSTALLER_DIR}/install.sh" "${work}/plain" || fail 'legacy installed Node without pin was accepted'
 
 test -z "$(find "${bundle_tmpfs_root}" -mindepth 1 -maxdepth 1 -print -quit)"
 yq() { "${TP_TEST_FAKE_YQ_READER}" "$@"; }

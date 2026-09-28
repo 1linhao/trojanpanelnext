@@ -32,12 +32,13 @@ func run(args []string) error {
 		set.StringVar(&options.CredentialPath, "credential-file", "", "Issue #5 Node credential JSON")
 		set.StringVar(&options.ConfigPath, "node-config", "", "Node deployment YAML")
 		set.StringVar(&options.ClientCAPath, "client-ca", "", "public Web control-plane client CA")
+		set.StringVar(&options.RevocationKeyPath, "revocation-public-key", "", "Web revocation public key")
 		set.StringVar(&options.OutputPath, "output", "", "encrypted .age output")
 		if err := set.Parse(args[1:]); err != nil || len(set.Args()) != 0 {
 			return errors.New("invalid create arguments")
 		}
-		if options.CredentialPath == "" || options.ConfigPath == "" || options.ClientCAPath == "" || options.OutputPath == "" {
-			return errors.New("create requires --credential-file, --node-config, --client-ca, and --output")
+		if options.CredentialPath == "" || options.ConfigPath == "" || options.ClientCAPath == "" || options.RevocationKeyPath == "" || options.OutputPath == "" {
+			return errors.New("create requires --credential-file, --node-config, --client-ca, --revocation-public-key, and --output")
 		}
 		password, err := readPassword(true)
 		if err != nil {
@@ -49,6 +50,8 @@ func run(args []string) error {
 		}
 		fmt.Fprintf(os.Stdout, "Encrypted Node bootstrap bundle written to: %s\n", options.OutputPath)
 		return nil
+	case "verify-receipt":
+		return runVerifyReceipt(args[1:])
 	case "extract", "inspect":
 		set := flag.NewFlagSet("node-bundle "+args[0], flag.ContinueOnError)
 		set.SetOutput(os.Stderr)
@@ -128,9 +131,10 @@ func wipe(value []byte) {
 
 func usage() {
 	fmt.Fprintln(os.Stdout, `Usage:
-  node-bundle create --credential-file <0600-json> --node-config <0600-yaml> --client-ca <certificate> --output <bundle.age>
+  node-bundle create --credential-file <0600-json> --node-config <0600-yaml> --client-ca <certificate> --revocation-public-key <public-key.txt> --output <bundle.age>
   node-bundle extract --bundle <bundle.age> --directory <empty-0700-directory>
   node-bundle inspect --bundle <bundle.age>
+  node-bundle verify-receipt --receipt-file <receipt> --pinned-public-key <installed-key> --identity-id <uuid> --server-id <id> --generation <n>
 
 The password is read from a terminal by default. Set TP_NODE_BUNDLE_PASSWORD
 for non-interactive operation; the password is never accepted as an argument.`)
