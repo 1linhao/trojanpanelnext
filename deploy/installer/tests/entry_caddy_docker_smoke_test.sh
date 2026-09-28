@@ -35,7 +35,10 @@ export ENTRY_SPEC_OWNER_UID=0 ENTRY_STATE_ROOT="$tmp/state"
 export CADDY_ADAPTER_ROOT="$tmp/caddy" CADDY_ADAPTER_CONTAINER="$container"
 export CADDY_ADAPTER_NODE_CONTAINER="$core"
 export CADDY_ADAPTER_WEB_ROOT="$tmp/webroot" CADDY_ADAPTER_TEST_INTERNAL_TLS=1
-export CADDY_ADAPTER_TIMER_DIR="$tmp/timers" CADDY_ADAPTER_ENTRYCTL_PATH="$repo/deploy/installer/entry/entryctl.sh"
+mkdir -p "$tmp/upload" "$tmp/retained"
+cp -a "$repo/deploy/installer/entry" "$tmp/upload/entry"
+cp -a "$tmp/upload/entry" "$tmp/retained/entry"
+export CADDY_ADAPTER_TIMER_DIR="$tmp/timers" CADDY_ADAPTER_ENTRYCTL_PATH="$tmp/retained/entry/entryctl.sh"
 export CADDY_ADAPTER_TIMER_ENABLE_CMD='test -f "$CADDY_ENTRY_TIMER_SERVICE"'
 export CADDY_ADAPTER_TIMER_DISABLE_CMD='true'
 export CADDY_ADAPTER_SKIP_DNS_CHECK=1 CADDY_ADAPTER_CERT_WAIT_ATTEMPTS=20 CADDY_ADAPTER_CERT_WAIT_SECONDS=1
@@ -108,6 +111,8 @@ fi
 [[ "$(jq -r '.certificates | keys | join(",")' <<<"$created")" == node,web ]]
 [[ -x "$tmp/caddy/.entry-renew-hook" && -s "$tmp/caddy/.entry-spec.json" ]]
 [[ -s "$tmp/timers/trojanpanelnext-entry-renewal.service" && -s "$tmp/timers/trojanpanelnext-entry-renewal.timer" ]]
+grep -Fq "$tmp/retained/entry/entryctl.sh" "$tmp/caddy/.entry-renew-hook"
+rm -rf -- "$tmp/upload"
 if ! hook_result="$(env -i PATH="$PATH" HOME="$HOME" "$tmp/caddy/.entry-renew-hook" 2>"$tmp/hook.err")"; then
   cat "$tmp/hook.err" >&2
   printf 'Renewal hook returned: %s\n' "$hook_result" >&2

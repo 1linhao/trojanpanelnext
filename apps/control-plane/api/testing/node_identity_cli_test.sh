@@ -15,6 +15,7 @@ fi
 API_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INSTALLER_DIR="$(cd "${API_DIR}/../../../deploy/installer" && pwd)"
 work="$(mktemp -d)"
+host_data_root="${work}/tpdata/trojanpanelnext"
 bundle_tmpfs_root="$(mktemp -d /dev/shm/tp-node-identity-bundles.XXXXXX)"
 suffix="${RANDOM}-$$"
 mariadb_container="tp-node-identity-mariadb-${suffix}"
@@ -27,18 +28,14 @@ registry_image='registry@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace52
 
 cleanup() {
   docker rm -fv "${node_container}" "${mariadb_container}" "${redis_container}" "${registry_container}" >/dev/null 2>&1 || true
-  if [[ "${created_tpdata:-0}" == 1 ]]; then
-    sudo -n rm -rf -- /tpdata
-  fi
+  sudo -n rm -rf -- "${host_data_root}" >/dev/null 2>&1 || true
   sudo -n find "${bundle_tmpfs_root}" -depth -delete >/dev/null 2>&1 || true
   rm -rf -- "${work}"
 }
 trap cleanup EXIT
 
-if sudo -n test -e /tpdata; then
-  fail 'formal Release install integration requires an unused /tpdata on the ephemeral test host'
-fi
-created_tpdata=1
+[[ ! -e "${host_data_root}" && ! -L "${host_data_root}" ]] ||
+  fail 'isolated Node data root is unexpectedly occupied'
 
 (cd "${API_DIR}" && CGO_ENABLED=0 go build -trimpath -o "${work}/trojan-panel" .)
 (cd "${API_DIR}" && CGO_ENABLED=0 go build -trimpath -tags nodeidentitycrashtest -o "${work}/trojan-panel-crash-test" .)
@@ -429,9 +426,9 @@ cat >>"${work}/release-node.yaml" <<EOF
   tls_cert_file: server.crt
   tls_key_file: server.key
   bind_address: 127.0.0.1
-  managed_cert_dir: /tpdata/trojan-panel-core/cert
-  external_managed_dir: /tpdata/trojanpanelnext-external
-  external_routes_dir: /tpdata/trojan-panel-core/external
+  managed_cert_dir: /tpdata/trojanpanelnext/trojan-panel-core/cert
+  external_managed_dir: /tpdata/trojanpanelnext/trojanpanelnext-external
+  external_routes_dir: /tpdata/trojanpanelnext/trojan-panel-core/external
 EOF
 chmod 0600 "${work}/release-node.yaml"
 TP_NODE_BUNDLE_PASSWORD="${bundle_password}" "${release_assets}/node-bundle" create \
@@ -527,6 +524,7 @@ test -z "$(find "${bundle_tmpfs_root}" -mindepth 1 -maxdepth 1 -print -quit)" ||
 sudo -n env \
   PATH="${work}/installer-tools:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
   TP_INSTALL_DEPS=0 TP_NODE_BUNDLE_PASSWORD="${bundle_password}" \
+  TP_DATA="${host_data_root}" TP_TEST_DATA_ROOT=1 \
   TP_OS_RELEASE_FILE="${work}/debian-os-release" \
   TP_NODE_BUNDLE_TMP_ROOT="${bundle_tmpfs_root}" \
   TP_HEALTH_ATTEMPTS=90 TP_HEALTH_DELAY_SECONDS=1 CORE_CONTAINER="${node_container}" \
@@ -582,12 +580,21 @@ test -z "$(find "${bundle_tmpfs_root}" -mindepth 1 -maxdepth 1 -print -quit)" ||
   fail 'formal Release install left decrypted bundle plaintext in its isolated tmpfs root'
 test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8082/healthz || true)" = 200 ||
   fail 'Node API did not become healthy after formal Release installation'
-test "$(sudo -n jq -r '.identity_generation' /tpdata/trojan-panel-core/runtime/bootstrap-verified.json)" = 1 ||
+test "$(sudo -n jq -r '.identity_generation' "${host_data_root}/trojan-panel-core/runtime/bootstrap-verified.json")" = 1 ||
   fail 'Node readiness marker did not bind generation one'
-test "$(sudo -n jq -r '.bootstrap_challenge' /tpdata/trojan-panel-core/runtime/bootstrap-verified.json)" = "${install_challenge}" ||
+test "$(sudo -n jq -r '.bootstrap_challenge' "${host_data_root}/trojan-panel-core/runtime/bootstrap-verified.json")" = "${install_challenge}" ||
   fail 'Node readiness marker did not bind this formal installation challenge'
-test ! -e /tpdata/trojan-panel-core/pki/client.key || fail 'Web mTLS client private key leaked to Node'
-test ! -e /tpdata/trojan-panel-core/pki/client-ca.key || fail 'Web client CA private key leaked to Node'
+test ! -e "${host_data_root}/trojan-panel-core/pki/client.key" || fail 'Web mTLS client private key leaked to Node'
+test ! -e "${host_data_root}/trojan-panel-core/pki/client-ca.key" || fail 'Web client CA private key leaked to Node'
+node_mounts="$(docker inspect --format '{{json .Mounts}}' "${node_container}")"
+jq -e --arg root "${host_data_root}" '
+  all(.[]; ((.Source | startswith($root + "/")) or .Source == "/etc/localtime") and
+    .Source != $root and .Destination != "/tpdata" and
+    (.Source | contains("/trojan-panel/pki") | not) and
+    (.Source | contains("/mariadb") | not)) and
+  any(.[]; .Destination == "/tpdata/trojan-panel-core/cert" and .RW == false) and
+  any(.[]; .Destination == "/tpdata/trojan-panel-core/pki" and .RW == false)
+' <<<"${node_mounts}" >/dev/null || fail 'Node Core mount source, destination, or private-key isolation is wrong'
 
 assert_formal_release_bundle_install_fails() {
   local bundle_path="$1"
@@ -597,6 +604,7 @@ assert_formal_release_bundle_install_fails() {
   if sudo -n env \
     PATH="${work}/installer-tools:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
     TP_INSTALL_DEPS=0 TP_NODE_BUNDLE_PASSWORD="${bundle_password}" \
+    TP_DATA="${host_data_root}" TP_TEST_DATA_ROOT=1 \
     TP_OS_RELEASE_FILE="${work}/debian-os-release" \
     TP_NODE_BUNDLE_TMP_ROOT="${bundle_tmpfs_root}" \
     TP_HEALTH_ATTEMPTS=3 TP_HEALTH_DELAY_SECONDS=1 \

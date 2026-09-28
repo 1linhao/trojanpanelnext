@@ -21,7 +21,7 @@
     {
       "name": "install",
       "path": "install.sh",
-      "sha256": "4389b7693fc2b707bed3b980db8d611a65c30b70b6f5fc4f5691b51d7a38d198"
+      "sha256": "6723842375750393b3ee217cad621032a45469efff3f0a7fcb365f36ce81ec21"
     },
     {
       "name": "secure-file",
@@ -36,17 +36,17 @@
     {
       "name": "config-web",
       "path": "config-web.yaml",
-      "sha256": "be2dbb880f468e685da71d8c18f537eb950ec687d97e1f5c86208514613c9a22"
+      "sha256": "43374028b5ae2f07cbbc1765aaf5ed81481690f5c0eab7d95d8eda7c2cb71ee6"
     },
     {
       "name": "config-node",
       "path": "config-node.yaml",
-      "sha256": "8e3692d8674c86fb0f912726fa269a20a4fef0333a0ed4be327cae9f969a1870"
+      "sha256": "38f71a7e90dc50e94be29fe50e1c2e69a9b0781968f7ef7507cbf0eb4ec638b2"
     },
     {
       "name": "config-combined",
       "path": "config-combined.yaml",
-      "sha256": "c74a34654fecbd53a3739f97ca1b6f45f4fa157c83589d998cbf7522b057ea37"
+      "sha256": "a378c8fa6a56fbee15da2b76292fd5710571396a68deaa02a638f311b3f513c8"
     },
     {
       "name": "client/tpnext",
@@ -91,12 +91,12 @@
     {
       "name": "entry/entryctl",
       "path": "entry/entryctl.sh",
-      "sha256": "e88a5843e9095fe12fed53c56c2da1653733f3dea86848d4ea871537833a01d8"
+      "sha256": "f311d4930df5e00b88ec373f1a08f2b85d3c89c0f41c3d52819d33855831bcd8"
     },
     {
       "name": "entry/controller",
       "path": "entry/controller.sh",
-      "sha256": "0b9462159a051e836d2668e52f46e8991e9f2bbc015f374d39559f5055d24bad"
+      "sha256": "789fbaea08b112dfea6aa30416dcbc2c1a9d4d4e569f6683991a7373e51d6ccc"
     },
     {
       "name": "entry/v2",
@@ -116,7 +116,7 @@
     {
       "name": "entry/adapters/caddy",
       "path": "entry/adapters/caddy.sh",
-      "sha256": "3de385013c7fdf9cf70fe3b61a3dcd05bdb99a0c7071c3223d58d8a82e90d42f"
+      "sha256": "4e7e998c509fd28504b7420be52e4b19c97e2c0cf34d58f0d7b13618361eaa83"
     }
   ],
   "images": {

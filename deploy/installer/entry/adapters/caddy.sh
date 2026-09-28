@@ -12,6 +12,14 @@ caddy_adapter_safe_path() {
     [[ "$(realpath -m -- "$1")" == "$1" ]]
 }
 
+caddy_adapter_container_path() {
+  local host_path="$1" root="${CADDY_ADAPTER_HOST_DATA_ROOT:-}"
+  case "$host_path" in
+    "${root}/"*) [[ -n "$root" ]] && printf '/tpdata%s\n' "${host_path#"$root"}" || printf '%s\n' "$host_path" ;;
+    *) printf '%s\n' "$host_path" ;;
+  esac
+}
+
 caddy_adapter_safe_domain() {
   [[ "${1:-}" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$ ]]
 }
@@ -201,7 +209,7 @@ caddy_adapter_write_renewal_trigger() {
   [[ "${CADDY_ADAPTER_FAKE:-0}" == 1 ]] && return 0
   deployment="$(jq -r '.deployment_id' "$spec")"
   entryctl="${CADDY_ADAPTER_ENTRYCTL_PATH:-${ENTRYCTL_PATH:-/usr/local/lib/trojanpanelnext/entry/entryctl.sh}}"
-  state_root="${CADDY_ADAPTER_ENTRY_STATE_ROOT:-/tpdata/trojanpanelnext-entry/state}"
+  state_root="${CADDY_ADAPTER_ENTRY_STATE_ROOT:-/tpdata/trojanpanelnext/trojanpanelnext-entry/state}"
   image="$(caddy_adapter_image)" || return 1
   [[ -x "$entryctl" && ! -L "$entryctl" ]] || return 1
   timer_dir="$(caddy_adapter_timer_dir)"; service="$(caddy_adapter_timer_service)"; unit="$(caddy_adapter_timer_unit)"
@@ -221,7 +229,7 @@ caddy_adapter_write_renewal_trigger() {
     printf 'export CADDY_ADAPTER_IMAGE=%q\n' "$image"
     printf 'export CADDY_ADAPTER_ENTRYCTL_PATH=%q\n' "$entryctl"
     printf 'export CADDY_ADAPTER_TIMER_DIR=%q\n' "$timer_dir"
-    for var in CADDY_ADAPTER_ROOT CADDY_ADAPTER_DOCKER CADDY_ADAPTER_CONTAINER CADDY_ADAPTER_NODE_CONTAINER CADDY_ADAPTER_WEB_ROOT CADDY_ADAPTER_CA_FILE CADDY_ADAPTER_TEST_INTERNAL_TLS CADDY_ADAPTER_SKIP_DNS_CHECK CADDY_ADAPTER_CERT_WAIT_ATTEMPTS CADDY_ADAPTER_CERT_WAIT_SECONDS CADDY_ADAPTER_TIMER_ENABLE_CMD CADDY_ADAPTER_TIMER_DISABLE_CMD; do
+    for var in CADDY_ADAPTER_ROOT CADDY_ADAPTER_DOCKER CADDY_ADAPTER_CONTAINER CADDY_ADAPTER_NODE_CONTAINER CADDY_ADAPTER_WEB_ROOT CADDY_ADAPTER_HOST_DATA_ROOT CADDY_ADAPTER_ENTRY_STATE_ROOT CADDY_ADAPTER_CA_FILE CADDY_ADAPTER_TEST_INTERNAL_TLS CADDY_ADAPTER_SKIP_DNS_CHECK CADDY_ADAPTER_CERT_WAIT_ATTEMPTS CADDY_ADAPTER_CERT_WAIT_SECONDS CADDY_ADAPTER_TIMER_ENABLE_CMD CADDY_ADAPTER_TIMER_DISABLE_CMD; do
       [[ -n "${!var+x}" ]] && printf 'export %s=%q\n' "$var" "${!var}"
     done
     printf 'exec %q reconcile --spec %q --state-root %q\n' "$entryctl" "$(caddy_adapter_renewal_spec "$root")" "$state_root"
@@ -520,8 +528,20 @@ caddy_adapter_check_manifest() {
   ' "$manifest" >/dev/null 2>&1
 }
 
+caddy_adapter_check_node_cert_mount() {
+  local consumer="$1" core="$2" docker container_consumer envs mount mount_rw
+  docker="$(caddy_adapter_docker)"
+  container_consumer="$(caddy_adapter_container_path "$consumer")"
+  envs="$("$docker" inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$core" 2>/dev/null)" || return 1
+  grep -Fxq "crt_path=$container_consumer/fullchain.pem" <<<"$envs" || return 1
+  grep -Fxq "key_path=$container_consumer/privkey.pem" <<<"$envs" || return 1
+  mount="$("$docker" inspect -f '{{range .Mounts}}{{if eq .Destination "'"$container_consumer"'"}}{{.Source}}{{end}}{{end}}' "$core" 2>/dev/null)" || return 1
+  mount_rw="$("$docker" inspect -f '{{range .Mounts}}{{if eq .Destination "'"$container_consumer"'"}}{{.RW}}{{end}}{{end}}' "$core" 2>/dev/null)" || return 1
+  [[ "$mount" == "$consumer" && "$mount_rw" == false ]]
+}
+
 caddy_adapter_check_node_runtime() {
-  local spec="$1" require_all="${2:-1}" docker core pids network port out line pid found consumer envs mount running
+  local spec="$1" require_all="${2:-1}" docker core pids network port out line pid found consumer running
   [[ "${CADDY_ADAPTER_FAKE:-0}" == 1 ]] && return 0
   [[ "${CADDY_ADAPTER_BOOTSTRAP:-0}" == 1 ]] && return 0
   jq -e '.active_roles | index("node") != null' "$spec" >/dev/null || return 0
@@ -530,11 +550,7 @@ caddy_adapter_check_node_runtime() {
   if [[ "$running" == true ]]; then
     consumer="$(jq -r '.roles.node.certificate_consumer' "$spec")"
     caddy_adapter_safe_path "$consumer" || return 1
-    envs="$($docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$core" 2>/dev/null)" || return 1
-    grep -Fxq "crt_path=$consumer/fullchain.pem" <<<"$envs" || return 1
-    grep -Fxq "key_path=$consumer/privkey.pem" <<<"$envs" || return 1
-    mount="$($docker inspect -f '{{range .Mounts}}{{if eq .Destination "'"$consumer"'"}}{{.Source}}{{end}}{{end}}' "$core" 2>/dev/null)" || return 1
-    [[ "$mount" == "$consumer" ]] || return 1
+    caddy_adapter_check_node_cert_mount "$consumer" "$core" || return 1
     pids="$("$docker" top "$core" -eo pid 2>/dev/null | tail -n +2 | tr '\n' ' ')" || return 1
     [[ -n "$pids" ]] || return 1
   else
@@ -589,15 +605,18 @@ caddy_adapter_check_container_owner() {
   token="$(jq -r '.owner_token // empty' "$spec")"
   container_token="$($docker inspect -f '{{ index .Config.Labels "io.trojanpanelnext.owner-token" }}' "$container" 2>/dev/null || true)"
   [[ -n "$token" && "$container_token" == "$token" ]] || return 1
-  local image config_mount data_mount web_mount
+  local image config_mount data_mount config_dir_mount config_dir_rw web_mount
   image="$(caddy_adapter_image)" || return 1
   [[ "$($docker inspect -f '{{.Config.Image}}' "$container" 2>/dev/null)" == "$image" ]] || return 1
-  config_mount="$($docker inspect -f '{{range .Mounts}}{{if eq .Destination "/etc/caddy"}}{{.Source}}{{end}}{{end}}' "$container" 2>/dev/null)" || return 1
+  config_mount="$($docker inspect -f '{{range .Mounts}}{{if eq .Destination "/etc/caddy/Caddyfile"}}{{.Source}}{{end}}{{end}}' "$container" 2>/dev/null)" || return 1
   data_mount="$($docker inspect -f '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Source}}{{end}}{{end}}' "$container" 2>/dev/null)" || return 1
+  config_dir_mount="$($docker inspect -f '{{range .Mounts}}{{if eq .Destination "/config"}}{{.Source}}{{end}}{{end}}' "$container" 2>/dev/null)" || return 1
+  config_dir_rw="$($docker inspect -f '{{range .Mounts}}{{if eq .Destination "/config"}}{{.RW}}{{end}}{{end}}' "$container" 2>/dev/null)" || return 1
   web_mount="$($docker inspect -f '{{range .Mounts}}{{if eq .Destination "/srv"}}{{.Source}}{{end}}{{end}}' "$container" 2>/dev/null)" || return 1
-  [[ "$config_mount" == "$(caddy_adapter_root "$spec")" &&
+  [[ "$config_mount" == "$(caddy_adapter_root "$spec")/Caddyfile" &&
      "$data_mount" == "$(caddy_adapter_root "$spec")/data" &&
-     "$web_mount" == "${CADDY_ADAPTER_WEB_ROOT:-/tpdata/web}" ]]
+     "$config_dir_mount" == "$(caddy_adapter_root "$spec")/config" && "$config_dir_rw" == true &&
+     "$web_mount" == "${CADDY_ADAPTER_WEB_ROOT:-/tpdata/trojanpanelnext/web}" ]]
 }
 
 caddy_adapter_check_certificate_ownership() {
@@ -693,7 +712,7 @@ caddy_adapter_backup_certificates() {
 }
 
 caddy_adapter_restore_certificates() {
-  local spec="$1" root="$2" backup="${root}/.rollback-certs" role cert key marker consumer docker core envs mount
+  local spec="$1" root="$2" backup="${root}/.rollback-certs" role cert key marker consumer docker core
   [[ "${CADDY_ADAPTER_FAKE:-0}" == 1 || ! -e "$backup" ]] && return 0
   [[ "$(cat "$backup/owner" 2>/dev/null)" == "deployment=$(jq -r '.deployment_id' "$spec")" ]] || return 1
   while IFS= read -r role; do
@@ -715,11 +734,7 @@ caddy_adapter_restore_certificates() {
         cp -p -- "$backup/consumer.key" "$consumer/privkey.pem" || return 1
       docker="$(caddy_adapter_docker)"; core="${CADDY_ADAPTER_NODE_CONTAINER:-trojan-panel-core}"
       if "$docker" inspect "$core" >/dev/null 2>&1; then
-        envs="$($docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$core" 2>/dev/null)" || return 1
-        grep -Fxq "crt_path=$consumer/fullchain.pem" <<<"$envs" || return 1
-        grep -Fxq "key_path=$consumer/privkey.pem" <<<"$envs" || return 1
-        mount="$($docker inspect -f '{{range .Mounts}}{{if eq .Destination "'"$consumer"'"}}{{.Source}}{{end}}{{end}}' "$core" 2>/dev/null)" || return 1
-        [[ "$mount" == "$consumer" ]] || return 1
+        caddy_adapter_check_node_cert_mount "$consumer" "$core" || return 1
         if [[ "$($docker inspect -f '{{.State.Running}}' "$core" 2>/dev/null)" == true ]]; then
           "$docker" restart "$core" >/dev/null || return 1
         fi
@@ -948,7 +963,7 @@ caddy_adapter_purge_retired_roles() {
 }
 
 caddy_adapter_refresh_node_consumer() {
-  local spec="$1" node_cert node_key consumer marker installer_marker docker core envs mount temp_cert temp_key changed=0
+  local spec="$1" node_cert node_key consumer marker installer_marker docker core temp_cert temp_key changed=0
   [[ "${CADDY_ADAPTER_FAKE:-0}" == 1 ]] && return 0
   jq -e '.active_roles | index("node") != null' "$spec" >/dev/null || return 0
   node_cert="$(jq -r '.certificate_targets.node.cert_path' "$spec")"
@@ -986,11 +1001,7 @@ caddy_adapter_refresh_node_consumer() {
   fi
   docker="$(caddy_adapter_docker)"; core="${CADDY_ADAPTER_NODE_CONTAINER:-trojan-panel-core}"
   if "$docker" inspect "$core" >/dev/null 2>&1; then
-    envs="$($docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$core" 2>/dev/null)" || return 1
-    grep -Fxq "crt_path=$consumer/fullchain.pem" <<<"$envs" || return 1
-    grep -Fxq "key_path=$consumer/privkey.pem" <<<"$envs" || return 1
-    mount="$($docker inspect -f '{{range .Mounts}}{{if eq .Destination "'"$consumer"'"}}{{.Source}}{{end}}{{end}}' "$core" 2>/dev/null)" || return 1
-    [[ "$mount" == "$consumer" ]] || return 1
+    caddy_adapter_check_node_cert_mount "$consumer" "$core" || return 1
     [[ "$($docker inspect -f '{{.State.Running}}' "$core" 2>/dev/null)" == true ]] || return 1
     if [[ "$changed" == 1 ]]; then
       "$docker" restart "$core" >/dev/null || return 1
@@ -1053,11 +1064,12 @@ caddy_adapter_ensure_container() {
     caddy_adapter_check_container_owner "$spec"
     return $?
   fi
+  mkdir -p "${root}/config" || return 1
   "$docker" create --name "$container" --restart always --network host \
     --label "io.trojanpanelnext.deployment=$(jq -r '.deployment_id' "$spec")" \
     --label "io.trojanpanelnext.owner-token=$(jq -r '.owner_token' "$spec")" \
-    -v "${root}:/etc/caddy:ro" -v "${root}/data:/data" \
-    -v "${CADDY_ADAPTER_WEB_ROOT:-/tpdata/web}:/srv:ro" "$image" >/dev/null
+    -v "${root}/Caddyfile:/etc/caddy/Caddyfile:ro" -v "${root}/data:/data" -v "${root}/config:/config" \
+    -v "${CADDY_ADAPTER_WEB_ROOT:-/tpdata/trojanpanelnext/web}:/srv:ro" "$image" >/dev/null
 }
 
 caddy_adapter_candidate_resources() {
@@ -1396,6 +1408,16 @@ entry_v2_adapter_rollback() {
       rm -f "$(caddy_adapter_marker "$root")" "$(caddy_adapter_consumer_registry "$root")"
     fi
     if [[ "$preserve_data" != 1 ]]; then rm -rf -- "${root}/data" || return 1; fi
+    if [[ "$preserve_owner" != 1 && -e "${root}/config" ]]; then
+      # Caddy writes this cache on start even when first-install verification
+      # fails. Remove only its known file; unknown content must remain intact.
+      local autosave="${root}/config/caddy/autosave.json"
+      [[ ! -L "${root}/config" && ! -L "${root}/config/caddy" && ! -L "$autosave" ]] || return 1
+      [[ ! -e "$autosave" || -f "$autosave" ]] || return 1
+      rm -f -- "$autosave" || return 1
+      [[ ! -e "${root}/config/caddy" ]] || rmdir -- "${root}/config/caddy" || return 1
+      rmdir -- "${root}/config" || return 1
+    fi
     rm -rf -- "$first_backup"
     if [[ "$preserve_owner" != 1 ]]; then rmdir "$root" 2>/dev/null || true; fi
     return 0

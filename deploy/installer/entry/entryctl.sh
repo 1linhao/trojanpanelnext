@@ -321,7 +321,7 @@ main() {
   plan)
     shift
     local spec=""
-    local state_root="${ENTRY_STATE_ROOT:-/tpdata/trojanpanelnext-entry/state}"
+    local state_root="${ENTRY_STATE_ROOT:-/tpdata/trojanpanelnext/trojanpanelnext-entry/state}"
     while (($# > 0)); do
       case "$1" in
       --spec)
@@ -376,7 +376,7 @@ main() {
   status)
     shift
     local deployment=""
-    local state_root="${ENTRY_STATE_ROOT:-/tpdata/trojanpanelnext-entry/state}"
+    local state_root="${ENTRY_STATE_ROOT:-/tpdata/trojanpanelnext/trojanpanelnext-entry/state}"
     while (($# > 0)); do
       case "$1" in
       --deployment)
@@ -400,7 +400,7 @@ main() {
   reconcile)
     shift
     local spec=""
-    local state_root="${ENTRY_STATE_ROOT:-/tpdata/trojanpanelnext-entry/state}"
+    local state_root="${ENTRY_STATE_ROOT:-/tpdata/trojanpanelnext/trojanpanelnext-entry/state}"
     while (($# > 0)); do
       case "$1" in
       --spec) [[ $# -ge 2 ]] || return 2; spec="$2"; shift 2 ;;
@@ -418,7 +418,7 @@ main() {
   remove)
     shift
     local spec=""
-    local state_root="${ENTRY_STATE_ROOT:-/tpdata/trojanpanelnext-entry/state}"
+    local state_root="${ENTRY_STATE_ROOT:-/tpdata/trojanpanelnext/trojanpanelnext-entry/state}"
     local purge=0
     while (($# > 0)); do
       case "$1" in
