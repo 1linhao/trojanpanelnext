@@ -11,12 +11,12 @@
     {
       "name": "release-contract",
       "path": "release-contract.sh",
-      "sha256": "7ab9c1e9ef977b0810d4f898027dd292e1a636a6fd9a280951e773cd85bd9e90"
+      "sha256": "a920084de410dd2d318f82a3fa7371b8f89c3aba9c9270c1bef720c71cc741d8"
     },
     {
       "name": "verify-assets",
       "path": "verify-assets.sh",
-      "sha256": "61968f5bd46e44e6563eca7d92628250384d70621d71b19ccb64ff8065c73b48"
+      "sha256": "fc241147ff9256ea5e838965c394562c0589ea4c2b19a088e206e36cd6d398ca"
     },
     {
       "name": "install",
@@ -59,9 +59,14 @@
       "sha256": "3f0ff2b55412b91a96f1f19276a74ea40633f6ac410be81c6750e52d52b8b325"
     },
     {
+      "name": "client/node-catalog",
+      "path": "client/node-catalog.sh",
+      "sha256": "f40034b10050a17f2d6d4836229e7904b48dc445ee67e806d6808a49db6b40b4"
+    },
+    {
       "name": "client/verify-release",
       "path": "client/verify-release.sh",
-      "sha256": "f134921f5b16c0e65928f3a78feee86e539bebf6189e3575b98b128bcebe4bca"
+      "sha256": "3e1cffeec783f65787de3f96755acb8b01e3e64d606644d438999824716e4f53"
     },
     {
       "name": "client/download-assets",

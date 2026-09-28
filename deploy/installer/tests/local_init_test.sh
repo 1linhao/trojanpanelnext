@@ -35,7 +35,7 @@ paths=(
   config-web.yaml config-node.yaml config-combined.yaml
   entry/entryctl.sh entry/controller.sh entry/v2.sh
   entry/adapters/external.sh entry/adapters/nginx_certbot.sh entry/adapters/caddy.sh
-  client/tpnext.sh client/topology.sh client/verify-release.sh
+  client/tpnext.sh client/topology.sh client/node-catalog.sh client/verify-release.sh
   client/download-assets.sh client/upload-assets.sh
   client/templates/unified-ssh.yaml client/templates/unified-local.yaml
 )
@@ -140,6 +140,13 @@ tar -C "${work}/wrong-digest" -czf "${work}/wrong-digest.tar.gz" .
 TP_TEST_ARCHIVE="${work}/wrong-digest.tar.gz"; export TP_TEST_ARCHIVE
 reject 'internal asset SHA' bash "${client}" init --config "${work}/digest.local.yaml" --tag v1.2.3 --sha256 "$(sha_file "${TP_TEST_ARCHIVE}")" --work-dir "${work}/digest-assets.local"
 [[ ! -e "${work}/digest.local.yaml" ]] || fail 'internal SHA mismatch created config'
+
+cp -R "${source_dir}" "${work}/tampered-catalog"
+printf 'tampered\n' >>"${work}/tampered-catalog/client/node-catalog.sh"
+tar -C "${work}/tampered-catalog" -czf "${work}/tampered-catalog.tar.gz" .
+TP_TEST_ARCHIVE="${work}/tampered-catalog.tar.gz"; export TP_TEST_ARCHIVE
+reject 'Node catalog helper SHA' bash "${client}" init --config "${work}/catalog.local.yaml" --tag v1.2.3 --sha256 "$(sha_file "${TP_TEST_ARCHIVE}")" --work-dir "${work}/catalog-assets.local"
+[[ ! -e "${work}/catalog.local.yaml" ]] || fail 'tampered Node catalog helper created config'
 
 cp -R "${source_dir}" "${work}/bad-image"
 jq '.images.api.reference = "example/api:latest"' "${source_dir}/release-manifest.json" >"${work}/bad-image/release-manifest.json"

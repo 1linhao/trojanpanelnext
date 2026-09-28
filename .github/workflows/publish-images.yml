@@ -420,6 +420,7 @@ jobs:
             release-assets/verify-assets.sh --assets-dir release-assets --config "$config"
           done
           test -x release-assets/client/tpnext.sh
+          test -x release-assets/client/node-catalog.sh
           test -f release-assets/client/templates/unified-ssh.yaml
           test -f release-assets/client/templates/unified-local.yaml
           mkdir release-upload
