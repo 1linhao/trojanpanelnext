@@ -144,4 +144,34 @@ removed="$(entry_v2_remove "$tmp/web" "$ENTRY_STATE_ROOT" 1)"
 [[ "$(jq -r '.result' <<<"$removed")" == removed ]] || fail 'owned Caddy resources were not removed'
 [[ ! -e "$CADDY_ADAPTER_ROOT/Caddyfile" && ! -e "$tmp/certs/web/cert.pem" ]] || fail 'purge crossed ownership boundary'
 
+# First-install rollback may delete Caddy's known autosave, but not unknown
+# config content or anything reached through a symlink.
+rollback_state='{"committed_target":null}'
+mkdir -p "$tmp/foreign"
+printf 'foreign\n' >"$tmp/foreign/sentinel"
+for kind in unknown autosave-symlink directory-symlink; do
+  export CADDY_ADAPTER_ROOT="$tmp/rollback-$kind"
+  mkdir -p "$CADDY_ADAPTER_ROOT/config/caddy"
+  case "$kind" in
+    unknown)
+      printf 'foreign\n' >"$CADDY_ADAPTER_ROOT/config/unknown"
+      printf '{}\n' >"$CADDY_ADAPTER_ROOT/config/caddy/autosave.json"
+      ;;
+    autosave-symlink)
+      ln -s "$tmp/foreign/sentinel" "$CADDY_ADAPTER_ROOT/config/caddy/autosave.json"
+      ;;
+    directory-symlink)
+      rmdir "$CADDY_ADAPTER_ROOT/config/caddy"
+      ln -s "$tmp/foreign" "$CADDY_ADAPTER_ROOT/config/caddy"
+      ;;
+  esac
+  expect_fail entry_v2_adapter_rollback "$tmp/spec" "$rollback_state"
+  [[ "$(cat "$tmp/foreign/sentinel")" == foreign ]] || fail "rollback followed $kind symlink"
+  case "$kind" in
+    unknown) [[ -f "$CADDY_ADAPTER_ROOT/config/unknown" ]] || fail 'rollback deleted unknown config' ;;
+    autosave-symlink) [[ -L "$CADDY_ADAPTER_ROOT/config/caddy/autosave.json" ]] || fail 'rollback deleted autosave symlink' ;;
+    directory-symlink) [[ -L "$CADDY_ADAPTER_ROOT/config/caddy" ]] || fail 'rollback deleted config directory symlink' ;;
+  esac
+done
+
 printf 'Caddy Adapter combined transaction: PASS\n'

@@ -1411,6 +1411,16 @@ entry_v2_adapter_rollback() {
       rm -f "$(caddy_adapter_marker "$root")" "$(caddy_adapter_consumer_registry "$root")"
     fi
     if [[ "$preserve_data" != 1 ]]; then rm -rf -- "${root}/data" || return 1; fi
+    if [[ "$preserve_owner" != 1 && -e "${root}/config" ]]; then
+      # Caddy writes this cache on start even when first-install verification
+      # fails. Remove only its known file; unknown content must remain intact.
+      local autosave="${root}/config/caddy/autosave.json"
+      [[ ! -L "${root}/config" && ! -L "${root}/config/caddy" && ! -L "$autosave" ]] || return 1
+      [[ ! -e "$autosave" || -f "$autosave" ]] || return 1
+      rm -f -- "$autosave" || return 1
+      [[ ! -e "${root}/config/caddy" ]] || rmdir -- "${root}/config/caddy" || return 1
+      rmdir -- "${root}/config" || return 1
+    fi
     rm -rf -- "$first_backup"
     if [[ "$preserve_owner" != 1 ]]; then rmdir "$root" 2>/dev/null || true; fi
     return 0
