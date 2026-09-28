@@ -36,6 +36,31 @@ func SelectNodeServer(where map[string]interface{}) (*model.NodeServer, error) {
 	return &nodeServer, nil
 }
 
+// SelectNodeServerForControl rejects any registered identity that is no longer
+// active before a panel-to-core RPC. Servers without an identity remain usable
+// for compatibility with installations predating standalone enrollment.
+func SelectNodeServerForControl(id uint) (*model.NodeServer, error) {
+	var nodeServer model.NodeServer
+	rows, err := db.Query(`SELECT ns.id, ns.ip, ns.grpc_port, ns.grpc_tls_mode,
+		ns.grpc_tls_server_name, ns.traffic_period, ns.traffic_limit_mode,
+		ns.traffic_total_limit, ns.traffic_upload_limit,
+		ns.traffic_download_limit, ns.name, ns.create_time
+		FROM node_server ns LEFT JOIN node_identity ni ON ni.node_server_id = ns.id
+		WHERE ns.id = ? AND (ni.identity_id IS NULL OR ni.status = 'active')`, id)
+	if err != nil {
+		logrus.Errorln(err.Error())
+		return nil, errors.New(constant.SysError)
+	}
+	defer rows.Close()
+	if err = scanner.Scan(rows, &nodeServer); err == scanner.ErrEmptyResult {
+		return nil, errors.New(constant.NodeNotExist)
+	} else if err != nil {
+		logrus.Errorln(err.Error())
+		return nil, errors.New(constant.SysError)
+	}
+	return &nodeServer, nil
+}
+
 func CreateNodeServer(nodeServer *model.NodeServer) error {
 	nodeServerEntity := map[string]interface{}{
 		"ip": *nodeServer.Ip, "name": *nodeServer.Name,
@@ -259,12 +284,14 @@ func SelectNodeServerList(ip *string, name *string) ([]model.NodeServer, error) 
 	return nodeServers, nil
 }
 
-// SelectNodeServersForControl returns each server once with the transport
-// settings required for panel-to-core control calls.
+// SelectNodeServersForControl returns each active or legacy-unmanaged server
+// once with the transport settings required for panel-to-core control calls.
 func SelectNodeServersForControl() ([]model.NodeServer, error) {
 	var nodeServers []model.NodeServer
 	query := `SELECT DISTINCT ns.id, ns.ip, ns.grpc_port, ns.grpc_tls_mode, ns.grpc_tls_server_name
-		FROM node_server ns INNER JOIN node n ON n.node_server_id = ns.id`
+		FROM node_server ns INNER JOIN node n ON n.node_server_id = ns.id
+		LEFT JOIN node_identity ni ON ni.node_server_id = ns.id
+		WHERE ni.identity_id IS NULL OR ni.status = 'active'`
 	rows, err := db.Query(query)
 	if err != nil {
 		logrus.Errorln(err.Error())

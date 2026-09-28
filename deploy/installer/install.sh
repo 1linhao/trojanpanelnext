@@ -16,6 +16,7 @@ SECURE_FILE_HELPER_OVERRIDE="${SECURE_FILE_HELPER:-}"
 SECURE_FILE_HELPER="${SECURE_FILE_HELPER_OVERRIDE:-${INSTALLER_DIR}/secure-file}"
 NODE_BUNDLE_HELPER_OVERRIDE="${NODE_BUNDLE_HELPER:-}"
 NODE_BUNDLE_HELPER="${NODE_BUNDLE_HELPER_OVERRIDE:-${INSTALLER_DIR}/node-bundle}"
+NODE_REVOCATION_PUBLIC_KEY="${TP_DATA}/trojan-panel-core/pki/revocation-public-key.txt"
 ENTRYCTL_PATH_OVERRIDE="${ENTRYCTL_PATH:-}"
 ENTRYCTL_PATH="${ENTRYCTL_PATH_OVERRIDE:-${INSTALLER_DIR}/entry/entryctl.sh}"
 ENTRY_SPEC_FILE="${ENTRY_SPEC_FILE:-}"
@@ -309,7 +310,7 @@ usage() {
   cat <<EOF
 Usage:
   $0 install  --mode $mode (--config <file>|--bundle <encrypted.age>) [--entry-spec <0600-file>]
-  $0 remove   --mode $mode --config <file> [--entry-spec <0600-file>] [--purge-data|--keep-data]
+  $0 remove   --mode $mode --config <file> [--entry-spec <0600-file>] [--receipt-file <file>] [--purge-data|--keep-data]
   $0 validate --mode $mode (--config <file>|--bundle <encrypted.age>) [--entry-spec <file>]
   $0 refresh-cert --mode node|combined --config <file>
 
@@ -319,6 +320,7 @@ Options:
   --restore-role <role> Explicitly restore a removed combined role (web|node)
   --config <file>    YAML configuration file
   --bundle <file>    Encrypted Node bootstrap bundle (node install/validate only)
+  --receipt-file <file> Web-issued receipt required for independent Node removal
   --force            Recreate existing containers during installation
   --purge-data       Delete generated data during removal
   --keep-data        Preserve generated data during removal, overriding the config
@@ -327,7 +329,7 @@ Options:
 Examples:
   $0 validate --mode web --config ./examples/web.yaml
   $0 install --mode web --config ./examples/web.yaml
-  $0 install --mode node --config ./examples/node-agent.yaml
+  $0 install --mode node --bundle ./node.g1.age
   $0 install --mode node --config ./examples/external-node.yaml
 
 The command is non-interactive. The value of --mode must match
@@ -700,6 +702,125 @@ prepare_node_bundle() {
   TP_SECURE_CONFIG_DIR="${TP_NODE_BUNDLE_DIR}/secure"
   TP_NODE_BUNDLE_ACTIVE=1
   prepare_secure_config "${TP_NODE_BUNDLE_DIR}/config-node.yaml"
+}
+
+check_installed_node_revocation_key() {
+  local bundled="${TP_NODE_BUNDLE_DIR}/pki/revocation-public-key.txt"
+  local installed="${NODE_REVOCATION_PUBLIC_KEY}"
+  [[ "${TP_NODE_BUNDLE_ACTIVE}" == 1 && -f "${bundled}" && ! -L "${bundled}" ]] || return 1
+  if [[ ! -e "${installed}" && ! -L "${installed}" &&
+    ( -e "$(installer_state_path_for node)" || -L "$(installer_state_path_for node)" ) ]]; then
+    echo_content red "Existing Node deployment has no pinned revocation key; explicit migration is required"
+    return 1
+  fi
+  if [[ -e "${installed}" || -L "${installed}" ]]; then
+    [[ -f "${installed}" && ! -L "${installed}" &&
+      "$(stat -c %u "${installed}")" == "${EUID}" && "$(stat -c %a "${installed}")" == 600 &&
+      "$(sha256sum "${installed}" | awk '{print $1}')" == "$(sha256sum "${bundled}" | awk '{print $1}')" ]] || {
+      echo_content red "Installed Node revocation trust key differs from the verified bootstrap bundle"
+      return 1
+    }
+  fi
+}
+
+pin_node_revocation_key() {
+  local bundled="${TP_NODE_BUNDLE_DIR}/pki/revocation-public-key.txt" installed="${NODE_REVOCATION_PUBLIC_KEY}" temporary
+  check_installed_node_revocation_key || return 1
+  [[ -e "${installed}" ]] && return 0
+  [[ -d "$(dirname "${installed}")" && ! -L "$(dirname "${installed}")" ]] || return 1
+  temporary="$(mktemp "${installed}.pending.XXXXXXXX")" || return 1
+  if ! install -m 0600 "${bundled}" "${temporary}"; then
+    rm -f -- "${temporary}"
+    return 1
+  fi
+  # Hard-link publication is atomic and fails if another installation pinned
+  # this path after our precheck. A rename or install to the final path could
+  # silently replace the original trust root.
+  if ! ln -- "${temporary}" "${installed}" 2>/dev/null; then
+    rm -f -- "${temporary}"
+    check_installed_node_revocation_key
+    return $?
+  fi
+  rm -f -- "${temporary}"
+  check_installed_node_revocation_key
+}
+
+verify_independent_node_removal() {
+  local receipt="$1" state
+  state="$(installer_state_path_for node)"
+  [[ -n "${receipt}" && -f "${state}" && ! -L "${state}" &&
+    "$(stat -c %u "${state}")" == "${EUID}" && "$(stat -c %a "${state}")" == 600 &&
+    "$(installer_state_value schema_version "${state}")" == 1 &&
+    "$(installer_state_value mode "${state}")" == node &&
+    "$(installer_state_value tp_data "${state}")" == "${TP_DATA}" ]] || {
+    echo_content red "Independent Node removal requires a matching installed identity state and Web revocation receipt"
+    return 1
+  }
+  [[ -x "${NODE_BUNDLE_HELPER}" && ! -L "${NODE_BUNDLE_HELPER}" ]] || {
+    echo_content red "Verified Node receipt helper is missing"
+    return 1
+  }
+  "${NODE_BUNDLE_HELPER}" verify-receipt --receipt-file "${receipt}" \
+    --pinned-public-key "${NODE_REVOCATION_PUBLIC_KEY}" \
+    --identity-id "$(installer_state_value node_identity_id "${state}")" \
+    --server-id "$(installer_state_value node_server_id "${state}")" \
+    --generation "$(installer_state_value node_identity_generation "${state}")" >/dev/null || {
+    echo_content red "Independent Node removal was stopped before local resources changed"
+    return 1
+  }
+}
+
+preflight_node_removal_role() {
+  local receipt="$1" node_state combined_state
+  node_state="$(installer_state_path_for node)"
+  combined_state="$(installer_state_path_for combined)"
+  if [[ ( -e "${node_state}" || -L "${node_state}" ) &&
+    ( -e "${combined_state}" || -L "${combined_state}" ) ]]; then
+    echo_content red "Conflicting installed Node and combined deployment states require manual recovery"
+    return 1
+  fi
+  if [[ -e "${node_state}" || -L "${node_state}" ]]; then
+    verify_independent_node_removal "${receipt}" || return 1
+    TP_NODE_REMOVAL_ROLE=node
+    return
+  fi
+  [[ -f "${combined_state}" && ! -L "${combined_state}" &&
+    "$(stat -c %u "${combined_state}")" == "${EUID}" &&
+    "$(stat -c %a "${combined_state}")" == 600 &&
+    "$(installer_state_value schema_version "${combined_state}")" == 1 &&
+    "$(installer_state_value mode "${combined_state}")" == combined &&
+    "$(installer_state_value tp_data "${combined_state}")" == "${TP_DATA}" &&
+    -z "${receipt}" ]] || {
+    echo_content red "Node removal requires a committed standalone receipt or combined deployment state"
+    return 1
+  }
+  TP_NODE_REMOVAL_ROLE=combined
+}
+
+preflight_node_removal_config_role() {
+  local config="$1" expected="$2" requested
+  requested="$(yq -r '.trojanpanelnext.deployment_mode // ""' "${config}")" || return 1
+  [[ "${requested}" == "${expected}" ]] || {
+    echo_content red "Node removal configuration differs from the committed deployment role"
+    return 1
+  }
+}
+
+check_node_removal_config_binding() {
+  local role="$1" state
+  [[ "${TP_DEPLOYMENT_MODE}" == "${role}" ]] || {
+    echo_content red "Node removal configuration differs from the committed deployment role"
+    return 1
+  }
+  [[ "${role}" == node ]] || return 0
+  state="$(installer_state_path_for node)"
+  [[ "$(installer_state_value node_identity_id "${state}")" == "${NODE_IDENTITY_ID}" &&
+    "$(installer_state_value node_server_id "${state}")" == "${NODE_SERVER_ID}" &&
+    "$(installer_state_value node_identity_generation "${state}")" == "${NODE_IDENTITY_GENERATION}" &&
+    "$(installer_state_value domain "${state}")" == "${TP_NODE_DOMAIN}" ]] || {
+    echo_content red "Node removal configuration differs from the installed identity"
+    return 1
+  }
 }
 
 initialize_node_bootstrap_challenge() {
@@ -3679,6 +3800,7 @@ deploy_web() {
   write_panel_runtime_config
   write_initial_sysadmin_password_file
   deploy_panel_backend
+  docker exec "${PANEL_CONTAINER}" /tpdata/trojan-panel/trojan-panel node-identity revocation-key-init
   deploy_panel_ui
 
   if [[ "${TLS_MODE}" == "external" ]]; then
@@ -3743,6 +3865,7 @@ deploy_combined() {
   write_panel_runtime_config
   write_initial_sysadmin_password_file
   deploy_panel_backend
+  docker exec "${PANEL_CONTAINER}" /tpdata/trojan-panel/trojan-panel node-identity revocation-key-init
   deploy_panel_ui
 
   # The API provisions dedicated MariaDB/Redis identities for the local Node;
@@ -3851,6 +3974,9 @@ remove_combined_role() {
     # Reclaim the control-plane identity before changing the local Node role.
     # A failed revocation leaves every local resource untouched.
     revoke_combined_node_identity
+    if [[ -n "${ENTRY_SPEC_FILE}" ]]; then
+      entry_controller remove
+    fi
     if [[ "${roles}" == node,web ]]; then
       COMBINED_ENTRY_REVISION="$(jq -r '.desired_revision' "${state}")"
       COMBINED_ENTRY_REVISION=$((COMBINED_ENTRY_REVISION + 1))
@@ -3877,6 +4003,9 @@ remove_combined_role() {
     # still stopped below; purge of their files is only done after ownership
     # has been proven by the Adapter.
     revoke_combined_node_identity
+    if [[ -n "${ENTRY_SPEC_FILE}" ]]; then
+      entry_controller remove
+    fi
     combined_entry_remove "${TP_PURGE_DATA}"
     local resource
     for resource in "${WEB_CADDY_CONTAINER}" "${UI_CONTAINER}" "${PANEL_CONTAINER}" \
@@ -3908,6 +4037,7 @@ main() {
   local force_override=""
   local purge_override=""
   local entry_spec_override=""
+  local receipt_file=""
 
   case "${command}" in
   -h | --help | help | "")
@@ -3939,6 +4069,11 @@ main() {
     --bundle)
       [[ $# -ge 2 ]] || { echo_content red "--bundle requires a value"; exit 1; }
       bundle_file="$2"
+      shift 2
+      ;;
+    --receipt-file)
+      [[ $# -ge 2 ]] || { echo_content red "--receipt-file requires a value"; exit 1; }
+      receipt_file="$2"
       shift 2
       ;;
     --entry-spec)
@@ -3995,12 +4130,20 @@ main() {
     echo_content red "--bundle is only valid with node install or validate"
     exit 1
   fi
+  if [[ "${command}:${mode}" == install:node && -z "${bundle_file}" ]]; then
+    echo_content red "Independent Node installation requires a verified encrypted bootstrap bundle with a revocation trust key"
+    exit 1
+  fi
   if [[ -n "${force_override}" && "${command}" != install ]]; then
     echo_content red "--force is only valid with install"
     exit 1
   fi
   if [[ -n "${purge_override}" && "${command}" != remove ]]; then
     echo_content red "--purge-data/--keep-data are only valid with remove"
+    exit 1
+  fi
+  if [[ -n "${receipt_file}" && ( "${command}" != remove || "${mode}" != node ) ]]; then
+    echo_content red "--receipt-file is only valid with node removal"
     exit 1
   fi
   [[ -n "${entry_spec_override}" ]] && ENTRY_SPEC_FILE="${entry_spec_override}"
@@ -4019,6 +4162,11 @@ main() {
     require_root
   fi
   preflight_install_dependencies
+  if [[ "${command}:${mode}" == remove:node ]]; then
+    validate_host_data_root
+    preflight_node_removal_role "${receipt_file}" || return 1
+    preflight_node_removal_config_role "${config_file}" "${TP_NODE_REMOVAL_ROLE}" || return 1
+  fi
   if [[ -n "${bundle_file}" ]]; then
     prepare_node_bundle "${bundle_file}"
     config_file="${TP_NODE_BUNDLE_DIR}/config-node.yaml"
@@ -4041,6 +4189,9 @@ main() {
   validate_config "${validation_mode}"
   validate_host_data_root
   validate_entry_spec_binding "${mode}"
+  if [[ "${command}:${mode}" == remove:node ]]; then
+    check_node_removal_config_binding "${TP_NODE_REMOVAL_ROLE}"
+  fi
   if [[ "${command}" == install && ( "${mode}" == web || "${mode}" == combined ) ]]; then
     load_web_effective_secrets
   fi
@@ -4050,7 +4201,11 @@ main() {
       load_combined_identity_metadata
     fi
     check_same_version_replay_preconditions "${mode}"
+    if [[ "${mode}" == node && "${TP_NODE_BUNDLE_ACTIVE}" == 1 ]]; then
+      check_installed_node_revocation_key
+    fi
   fi
+
 
   if [[ "${command}:${mode}" == install:combined ]]; then
     check_combined_host_preconditions
@@ -4063,6 +4218,10 @@ main() {
   if [[ "${command}" == install ]]; then
     mark_host_data_root
     retain_verified_release_assets
+    if [[ "${mode}" == node && "${TP_NODE_BUNDLE_ACTIVE}" == 1 ]]; then
+      mkdir -p "$(dirname "${NODE_REVOCATION_PUBLIC_KEY}")"
+      pin_node_revocation_key
+    fi
   elif [[ "${command}" != validate ]]; then
     retain_verified_release_assets 0
   fi
@@ -4086,7 +4245,8 @@ main() {
     fi
   fi
 
-  if [[ "${command}" == remove && -n "${ENTRY_SPEC_FILE}" ]]; then
+  if [[ "${command}" == remove && -n "${ENTRY_SPEC_FILE}" &&
+    !( "${TP_DEPLOYMENT_MODE}" == combined && ( "${mode}" == node || "${mode}" == combined ) ) ]]; then
     entry_controller remove
   fi
 

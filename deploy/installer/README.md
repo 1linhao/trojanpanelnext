@@ -72,10 +72,12 @@ bash upload-assets.sh --mode node-config --host root@WEB_IP --work-dir "$WORK"
 cd ~/tpnext-upload
 chmod 600 node.yaml
 install -d -m 700 /tpdata/trojanpanelnext/node-bundles
-./assets/node-bundle create --credential-file /tpdata/trojanpanelnext/trojan-panel/config/node-identities/node-1.g1.json --node-config "$PWD/node.yaml" --client-ca /tpdata/trojanpanelnext/trojanpanelnext-pki/client-ca.crt --output /tpdata/trojanpanelnext/node-bundles/node-1.g1.age
+./assets/node-bundle create --credential-file /tpdata/trojanpanelnext/trojan-panel/config/node-identities/node-1.g1.json --node-config "$PWD/node.yaml" --client-ca /tpdata/trojanpanelnext/trojanpanelnext-pki/client-ca.crt --revocation-public-key /tpdata/trojanpanelnext/trojan-panel/config/revocation/public-key.txt --output /tpdata/trojanpanelnext/node-bundles/node-1.g1.age
 ~~~
 
 只传输加密后的 node-1.g1.age；Web 上的明文身份文件和 CA 私钥不离开 Web VPS。
+
+独立 Node 卸载前，在 Web VPS 执行 `node-identity revoke --id <identity-id> --receipt-file <绝对路径>`，把生成的回执安全传到 Node VPS，再运行 `bootstrap.sh remove --mode node --config <已安装配置> --receipt-file <回执绝对路径>`。Web 侧身份回收失败时不会生成成功回执；Node 已销毁时可在 Web 上使用 `force-evict` 独立回收权限。
 
 ### 本地电脑：发送安装包和加密包到 Node
 

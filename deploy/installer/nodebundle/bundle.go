@@ -20,6 +20,7 @@ import (
 
 	"filippo.io/age"
 	"gopkg.in/yaml.v3"
+	"trojanpanelnext/revocationreceipt"
 )
 
 const (
@@ -28,6 +29,7 @@ const (
 	manifestPath        = "manifest.json"
 	configPath          = "config-node.yaml"
 	clientCAPath        = "pki/client-ca.crt"
+	revocationKeyPath   = "pki/revocation-public-key.txt"
 	nodeClientCAPath    = "/tpdata/trojanpanelnext/trojan-panel-core/pki/client-ca.crt"
 	nodePKIBundleDir    = "/tpdata/trojanpanelnext/trojanpanelnext-pki"
 	nodeKernelRuntime   = "/tpdata/trojanpanelnext/trojan-panel-core/runtime"
@@ -36,7 +38,7 @@ const (
 	nodeExternalRoutes  = "/tpdata/trojanpanelnext/trojan-panel-core/external"
 )
 
-var bundleInventory = []string{configPath, manifestPath, clientCAPath}
+var bundleInventory = []string{configPath, manifestPath, clientCAPath, revocationKeyPath}
 
 var (
 	imageReferencePattern     = regexp.MustCompile(`^[a-zA-Z0-9._:/-]+@sha256:[0-9a-f]{64}$`)
@@ -46,10 +48,11 @@ var (
 )
 
 type createOptions struct {
-	CredentialPath string
-	ConfigPath     string
-	ClientCAPath   string
-	OutputPath     string
+	CredentialPath    string
+	ConfigPath        string
+	ClientCAPath      string
+	RevocationKeyPath string
+	OutputPath        string
 }
 
 type credentialFile struct {
@@ -163,14 +166,21 @@ func createBundle(options createOptions, password []byte) error {
 	if err = validatePublicCA(clientCA); err != nil {
 		return err
 	}
+	revocationKey, err := readRegularFile(options.RevocationKeyPath, false)
+	if err != nil {
+		return fmt.Errorf("read Web revocation public key: %w", err)
+	}
+	if _, err = revocationreceipt.ParsePublicKey(revocationKey); err != nil {
+		return err
+	}
 
-	manifest.Files = []manifestFile{{Path: configPath, SHA256: digest(config)}, {Path: clientCAPath, SHA256: digest(clientCA)}}
+	manifest.Files = []manifestFile{{Path: configPath, SHA256: digest(config)}, {Path: clientCAPath, SHA256: digest(clientCA)}, {Path: revocationKeyPath, SHA256: digest(revocationKey)}}
 	manifestContents, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
 		return err
 	}
 	manifestContents = append(manifestContents, '\n')
-	entries := map[string][]byte{manifestPath: manifestContents, configPath: config, clientCAPath: clientCA}
+	entries := map[string][]byte{manifestPath: manifestContents, configPath: config, clientCAPath: clientCA, revocationKeyPath: revocationKey}
 
 	archive, err := encodeCanonicalArchive(entries)
 	if err != nil {
@@ -292,10 +302,10 @@ func decryptAndValidate(path string, password []byte) (map[string][]byte, bundle
 	if err = decodeStrictJSON(entries[manifestPath], &manifest); err != nil || manifest.SchemaVersion != bundleSchemaVersion {
 		return nil, bundleManifest{}, errors.New("Node bootstrap manifest is invalid")
 	}
-	if strings.Join(manifest.Inventory, "\x00") != strings.Join(bundleInventory, "\x00") || len(manifest.Files) != 2 {
+	if strings.Join(manifest.Inventory, "\x00") != strings.Join(bundleInventory, "\x00") || len(manifest.Files) != 3 {
 		return nil, bundleManifest{}, errors.New("Node bootstrap manifest inventory is invalid")
 	}
-	wantHashes := map[string]string{configPath: digest(entries[configPath]), clientCAPath: digest(entries[clientCAPath])}
+	wantHashes := map[string]string{configPath: digest(entries[configPath]), clientCAPath: digest(entries[clientCAPath]), revocationKeyPath: digest(entries[revocationKeyPath])}
 	for _, item := range manifest.Files {
 		if wantHashes[item.Path] == "" || wantHashes[item.Path] != item.SHA256 {
 			return nil, bundleManifest{}, fmt.Errorf("Node bootstrap entry digest mismatch: %s", item.Path)
@@ -306,6 +316,9 @@ func decryptAndValidate(path string, password []byte) (map[string][]byte, bundle
 		return nil, bundleManifest{}, errors.New("Node bootstrap manifest omits a required digest")
 	}
 	if err = validatePublicCA(entries[clientCAPath]); err != nil {
+		return nil, bundleManifest{}, err
+	}
+	if _, err = revocationreceipt.ParsePublicKey(entries[revocationKeyPath]); err != nil {
 		return nil, bundleManifest{}, err
 	}
 	if _, _, err = parseAndValidateNodeConfig(entries[configPath], &manifest); err != nil {

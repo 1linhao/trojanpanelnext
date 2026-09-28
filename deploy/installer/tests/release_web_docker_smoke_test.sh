@@ -93,7 +93,9 @@ docker build -q -t "tp-web-mariadb-${suffix}" "${work}/mariadb" >/dev/null
 api_image="$(push_image "tp-web-api-${suffix}" tpn-api)"
 web_image="$(push_image "tp-web-ui-${suffix}" tpn-web)"
 mariadb_image="$(push_image "tp-web-mariadb-${suffix}" tpn-mariadb)"
-docker pull redis@sha256:a93c14584715ec5bd9d2648d58c3b27f89416242bee0bc9e5fb2edc1a4cbec1d >/dev/null
+if ! docker image inspect redis@sha256:a93c14584715ec5bd9d2648d58c3b27f89416242bee0bc9e5fb2edc1a4cbec1d >/dev/null 2>&1; then
+  docker pull redis@sha256:a93c14584715ec5bd9d2648d58c3b27f89416242bee0bc9e5fb2edc1a4cbec1d >/dev/null
+fi
 redis_image="$(push_image redis@sha256:a93c14584715ec5bd9d2648d58c3b27f89416242bee0bc9e5fb2edc1a4cbec1d tpn-redis)"
 
 # This is a real external TLS entry. The test CA is trusted through
@@ -133,6 +135,24 @@ printf 'ID=debian\nVERSION_ID="12"\n' >"${work}/debian-12"
 docker_hook='() {
   if [[ "${TP_RELEASE_WEB_SMOKE_INJECT_ADMIN_FAILURE:-0}" == 1 &&
     "${1:-}" == exec && " $* " == *" TP_VERIFY_SYSADMIN_CREDENTIAL=1 "* ]]; then
+    # The UI HTTPS probe can pass before the API has initialized the database.
+    # Inject only after the real in-container verifier accepts the original
+    # file; otherwise a fast bootstrap can enroll the deliberately bad value.
+    local healthy=0
+    for _ in $(seq 1 60); do
+      if [[ -f "${TP_DATA}/trojan-panel/config/initial-admin-password" &&
+        "$(<"${TP_DATA}/trojan-panel/config/initial-admin-password")" == SmokeAdminPass1234 ]] &&
+        /usr/bin/docker exec -e TP_VERIFY_SYSADMIN_CREDENTIAL=1 "${PANEL_CONTAINER}" ./trojan-panel >/dev/null 2>&1; then
+        healthy=1
+        break
+      fi
+      sleep 1
+    done
+    if [[ "${healthy}" != 1 ]]; then
+      printf "%s\n" timeout >"${TP_RELEASE_WEB_SMOKE_GATE_STATUS_FILE}"
+      return 2
+    fi
+    printf "%s\n" healthy >"${TP_RELEASE_WEB_SMOKE_GATE_STATUS_FILE}"
     printf "%s\\n" WrongSmokeAdmin9876 >"${TP_DATA}/trojan-panel/config/initial-admin-password"
     chmod 0600 "${TP_DATA}/trojan-panel/config/initial-admin-password"
   fi
@@ -151,6 +171,7 @@ run_installer() {
     TP_DATA="${SMOKE_DATA_DIR}" \
     TP_TEST_DATA_ROOT=1 \
     TP_RELEASE_WEB_SMOKE_INJECT_ADMIN_FAILURE="${inject_admin_failure}" \
+    TP_RELEASE_WEB_SMOKE_GATE_STATUS_FILE="${work}/hook-gate-status" \
     TP_INSTALL_DEPS=0 TP_OS_RELEASE_FILE="${work}/debian-12" \
     TP_HEALTH_ATTEMPTS=30 TP_HEALTH_DELAY_SECONDS=1 \
     PANEL_CONTAINER="${api_container}" UI_CONTAINER="${ui_container}" \
@@ -168,6 +189,8 @@ redis_created=1
 if run_installer 1 "${work}/injected-failure.out" "${work}/injected-failure.err"; then
   fail 'injected unhealthy administrator credential unexpectedly passed'
 fi
+[[ -f "${work}/hook-gate-status" && "$(<"${work}/hook-gate-status")" == healthy ]] ||
+  fail 'initial administrator credential never became healthy before failure injection'
 effective_config="${SMOKE_DATA_DIR}/effective-web.yaml"
 sudo -n test -s "${effective_config}" || fail 'managed effective Web configuration was not retained'
 [[ "$(sha256sum "${config}" | awk '{print $1}')" == "${input_sha256}" ]] ||
@@ -189,12 +212,12 @@ sudo -n bash -c \
   _ "${SMOKE_HELPERS}" "${effective_config}" "${work}/failure-diagnostics" ||
   fail 'injected failure diagnostics leaked a configured credential'
 
-initial_admin_password_file="${SMOKE_DATA_DIR}/trojan-panel/config/initial-admin-password"
 admin_credential_state() {
   sudo -n bash -c \
     'source "$1"; smoke_report_admin_credential_state "$2" "$3" "$4"' \
     _ "${SMOKE_HELPERS}" "${effective_config}" "${initial_admin_password_file}" "${api_container}"
 }
+initial_admin_password_file="${SMOKE_DATA_DIR}/trojan-panel/config/initial-admin-password"
 sudo -n bash -c \
   'source "$1"; expected="$(smoke_config_secret "$2" sysadmin_password)"; actual="$(<"$3")"; [[ -n "${expected}" && "${actual}" != "${expected}" ]]' \
   _ "${SMOKE_HELPERS}" "${effective_config}" "${initial_admin_password_file}" ||

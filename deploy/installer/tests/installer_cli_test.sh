@@ -386,6 +386,9 @@ bash -c '
   load_config() { TLS_MODE=external; }
   validate_config() { :; }
   discover_external_cert() { return 99; }
+  preflight_node_removal_role() { TP_NODE_REMOVAL_ROLE=node; }
+  preflight_node_removal_config_role() { :; }
+  check_node_removal_config_binding() { :; }
   remove_node() { printf "REMOVED\n"; }
   main remove --mode node --config /does/not-need-to-exist
 ' installer-test "${INSTALLER}" | grep -q '^REMOVED$'
@@ -399,6 +402,9 @@ bash -c '
   require_root() { :; }
   load_config() { TLS_MODE=external; TP_PURGE_DATA=1; }
   validate_config() { :; }
+  preflight_node_removal_role() { TP_NODE_REMOVAL_ROLE=node; }
+  preflight_node_removal_config_role() { :; }
+  check_node_removal_config_binding() { :; }
   remove_node() { test "${TP_PURGE_DATA}" = 0; printf "KEPT\n"; }
   main remove --mode node --config /contains-purge-data --keep-data
 ' installer-test "${INSTALLER}" | grep -q '^KEPT$'

@@ -71,6 +71,7 @@ sudo ./node-bundle create \
   --credential-file /tpdata/trojanpanelnext/trojan-panel/config/node-identities/node-sg.g1.json \
   --node-config ../node.yaml \
   --client-ca /tpdata/trojanpanelnext/trojanpanelnext-pki/client-ca.crt \
+  --revocation-public-key /tpdata/trojanpanelnext/trojan-panel/config/revocation/public-key.txt \
   --output /tpdata/trojanpanelnext/node-bundles/node-sg.g1.age
 ```
 
@@ -214,12 +215,13 @@ sudo ./node-bundle create \
   --credential-file /tpdata/trojanpanelnext/trojan-panel/config/node-identities/node-sg.g1.json \
   --node-config ./node-sg.yaml \
   --client-ca /tpdata/trojanpanelnext/trojanpanelnext-pki/client-ca.crt \
+  --revocation-public-key /tpdata/trojanpanelnext/trojan-panel/config/revocation/public-key.txt \
   --output /tpdata/trojanpanelnext/node-bundles/node-sg.g1.age
 ```
 
 The password is read interactively and confirmed by default. Automation may set
 `TP_NODE_BUNDLE_PASSWORD`, but there is no password command-line option. The fixed inventory is only
-`config-node.yaml`, `manifest.json`, and `pki/client-ca.crt`. The public CA is parsed and validated;
+`config-node.yaml`, `manifest.json`, `pki/client-ca.crt`, and `pki/revocation-public-key.txt`. Both public keys are validated;
 the bundle contains neither `client-ca.key`, the Web `client.key`, nor any other private key. Transfer
 only the `.age` file to the Node host through a trusted channel.
 
@@ -286,11 +288,13 @@ differ. Legacy `purpose` remains accepted only as compatibility input.
 ```bash
 sudo ./bootstrap.sh install --mode web --config ./web.yaml --force
 sudo ./bootstrap.sh remove --mode web --config ./web.yaml --keep-data
-sudo ./bootstrap.sh remove --mode node --config ./node-installed.yaml --purge-data
+sudo ./bootstrap.sh remove --mode node --config ./node-installed.yaml --receipt-file "$PWD/node-revoked.receipt" --purge-data
 ```
 
 `--keep-data` overrides `purge_data` in the config for a recoverable removal;
 `--purge-data` explicitly deletes generated data.
+
+For an independent Node, first run the Web CLI `node-identity revoke --id <identity-id> --receipt-file <absolute-output-path>` and transfer the resulting receipt to the Node host. The Node installer verifies it against the public key pinned during installation before changing local resources. If the Node host is gone, `force-evict` on Web revokes its access without requiring that host to respond.
 
 After removing one role from a combined deployment, replaying the original combined configuration does
 not restore that role implicitly. Confirm that its domain, ports, and retained data still belong to this

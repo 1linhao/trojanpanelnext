@@ -355,9 +355,12 @@ openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=control-plane-ca \
   -addext basicConstraints=critical,CA:TRUE \
   -keyout "${work}/discarded-control-ca.key" -out "${work}/client-ca.crt" >/dev/null 2>&1
 bundle_password='node-a integration bundle password'
+(cd "${work}/runtime" && "${work}/trojan-panel" node-identity revocation-key-init >"${work}/revocation-key-init.out") ||
+  fail 'Web revocation signing key initialization failed'
+revocation_public_key="${work}/runtime/config/revocation/public-key.txt"
 TP_NODE_BUNDLE_PASSWORD="${bundle_password}" "${work}/node-bundle" create \
   --credential-file "${credential_file}" --node-config "${work}/node-a.yaml" \
-  --client-ca "${work}/client-ca.crt" --output "${work}/node-a.g1.age" >/dev/null ||
+  --client-ca "${work}/client-ca.crt" --revocation-public-key "${revocation_public_key}" --output "${work}/node-a.g1.age" >/dev/null ||
   fail 'generation-one Node bootstrap bundle creation failed'
 if TP_NODE_BUNDLE_PASSWORD='incorrect integration password' "${work}/node-bundle" inspect \
   --bundle "${work}/node-a.g1.age" >/dev/null 2>&1; then
@@ -373,7 +376,7 @@ for bundled_value in "${db_username}" "${db_password}" "${redis_username}" "${re
     fail 'generation-one bundle did not carry its dedicated Node identity'
 done
 mapfile -t node_a_g1_inventory < <(cd "${work}/node-a-g1" && find . -type f -printf '%P\n' | sort)
-test "${node_a_g1_inventory[*]}" = 'config-node.yaml manifest.json pki/client-ca.crt' ||
+test "${node_a_g1_inventory[*]}" = 'config-node.yaml manifest.json pki/client-ca.crt pki/revocation-public-key.txt' ||
   fail 'generation-one bundle contained an unsafe inventory'
 
 # Run the shipped Web and Node binaries in separate containers. The Node API
@@ -433,7 +436,7 @@ EOF
 chmod 0600 "${work}/release-node.yaml"
 TP_NODE_BUNDLE_PASSWORD="${bundle_password}" "${release_assets}/node-bundle" create \
   --credential-file "${credential_file}" --node-config "${work}/release-node.yaml" \
-  --client-ca "${work}/client-ca.crt" --output "${work}/release-node.g1.age" >/dev/null ||
+  --client-ca "${work}/client-ca.crt" --revocation-public-key "${revocation_public_key}" --output "${work}/release-node.g1.age" >/dev/null ||
   fail 'formal Release Node bootstrap bundle creation failed'
 
 write_node_runtime_config() {
@@ -964,14 +967,14 @@ done
 
 TP_NODE_BUNDLE_PASSWORD="${bundle_password}" "${work}/node-bundle" create \
   --credential-file "${rotated_credential_file}" --node-config "${work}/node-a.yaml" \
-  --client-ca "${work}/client-ca.crt" --output "${work}/node-a.g2.age" >/dev/null ||
+  --client-ca "${work}/client-ca.crt" --revocation-public-key "${revocation_public_key}" --output "${work}/node-a.g2.age" >/dev/null ||
   fail 'generation-two Node bootstrap bundle creation failed'
 TP_NODE_BUNDLE_PASSWORD="${bundle_password}" "${work}/node-bundle" inspect \
   --bundle "${work}/node-a.g2.age" | grep -q '"generation": 2' ||
   fail 'generation-two bundle did not bind the rotated identity generation'
 TP_NODE_BUNDLE_PASSWORD="${bundle_password}" "${release_assets}/node-bundle" create \
   --credential-file "${rotated_credential_file}" --node-config "${work}/release-node.yaml" \
-  --client-ca "${work}/client-ca.crt" --output "${work}/release-node.g2.age" >/dev/null ||
+  --client-ca "${work}/client-ca.crt" --revocation-public-key "${revocation_public_key}" --output "${work}/release-node.g2.age" >/dev/null ||
   fail 'formal Release generation-two bundle creation failed'
 
 write_node_runtime_config "${rotated_db_password}" "${rotated_redis_password}" \
