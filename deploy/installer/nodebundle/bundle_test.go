@@ -3,6 +3,7 @@ package main
 import (
 	"archive/tar"
 	"bytes"
+	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -19,6 +20,7 @@ import (
 	"time"
 
 	"filippo.io/age"
+	"trojanpanelnext/revocationreceipt"
 )
 
 const testPassword = "correct horse battery staple"
@@ -31,12 +33,14 @@ func TestCreateAndExtractBundleHasFixedSafeInventory(t *testing.T) {
 	if err := os.WriteFile(caPath, testCAPEM(t), 0644); err != nil {
 		t.Fatal(err)
 	}
+	keyPath := writeTestRevocationKey(t, root)
 	bundlePath := filepath.Join(root, "node.age")
 	if err := createBundle(createOptions{
-		CredentialPath: credentialPath,
-		ConfigPath:     configPath,
-		ClientCAPath:   caPath,
-		OutputPath:     bundlePath,
+		CredentialPath:    credentialPath,
+		ConfigPath:        configPath,
+		ClientCAPath:      caPath,
+		RevocationKeyPath: keyPath,
+		OutputPath:        bundlePath,
 	}, []byte(testPassword)); err != nil {
 		t.Fatalf("createBundle: %v", err)
 	}
@@ -59,7 +63,7 @@ func TestCreateAndExtractBundleHasFixedSafeInventory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decryptAndValidate: %v", err)
 	}
-	wantNames := []string{"config-node.yaml", "manifest.json", "pki/client-ca.crt"}
+	wantNames := []string{"config-node.yaml", "manifest.json", "pki/client-ca.crt", "pki/revocation-public-key.txt"}
 	if strings.Join(sortedKeys(contents), ",") != strings.Join(wantNames, ",") {
 		t.Fatalf("bundle entries = %v, want %v", sortedKeys(contents), wantNames)
 	}
@@ -68,7 +72,7 @@ func TestCreateAndExtractBundleHasFixedSafeInventory(t *testing.T) {
 	}
 	for name := range contents {
 		lower := strings.ToLower(name)
-		if strings.Contains(lower, "client.key") || strings.Contains(lower, "ca.key") {
+		if strings.Contains(lower, "client.key") || strings.Contains(lower, "ca.key") || strings.Contains(lower, "private") {
 			t.Fatalf("private key entry leaked: %s", name)
 		}
 	}
@@ -102,6 +106,31 @@ func TestWrongPasswordDoesNotExtract(t *testing.T) {
 	}
 	if len(entries) != 0 {
 		t.Fatalf("wrong password left plaintext entries: %v", entries)
+	}
+}
+
+func TestDecryptRejectsMissingOrTamperedRevocationKey(t *testing.T) {
+	for _, variant := range []string{"missing", "tampered"} {
+		t.Run(variant, func(t *testing.T) {
+			root := t.TempDir()
+			valid := createTestBundle(t, root)
+			entries, _, err := decryptAndValidate(valid, []byte(testPassword))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if variant == "missing" {
+				delete(entries, revocationKeyPath)
+			} else {
+				entries[revocationKeyPath] = append(entries[revocationKeyPath], 'x')
+			}
+			forged := filepath.Join(root, "forged.age")
+			if err = writeEncryptedArchive(forged, testPassword, entries); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err = decryptAndValidate(forged, []byte(testPassword)); err == nil {
+				t.Fatalf("%s revocation public key was accepted", variant)
+			}
+		})
 	}
 }
 
@@ -174,10 +203,11 @@ func TestCreateRejectsNodeConfigWithoutSchemaVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	err := createBundle(createOptions{
-		CredentialPath: credentialPath,
-		ConfigPath:     configPath,
-		ClientCAPath:   caPath,
-		OutputPath:     filepath.Join(root, "node.age"),
+		CredentialPath:    credentialPath,
+		ConfigPath:        configPath,
+		ClientCAPath:      caPath,
+		RevocationKeyPath: writeTestRevocationKey(t, root),
+		OutputPath:        filepath.Join(root, "node.age"),
 	}, []byte(testPassword))
 	if err == nil {
 		t.Fatal("create accepted a Node configuration without schema_version")
@@ -217,10 +247,11 @@ func TestCreateRejectsEveryOtherMissingRequiredNodeConfigField(t *testing.T) {
 			configPath := writeTestConfig(t, caseRoot)
 			removeConfigKey(t, configPath, key)
 			err := createBundle(createOptions{
-				CredentialPath: credentialPath,
-				ConfigPath:     configPath,
-				ClientCAPath:   caPath,
-				OutputPath:     filepath.Join(caseRoot, "node.age"),
+				CredentialPath:    credentialPath,
+				ConfigPath:        configPath,
+				ClientCAPath:      caPath,
+				RevocationKeyPath: writeTestRevocationKey(t, root),
+				OutputPath:        filepath.Join(caseRoot, "node.age"),
 			}, []byte(testPassword))
 			if err == nil {
 				t.Fatalf("create accepted a Node configuration without %s", key)
@@ -330,7 +361,7 @@ func TestCreateRejectsWrongNodeConfigTypesAndValues(t *testing.T) {
 				t.Fatal(err)
 			}
 			err = createBundle(createOptions{
-				CredentialPath: credentialPath, ConfigPath: configPath, ClientCAPath: caPath,
+				CredentialPath: credentialPath, ConfigPath: configPath, ClientCAPath: caPath, RevocationKeyPath: writeTestRevocationKey(t, root),
 				OutputPath: filepath.Join(caseRoot, "node.age"),
 			}, []byte(testPassword))
 			if err == nil {
@@ -390,10 +421,11 @@ func TestCreateRejectsUnknownNodeConfigKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = createBundle(createOptions{
-		CredentialPath: credentialPath,
-		ConfigPath:     configPath,
-		ClientCAPath:   caPath,
-		OutputPath:     filepath.Join(root, "node.age"),
+		CredentialPath:    credentialPath,
+		ConfigPath:        configPath,
+		ClientCAPath:      caPath,
+		RevocationKeyPath: writeTestRevocationKey(t, root),
+		OutputPath:        filepath.Join(root, "node.age"),
 	}, []byte(testPassword))
 	if err == nil || !strings.Contains(err.Error(), "unsupported node configuration key") {
 		t.Fatalf("createBundle error = %v, want unsupported-key error", err)
@@ -417,10 +449,11 @@ func TestCreateRejectsUnknownCredentialField(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = createBundle(createOptions{
-		CredentialPath: credentialPath,
-		ConfigPath:     configPath,
-		ClientCAPath:   caPath,
-		OutputPath:     filepath.Join(root, "node.age"),
+		CredentialPath:    credentialPath,
+		ConfigPath:        configPath,
+		ClientCAPath:      caPath,
+		RevocationKeyPath: writeTestRevocationKey(t, root),
+		OutputPath:        filepath.Join(root, "node.age"),
 	}, []byte(testPassword))
 	if err == nil || !strings.Contains(err.Error(), "parse Node credential") {
 		t.Fatalf("createBundle error = %v, want unknown-field rejection", err)
@@ -471,7 +504,7 @@ func TestCreateRejectsInvalidCredentialSemantics(t *testing.T) {
 				t.Fatal(err)
 			}
 			outputPath := filepath.Join(root, "node.age")
-			if err = createBundle(createOptions{credentialPath, configPath, caPath, outputPath}, []byte(testPassword)); err == nil {
+			if err = createBundle(createOptions{CredentialPath: credentialPath, ConfigPath: configPath, ClientCAPath: caPath, RevocationKeyPath: writeTestRevocationKey(t, root), OutputPath: outputPath}, []byte(testPassword)); err == nil {
 				t.Fatal("create accepted invalid credential semantics")
 			}
 			if _, statErr := os.Stat(outputPath); !errors.Is(statErr, os.ErrNotExist) {
@@ -491,10 +524,11 @@ func TestCreateRejectsPublicCABundleContainingPrivateKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	err := createBundle(createOptions{
-		CredentialPath: credentialPath,
-		ConfigPath:     configPath,
-		ClientCAPath:   caPath,
-		OutputPath:     filepath.Join(root, "node.age"),
+		CredentialPath:    credentialPath,
+		ConfigPath:        configPath,
+		ClientCAPath:      caPath,
+		RevocationKeyPath: writeTestRevocationKey(t, root),
+		OutputPath:        filepath.Join(root, "node.age"),
 	}, []byte(testPassword))
 	if err == nil || !strings.Contains(err.Error(), "only PEM certificates") {
 		t.Fatalf("createBundle error = %v, want private-key rejection", err)
@@ -520,10 +554,11 @@ func TestCreatePinsNodePKIPaths(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = createBundle(createOptions{
-		CredentialPath: credentialPath,
-		ConfigPath:     configPath,
-		ClientCAPath:   caPath,
-		OutputPath:     filepath.Join(root, "node.age"),
+		CredentialPath:    credentialPath,
+		ConfigPath:        configPath,
+		ClientCAPath:      caPath,
+		RevocationKeyPath: writeTestRevocationKey(t, root),
+		OutputPath:        filepath.Join(root, "node.age"),
 	}, []byte(testPassword))
 	if err == nil || !strings.Contains(err.Error(), "grpc_client_ca_path") {
 		t.Fatalf("createBundle error = %v, want pinned-path rejection", err)
@@ -538,11 +573,26 @@ func createTestBundle(t *testing.T, root string) string {
 	if err := os.WriteFile(caPath, testCAPEM(t), 0644); err != nil {
 		t.Fatal(err)
 	}
+	keyPath := writeTestRevocationKey(t, root)
 	bundlePath := filepath.Join(root, "node.age")
-	if err := createBundle(createOptions{credentialPath, configPath, caPath, bundlePath}, []byte(testPassword)); err != nil {
+	if err := createBundle(createOptions{CredentialPath: credentialPath, ConfigPath: configPath, ClientCAPath: caPath, RevocationKeyPath: keyPath, OutputPath: bundlePath}, []byte(testPassword)); err != nil {
 		t.Fatal(err)
 	}
 	return bundlePath
+}
+
+func writeTestRevocationKey(t *testing.T, root string) string {
+	t.Helper()
+	private := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{7}, ed25519.SeedSize))
+	encoded, err := revocationreceipt.EncodePublicKey(private.Public().(ed25519.PublicKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "revocation-public-key.txt")
+	if err := os.WriteFile(path, encoded, 0600); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 func writeTestCredential(t *testing.T, root string) string {

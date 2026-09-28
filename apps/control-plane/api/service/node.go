@@ -168,7 +168,7 @@ func CreateNode(token string, nodeCreateDto dto.NodeCreateDto) error {
 		return errors.New(constant.NodeNameExist)
 	}
 
-	nodeServer, err := dao.SelectNodeServer(map[string]interface{}{"id": *nodeCreateDto.NodeServerId})
+	nodeServer, err := dao.SelectNodeServerForControl(*nodeCreateDto.NodeServerId)
 	if err != nil {
 		return err
 	}
@@ -342,6 +342,10 @@ func SelectNodePage(queryName *string, nodeServerId *uint, pageNum *uint, pageSi
 		for i := range nodeBos {
 			indexI := i
 			go func() {
+				if _, err := dao.SelectNodeServerForControl(nodeBos[indexI].NodeServerId); err != nil {
+					wg.Done()
+					return
+				}
 				var ip = nodeBos[indexI].NodeServerIp
 				var grpcPort = nodeBos[indexI].NodeServerGrpcPort
 				var nodeTypeId = nodeBos[indexI].NodeTypeId
@@ -423,7 +427,7 @@ func DeleteNodeById(token string, id *uint) error {
 	if isRetiredNodeType(*node.NodeTypeId) {
 		return errors.New("retired nodes cannot be deleted through the panel")
 	}
-	nodeServer, err := dao.SelectNodeServer(map[string]interface{}{"id": *node.NodeServerId})
+	nodeServer, err := dao.SelectNodeServerForControl(*node.NodeServerId)
 	if err != nil {
 		return err
 	}
@@ -483,7 +487,7 @@ func UpdateNodeById(token string, nodeUpdateDto *dto.NodeUpdateDto) error {
 		return errors.New(constant.NodeNameExist)
 	}
 
-	nodeServer, err := dao.SelectNodeServer(map[string]interface{}{"id": *nodeUpdateDto.NodeServerId})
+	nodeServer, err := dao.SelectNodeServerForControl(*nodeUpdateDto.NodeServerId)
 	if err != nil {
 		return err
 	}
@@ -507,7 +511,7 @@ func UpdateNodeById(token string, nodeUpdateDto *dto.NodeUpdateDto) error {
 	if isRetiredNodeType(*nodeEntity.NodeTypeId) {
 		return errors.New("retired nodes cannot be edited")
 	}
-	oldNodeServer, err := dao.SelectNodeServer(map[string]interface{}{"id": *nodeEntity.NodeServerId})
+	oldNodeServer, err := dao.SelectNodeServerForControl(*nodeEntity.NodeServerId)
 	if err != nil {
 		return err
 	}

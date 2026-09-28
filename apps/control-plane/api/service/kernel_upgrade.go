@@ -16,7 +16,7 @@ import (
 var kernelNodeLocks sync.Map
 
 func GetNodeKernelInventory(token string, nodeServerId uint) (*core.KernelInventoryVo, error) {
-	server, err := dao.SelectNodeServer(map[string]interface{}{"id": nodeServerId})
+	server, err := dao.SelectNodeServerForControl(nodeServerId)
 	if err != nil {
 		return nil, err
 	}
@@ -31,7 +31,7 @@ func CreateKernelTask(request dto.KernelTaskCreateDto, operator vo.AccountVo, to
 			continue
 		}
 		seenNodes[id] = true
-		server, err := dao.SelectNodeServer(map[string]interface{}{"id": id})
+		server, err := dao.SelectNodeServerForControl(id)
 		if err != nil {
 			return nil, err
 		}
@@ -113,7 +113,7 @@ func RetryKernelTask(request dto.KernelTaskRetryDto, token string) error {
 }
 
 func ProbeAndEnableNodeServerMTLS(ctx context.Context, nodeServerId uint, serverName string) error {
-	server, err := dao.SelectNodeServer(map[string]interface{}{"id": nodeServerId})
+	server, err := dao.SelectNodeServerForControl(nodeServerId)
 	if err != nil {
 		return err
 	}
@@ -193,7 +193,7 @@ func executeKernelTaskItem(item *model.KernelUpgradeTaskItem, token string) bool
 	nodeLock.Lock()
 	defer nodeLock.Unlock()
 
-	server, err := dao.SelectNodeServer(map[string]interface{}{"id": item.NodeServerId})
+	server, err := dao.SelectNodeServerForControl(item.NodeServerId)
 	if err != nil {
 		failKernelTaskItem(item, err)
 		return false
@@ -219,6 +219,10 @@ func executeKernelTaskItem(item *model.KernelUpgradeTaskItem, token string) bool
 	if item.Action == "rollback" {
 		action = core.KernelAction_KERNEL_ACTION_ROLLBACK
 	}
+	if _, err := dao.SelectNodeServerForControl(item.NodeServerId); err != nil {
+		failKernelTaskItem(item, err)
+		return false
+	}
 	operation, err := core.StartKernelOperation(token, *server.Ip, *server.GrpcPort, transport, &core.KernelOperationRequest{
 		IdempotencyKey: item.IdempotencyKey, Kernel: kernelEnum, Version: item.TargetVersion,
 		Channel: channelProto(item.Channel), Action: action,
@@ -235,6 +239,10 @@ func executeKernelTaskItem(item *model.KernelUpgradeTaskItem, token string) bool
 	deadline := time.Now().Add(15 * time.Minute)
 	for time.Now().Before(deadline) {
 		time.Sleep(2 * time.Second)
+		if _, err := dao.SelectNodeServerForControl(item.NodeServerId); err != nil {
+			failKernelTaskItem(item, err)
+			return false
+		}
 		operation, err = core.GetKernelOperation(token, *server.Ip, *server.GrpcPort, transport, item.CoreOperationId)
 		if err != nil {
 			failKernelTaskItem(item, err)

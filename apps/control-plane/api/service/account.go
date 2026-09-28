@@ -320,6 +320,9 @@ func RemoveAccount(token string, password string) error {
 	}
 	for i := range nodeServers {
 		nodeServer := &nodeServers[i]
+		if _, err := dao.SelectNodeServerForControl(*nodeServer.Id); err != nil {
+			continue
+		}
 		removeDto := core.AccountRemoveDto{
 			Password: password,
 		}

@@ -2,6 +2,7 @@ package nodeidentity
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -129,6 +130,8 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 		return runRevoke(commandArgs[1:], stdout, stderr)
 	case "force-evict":
 		return runForceEvict(commandArgs[1:], stdout, stderr)
+	case "revocation-key-init":
+		return runRevocationKeyInit(commandArgs[1:], stdout, stderr)
 	case "status":
 		return runStatus(commandArgs[1:], stdout, stderr)
 	case "verify":
@@ -260,9 +263,31 @@ func runForceEvict(args []string, stdout io.Writer, stderr io.Writer) int {
 
 func runRemoval(args []string, action LifecycleAction, stdout io.Writer, stderr io.Writer) int {
 	command := string(action)
-	id, valid := parseIdentityID(args, command, stderr)
-	if !valid {
+	set := flag.NewFlagSet("node-identity "+command, flag.ContinueOnError)
+	set.SetOutput(stderr)
+	var id, receiptPath string
+	set.StringVar(&id, "id", "", "stable Node identity id")
+	set.StringVar(&receiptPath, "receipt-file", "", "new restricted revocation receipt file")
+	if err := set.Parse(args); err != nil || len(set.Args()) != 0 || !isUUID(id) {
+		fmt.Fprintf(stderr, "node identity: %s requires a UUID --id and optional absolute --receipt-file\n", command)
 		return 2
+	}
+	var private ed25519.PrivateKey
+	if receiptPath != "" {
+		if err := validateNewReceiptPath(receiptPath); err != nil {
+			fmt.Fprintln(stderr, "node identity: receipt output path is unsafe or already exists")
+			return 2
+		}
+		root, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintln(stderr, "node identity: Web data directory is unavailable")
+			return 1
+		}
+		private, err = loadRevocationSigningKey(root)
+		if err != nil {
+			fmt.Fprintln(stderr, "node identity: dedicated revocation signing key is unavailable")
+			return 1
+		}
 	}
 	manager, err := openLifecycle()
 	if err != nil {
@@ -281,6 +306,12 @@ func runRemoval(args []string, action LifecycleAction, stdout io.Writer, stderr 
 	if err != nil {
 		fmt.Fprintf(stderr, "node identity: %s failed; retry the same command\n", command)
 		return 1
+	}
+	if receiptPath != "" {
+		if err := issueRevocationReceipt(private, deactivated, receiptPath); err != nil {
+			fmt.Fprintln(stderr, "node identity: terminal revocation was retained but receipt export failed; retry with a new output path")
+			return 1
+		}
 	}
 	fmt.Fprintf(stdout, "Node identity %s: %s\n", deactivated.Status, deactivated.ID)
 	return 0
@@ -674,10 +705,8 @@ func (manager *lifecycle) removeIdentity(ctx context.Context, id string, action 
 	if err != nil {
 		return identity{}, err
 	}
-	if registered.Status == targetStatus {
-		return registered, nil
-	}
-	if registered.Status != inProgressStatus {
+	alreadyTerminal := registered.Status == targetStatus
+	if !alreadyTerminal && registered.Status != inProgressStatus {
 		result, updateErr := manager.db.ExecContext(ctx, `UPDATE node_identity SET status=?,update_time=CURRENT_TIMESTAMP WHERE identity_id=? AND status=?`, inProgressStatus, id, registered.Status)
 		if updateErr != nil {
 			return identity{}, updateErr
@@ -692,18 +721,22 @@ func (manager *lifecycle) removeIdentity(ctx context.Context, id string, action 
 	}
 	if action == actionForceEvict {
 		if _, err = manager.db.ExecContext(ctx, "DELETE FROM node_server WHERE id=?", registered.NodeServerID); err != nil {
-			manager.recordEvent(ctx, registered.ID, registered.Generation, action, resultFailed, "registration_eviction_failed")
+			_ = manager.recordEvent(ctx, registered.ID, registered.Generation, action, resultFailed, "registration_eviction_failed")
 			return identity{}, err
 		}
 	}
-	result, err := manager.db.ExecContext(ctx, `UPDATE node_identity SET status=?,update_time=CURRENT_TIMESTAMP WHERE identity_id=? AND status=?`, targetStatus, id, inProgressStatus)
-	if err != nil {
+	if !alreadyTerminal {
+		result, err := manager.db.ExecContext(ctx, `UPDATE node_identity SET status=?,update_time=CURRENT_TIMESTAMP WHERE identity_id=? AND status=?`, targetStatus, id, inProgressStatus)
+		if err != nil {
+			return identity{}, err
+		}
+		if rows, rowsErr := result.RowsAffected(); rowsErr != nil || rows != 1 {
+			return identity{}, errors.New("Node identity state changed while removal completed")
+		}
+	}
+	if err := manager.recordEvent(ctx, registered.ID, registered.Generation, action, resultSucceeded, ""); err != nil {
 		return identity{}, err
 	}
-	if rows, rowsErr := result.RowsAffected(); rowsErr != nil || rows != 1 {
-		return identity{}, errors.New("Node identity state changed while removal completed")
-	}
-	manager.recordEvent(ctx, registered.ID, registered.Generation, action, resultSucceeded, "")
 	registered.Status = targetStatus
 	return registered, nil
 }
@@ -1083,9 +1116,10 @@ func (manager *lifecycle) verifyCredentials(ctx context.Context, credentials cre
 	return nil
 }
 
-func (manager *lifecycle) recordEvent(ctx context.Context, id string, generation uint64, action LifecycleAction, result EventResult, errorCode string) {
-	_, _ = manager.db.ExecContext(ctx, `INSERT INTO node_identity_event
+func (manager *lifecycle) recordEvent(ctx context.Context, id string, generation uint64, action LifecycleAction, result EventResult, errorCode string) error {
+	_, err := manager.db.ExecContext(ctx, `INSERT INTO node_identity_event
 		(identity_id,generation,action,result,error_code) VALUES (?,?,?,?,?)`, id, generation, action, result, errorCode)
+	return err
 }
 
 func randomUUID() (string, error) {
@@ -1134,8 +1168,13 @@ Usage:
   trojan-panel node-identity register --name <name> --domain <domain> --public-ip <ip> --credential-file <0600-file> [--grpc-port <port>]
   trojan-panel node-identity catalog lookup|reconcile --node-key <key> --host-id <host> --name <name> --domain <domain> --public-ip <ip> --grpc-port <port> --credential-dir <0700-dir>
   trojan-panel node-identity rotate --id <node-identity-id> --credential-file <0600-file>
-  trojan-panel node-identity revoke --id <node-identity-id>
-  trojan-panel node-identity force-evict --id <node-identity-id>
+  trojan-panel node-identity revocation-key-init
+  trojan-panel node-identity revoke --id <node-identity-id> [--receipt-file <new-0600-file>]
+  trojan-panel node-identity force-evict --id <node-identity-id> [--receipt-file <new-0600-file>]
   trojan-panel node-identity status --id <node-identity-id>
-  trojan-panel node-identity verify --id <node-identity-id> --challenge <this-install-challenge>`)
+  trojan-panel node-identity verify --id <node-identity-id> --challenge <this-install-challenge>
+
+Run revocation-key-init from the Web runtime directory before creating a Node
+bootstrap bundle. The receipt output parent must be an existing private 0700
+directory owned by the current user; output files are created once at 0600.`)
 }
