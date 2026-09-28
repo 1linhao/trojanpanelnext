@@ -2,15 +2,19 @@ package nodeidentity
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -107,10 +111,26 @@ func runCatalog(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "node catalog %s: identity schema is unavailable\n", binding.NodeKey)
 			return 1
 		}
+		if err = catalogRaceBeforeLock(binding.NodeKey); err != nil {
+			fmt.Fprintf(stderr, "node catalog %s: test barrier failed\n", binding.NodeKey)
+			return 1
+		}
+		// Serialize the endpoint check with registration. register takes its
+		// existing name/domain lock next, followed by the identity lock.
+		release, lockErr := manager.withLifecycleLock(ctx, catalogEndpointLockName(binding.PublicIP, binding.GRPCPort))
+		if lockErr != nil {
+			fmt.Fprintf(stderr, "node catalog %s: endpoint lock is unavailable\n", binding.NodeKey)
+			return 1
+		}
+		defer release()
 	}
 	registered, err := manager.catalogIdentity(ctx, binding)
 	if err != nil {
 		fmt.Fprintf(stderr, "node catalog %s: conflicting or incomplete database registration\n", binding.NodeKey)
+		return 1
+	}
+	if err = catalogRaceAfterPrecheck(binding.NodeKey); err != nil {
+		fmt.Fprintf(stderr, "node catalog %s: test barrier failed\n", binding.NodeKey)
 		return 1
 	}
 	contents, err := readCredentialFile(bindingPath)
@@ -200,6 +220,12 @@ func runCatalog(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+func catalogEndpointLockName(publicIP string, grpcPort uint) string {
+	// Match the address equivalence used by INET6_ATON in catalogIdentity.
+	digest := sha256.Sum256([]byte(net.ParseIP(publicIP).String() + "\x00" + strconv.FormatUint(uint64(grpcPort), 10)))
+	return "tpn-node-endpoint:" + hex.EncodeToString(digest[:20])
+}
+
 func readCatalogIdentityCommitment(path string) (catalogIdentityCommitment, bool, error) {
 	contents, err := readCredentialFile(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -254,7 +280,7 @@ func (manager *lifecycle) catalogIdentity(ctx context.Context, expected catalogB
 	}
 	if len(matches) == 0 {
 		var serverCount uint
-		if err = manager.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM node_server WHERE name=? OR grpc_tls_server_name=? OR (ip=? AND grpc_port=?)`,
+		if err = manager.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM node_server WHERE name=? OR grpc_tls_server_name=? OR (INET6_ATON(ip)=INET6_ATON(?) AND grpc_port=?)`,
 			expected.Name, expected.Domain, expected.PublicIP, expected.GRPCPort).Scan(&serverCount); err != nil {
 			return nil, err
 		}
@@ -300,7 +326,7 @@ func (manager *lifecycle) catalogIdentity(ctx context.Context, expected catalogB
 		return nil, errors.New("data-layer ACL identity is shared with another Node")
 	}
 	var conflictingServers uint
-	if err = manager.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM node_server WHERE id<>? AND (name=? OR grpc_tls_server_name=? OR (ip=? AND grpc_port=?))`,
+	if err = manager.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM node_server WHERE id<>? AND (name=? OR grpc_tls_server_name=? OR (INET6_ATON(ip)=INET6_ATON(?) AND grpc_port=?))`,
 		item.NodeServerID, expected.Name, expected.Domain, expected.PublicIP, expected.GRPCPort).Scan(&conflictingServers); err != nil || conflictingServers != 0 {
 		return nil, errors.New("another node_server conflicts with the requested Node")
 	}

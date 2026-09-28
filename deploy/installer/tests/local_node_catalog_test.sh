@@ -12,7 +12,11 @@ db_image='mariadb@sha256:07e06f2e7ae9dfc63707a83130a62e00167c827f08fcac7a9aa33f4
 redis_image='redis@sha256:a93c14584715ec5bd9d2648d58c3b27f89416242bee0bc9e5fb2edc1a4cbec1d'
 db_password='CatalogTestDatabasePassword'
 redis_password='CatalogTestRedisPassword'
+race_a_pid=''
+race_b_pid=''
 cleanup() {
+  [[ -z "${race_a_pid}" ]] || kill "${race_a_pid}" >/dev/null 2>&1 || true
+  [[ -z "${race_b_pid}" ]] || kill "${race_b_pid}" >/dev/null 2>&1 || true
   docker rm -fv "${db_container}" "${redis_container}" >/dev/null 2>&1 || true
   rm -r -- "${work}"
 }
@@ -49,6 +53,7 @@ test "$(bash "${client_dir}/node-catalog.sh" --config "${work}/unified.yaml" --n
 reject 'undeclared YAML node_key' bash "${client_dir}/node-catalog.sh" --config "${work}/unified.yaml" --node-key unknown
 
 (cd "${api_dir}" && CGO_ENABLED=0 go build -buildvcs=false -trimpath -o "${work}/trojan-panel" .)
+(cd "${api_dir}" && CGO_ENABLED=0 go build -buildvcs=false -tags nodeidentitycatalogracetest -trimpath -o "${work}/trojan-panel-catalog-race" .)
 docker run -d --name "${db_container}" -e "MARIADB_ROOT_PASSWORD=${db_password}" \
   -e MARIADB_DATABASE=trojan_panel_db -p 127.0.0.1::3306 "${db_image}" >/dev/null
 docker run -d --name "${redis_container}" -p 127.0.0.1::6379 "${redis_image}" \
@@ -112,6 +117,9 @@ db_exec() {
 }
 catalog() {
   (cd "${work}/runtime" && "${work}/trojan-panel" node-identity catalog "$@" --credential-dir "${work}/credentials")
+}
+catalog_race() {
+  (cd "${work}/runtime" && "${work}/trojan-panel-catalog-race" node-identity catalog "$@" --credential-dir "${work}/credentials")
 }
 node_one=(--node-key node-one --host-id node-host --name node-one --domain node-one.example.com --public-ip 203.0.113.20 --grpc-port 8100)
 node_two=(--node-key node-two --host-id second-host --name node-two --domain node-two.example.com --public-ip 203.0.113.20 --grpc-port 8200)
@@ -197,6 +205,70 @@ reject 'committed server ID drift' catalog reconcile "${node_one[@]}"
 cp "${work}/identity-commitment.backup" "${work}/credentials/node-one.identity.json"
 test "$(db_scalar 'SELECT COUNT(*) FROM node_identity')" = 2 || fail 'conflict inserted an identity'
 test "$(db_scalar 'SELECT COUNT(*) FROM node_server')" = 2 || fail 'conflict inserted a server'
+
+# Hold the first reconcile after its no-conflict precheck. The second call
+# either reaches that point too (unsafe) or waits for the endpoint lock.
+race_dir="${work}/race"
+mkdir -m 0700 "${race_dir}"
+race_a=(--node-key node-race-a --host-id race-host-a --name node-race-a --domain race-a.example.com --public-ip 203.0.113.77 --grpc-port 8300)
+race_b=(--node-key node-race-b --host-id race-host-b --name node-race-b --domain race-b.example.com --public-ip 203.0.113.77 --grpc-port 8300)
+TP_NODE_CATALOG_TEST_BARRIER_DIR="${race_dir}" TP_NODE_CATALOG_TEST_PAUSE_KEY=node-race-a \
+  catalog_race reconcile "${race_a[@]}" >"${work}/race-a.json" 2>"${work}/race-a.err" &
+race_a_pid=$!
+for _ in $(seq 1 100); do
+  [[ ! -e "${race_dir}/node-race-a.ready" ]] || break
+  sleep 0.1
+done
+[[ -e "${race_dir}/node-race-a.ready" ]] || fail 'first reconcile did not reach the controlled barrier'
+TP_NODE_CATALOG_TEST_BARRIER_DIR="${race_dir}" TP_NODE_CATALOG_TEST_PAUSE_KEY=node-race-a \
+  catalog_race reconcile "${race_b[@]}" >"${work}/race-b.json" 2>"${work}/race-b.err" &
+race_b_pid=$!
+second_waiting=0
+for _ in $(seq 1 100); do
+  [[ -e "${race_dir}/node-race-b.ready" ]] && break
+  waiting="$(db_scalar "SELECT COUNT(*) FROM information_schema.PROCESSLIST WHERE INFO LIKE 'SELECT GET_LOCK(%' AND INFO LIKE '%tpn-node-endpoint:%'")"
+  if [[ "${waiting}" != 0 ]]; then second_waiting=1; break; fi
+  sleep 0.1
+done
+second_prechecked=0
+[[ ! -e "${race_dir}/node-race-b.ready" ]] || second_prechecked=1
+touch "${race_dir}/node-race-a.release"
+if wait "${race_a_pid}"; then race_a_status=0; else race_a_status=$?; fi
+if wait "${race_b_pid}"; then race_b_status=0; else race_b_status=$?; fi
+race_a_pid=''; race_b_pid=''
+printf 'TRACE race-precheck second=%s lock-wait=%s a-status=%s b-status=%s rows=%s+%s\n' \
+  "${second_prechecked}" "${second_waiting}" "${race_a_status}" "${race_b_status}" \
+  "$(db_scalar 'SELECT COUNT(*) FROM node_identity')" "$(db_scalar 'SELECT COUNT(*) FROM node_server')"
+[[ "${second_prechecked}" == 0 && "${second_waiting}" == 1 && "${race_a_status}" == 0 && "${race_b_status}" != 0 ]] ||
+  fail 'simultaneous same-endpoint reconciles crossed the conflict boundary'
+test "$(db_scalar 'SELECT COUNT(*) FROM node_identity')" = 3 || fail 'losing reconcile inserted an identity'
+test "$(db_scalar 'SELECT COUNT(*) FROM node_server')" = 3 || fail 'losing reconcile inserted a server'
+test -e "${work}/credentials/node-race-a.binding.json" || fail 'winning node_key binding is missing'
+test ! -e "${work}/credentials/node-race-b.binding.json" || fail 'losing reconcile committed a node_key binding'
+test ! -e "${work}/credentials/node-race-b.g1.json" && test ! -e "${work}/credentials/node-race-b.identity.json" ||
+  fail 'losing reconcile published credential or ID commitment'
+test "$(docker exec -e "REDISCLI_AUTH=${redis_password}" "${redis_container}" redis-cli --raw ACL USERS | grep -c '^tpn-')" = 6 || fail 'losing reconcile provisioned Redis ACL users'
+test "$(db_scalar "SELECT COUNT(*) FROM mysql.user WHERE LEFT(User,4)='tpn_'")" = 3 || fail 'losing reconcile provisioned a MariaDB ACL user'
+race_id="$(jq -r '.node_identity_id' "${work}/race-a.json")"
+test "$(db_scalar "SELECT COUNT(*) FROM mysql.user WHERE User=(SELECT mariadb_username FROM node_identity WHERE identity_id='${race_id}')")" = 1 || fail 'winning MariaDB ACL user missing'
+catalog reconcile "${race_a[@]}" >"${work}/race-a-replay.json"
+cmp "${work}/race-a.json" "${work}/race-a-replay.json" || fail 'winning Node could not replay after the conflict'
+catalog lookup "${race_a[@]}" >"${work}/race-a-lookup.json"
+cmp "${work}/race-a.json" "${work}/race-a-lookup.json" || fail 'winning Node lookup changed after the conflict'
+printf 'TRACE race=same-endpoint winner=%s loser=no-binding/no-identity/no-ACL\n' "${race_id}"
+
+ipv6_a=(--node-key node-ipv6-a --host-id ipv6-host-a --name node-ipv6-a --domain ipv6-a.example.com --public-ip 2001:db8::77 --grpc-port 8400)
+ipv6_b=(--node-key node-ipv6-b --host-id ipv6-host-b --name node-ipv6-b --domain ipv6-b.example.com --public-ip 2001:0db8:0:0:0:0:0:77 --grpc-port 8400)
+catalog reconcile "${ipv6_a[@]}" >"${work}/ipv6-a.json"
+reject 'equivalent IPv6 endpoint' catalog reconcile "${ipv6_b[@]}"
+test ! -e "${work}/credentials/node-ipv6-b.binding.json" || fail 'equivalent IPv6 conflict committed a node_key binding'
+test "$(db_scalar 'SELECT COUNT(*) FROM node_identity')" = 4 || fail 'equivalent IPv6 conflict inserted an identity'
+test "$(db_scalar 'SELECT COUNT(*) FROM node_server')" = 4 || fail 'equivalent IPv6 conflict inserted a server'
+test "$(docker exec -e "REDISCLI_AUTH=${redis_password}" "${redis_container}" redis-cli --raw ACL USERS | grep -c '^tpn-')" = 8 || fail 'equivalent IPv6 conflict provisioned Redis ACL users'
+test "$(db_scalar "SELECT COUNT(*) FROM mysql.user WHERE LEFT(User,4)='tpn_'")" = 4 || fail 'equivalent IPv6 conflict provisioned a MariaDB ACL user'
+catalog reconcile "${ipv6_a[@]}" >"${work}/ipv6-a-replay.json"
+cmp "${work}/ipv6-a.json" "${work}/ipv6-a-replay.json" || fail 'IPv6 Node could not replay after equivalent endpoint rejection'
+printf 'TRACE ipv6-equivalent-endpoint=rejected rows=4+4 ACL=4-MariaDB+8-Redis\n'
 
 printf 'TRACE ids=node-one:%s/%s,node-two:%s/%s generation=1 rows=2+2 ACL=2-MariaDB+4-Redis\n' \
   "${one_id}" "${one_server}" "${two_id}" "${two_server}"
