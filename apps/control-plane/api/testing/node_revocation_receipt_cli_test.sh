@@ -14,7 +14,17 @@ mariadb_container="tp-receipt-mariadb-${suffix}"
 redis_container="tp-receipt-redis-${suffix}"
 mariadb_image='mariadb@sha256:07e06f2e7ae9dfc63707a83130a62e00167c827f08fcac7a9aa33f4b6dc34e0e'
 redis_image='redis@sha256:a93c14584715ec5bd9d2648d58c3b27f89416242bee0bc9e5fb2edc1a4cbec1d'
+gate_pid=""
+uncertain_pid=""
 cleanup() {
+  if [[ -n "${uncertain_pid}" ]]; then
+    kill "${uncertain_pid}" >/dev/null 2>&1 || true
+    wait "${uncertain_pid}" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "${gate_pid}" ]]; then
+    kill "${gate_pid}" >/dev/null 2>&1 || true
+    wait "${gate_pid}" >/dev/null 2>&1 || true
+  fi
   docker rm -fv "${mariadb_container}" "${redis_container}" >/dev/null 2>&1 || true
   rm -rf -- "${work}"
 }
@@ -22,6 +32,7 @@ trap cleanup EXIT
 
 (cd "${api_dir}" && CGO_ENABLED=0 go build -trimpath -o "${work}/trojan-panel" .)
 (cd "${api_dir}" && CGO_ENABLED=0 go build -trimpath -o "${work}/verify-receipt" ./testing/node_revocation_receipt_verify.go)
+(cd "${api_dir}" && CGO_ENABLED=0 go build -trimpath -o "${work}/redis-exec-gate" ./testing/redis_exec_gate.go)
 (cd "${api_dir}/../../../deploy/installer/nodebundle" && CGO_ENABLED=0 go build -trimpath -o "${work}/node-bundle" .)
 
 admin_db_password="$(openssl rand -hex 24)"
@@ -264,22 +275,60 @@ assert_state node-c active 1
 assert_live node-d
 assert_state node-d active 1
 
-# A bounded interruption while Redis is unavailable leaves the Web result
-# uncertain. It must not leave a signed success proof that could unlock local
-# Node removal. The installer trace below uses this exact absent output path.
+# A bounded interruption after a real partial revoke leaves the Web result
+# uncertain. The test-only Redis wire gate allows AUTH/SELECT but withholds
+# EXEC after MariaDB has entered revoking and removed this identity's user.
+# The installer trace below uses the exact absent receipt output path.
 register_node node-e
 db "INSERT INTO node (node_server_id) VALUES ($(jq -r .node_server_id "${work}/runtime/config/node-e.json"))" >/dev/null
 assert_control_targets node-c node-d node-e
 node_e_id="$(jq -r .node_identity_id "${work}/runtime/config/node-e.json")"
 node_e_receipt="${work}/receipts/node-e-uncertain.json"
-docker pause "${redis_container}" >/dev/null
+node_e_db_user="$(jq -r .mariadb.username "${work}/runtime/config/node-e.json")"
+node_e_redis_user="$(jq -r .redis.username "${work}/runtime/config/node-e.json")"
+"${work}/redis-exec-gate" "127.0.0.1:${redis_port}" "${work}/gate-port" "${work}/gate-held" &
+gate_pid=$!
+for _ in $(seq 1 50); do
+  [[ -s "${work}/gate-port" ]] && break
+  kill -0 "${gate_pid}" >/dev/null 2>&1 || fail 'Redis gate exited before listening'
+  sleep 0.1
+done
+[[ -s "${work}/gate-port" ]] || fail 'Redis gate did not become ready'
+gate_port="$(<"${work}/gate-port")"
+[[ "${gate_port}" =~ ^[0-9]+$ ]] || fail 'Redis gate emitted an invalid port'
+cp -- "${work}/runtime/config/config.ini" "${work}/config-real.ini"
+sed -i "/^\[redis\]/,\$ s/^port=${redis_port}\$/port=${gate_port}/" "${work}/runtime/config/config.ini"
 uncertain_status=0
-(cd "${work}/runtime" && timeout 2s "${work}/trojan-panel" node-identity revoke \
+(cd "${work}/runtime" && timeout -s TERM -k 2s 8s "${work}/trojan-panel" node-identity revoke \
   --id "${node_e_id}" --receipt-file "${node_e_receipt}" \
-  >"${work}/uncertain.out" 2>"${work}/uncertain.err") || uncertain_status=$?
-docker unpause "${redis_container}" >/dev/null
-test "${uncertain_status}" != 0 || fail 'Web revoke succeeded while Redis was unreachable'
+  >"${work}/uncertain.out" 2>"${work}/uncertain.err") &
+uncertain_pid=$!
+observed_partial=0
+for _ in $(seq 1 50); do
+  if [[ -s "${work}/gate-held" ]] &&
+    [[ "$(db "SELECT status FROM node_identity WHERE identity_id='${node_e_id}'")" == revoking ]] &&
+    [[ "$(db "SELECT COUNT(*) FROM mysql.user WHERE User='${node_e_db_user}'")" == 0 ]]; then
+    observed_partial=1
+    break
+  fi
+  kill -0 "${uncertain_pid}" >/dev/null 2>&1 || break
+  sleep 0.1
+done
+wait "${uncertain_pid}" || uncertain_status=$?
+uncertain_pid=""
+cp -- "${work}/config-real.ini" "${work}/runtime/config/config.ini"
+kill "${gate_pid}" >/dev/null 2>&1 || true
+wait "${gate_pid}" >/dev/null 2>&1 || true
+gate_pid=""
+test "${observed_partial}" = 1 || fail 'Web revoke did not reach the partial-revocation stage before timeout'
+test "${uncertain_status}" = 1 || fail 'Web revoke did not fail through its bounded Redis read timeout'
 test ! -e "${node_e_receipt}" || fail 'uncertain Web revoke emitted a success receipt'
+assert_state node-e revoking 1
+redis_admin ACL USERS | grep -Fxq "${node_e_redis_user}" || fail 'Redis ACL changed before the held EXEC'
+test "$(db "SELECT COUNT(*) FROM node_identity_event WHERE identity_id='${node_e_id}' AND action='revoke' AND result='succeeded'")" = 0 ||
+  fail 'uncertain Web revoke recorded success before issuing a receipt'
+test "$(db "SELECT COUNT(*) FROM node_identity_event WHERE identity_id='${node_e_id}' AND action='revoke' AND result='failed' AND error_code='redis_revocation_failed'")" = 1 ||
+  fail 'partial Web revoke lacks an auditable Redis failure'
 TP_NODE_REVOCATION_TIMEOUT_RECEIPT="${node_e_receipt}" \
   bash "${api_dir}/../../../deploy/installer/tests/node_revocation_remove_test.sh" ||
   fail 'Node remove crossed its local side-effect boundary after uncertain Web revoke'
