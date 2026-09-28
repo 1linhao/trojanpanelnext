@@ -104,6 +104,7 @@ TP_CONFIG_READ_FILE=""
 TP_CONFIG_IDENTITY=""
 WEB_EFFECTIVE_CONFIG_IDENTITY=""
 WEB_EFFECTIVE_CONFIG_READ_FILE=""
+WEB_EFFECTIVE_DOMAIN=""
 WEB_SAVED_MARIADB_PASSWORD=""
 WEB_SAVED_REDIS_PASSWORD=""
 WEB_SAVED_SYSADMIN_PASSWORD=""
@@ -1622,7 +1623,7 @@ recreate_container_if_env_changed() {
 }
 
 load_web_effective_secrets() {
-  local file="${WEB_EFFECTIVE_CONFIG_FILE}" key input saved
+  local file="${WEB_EFFECTIVE_CONFIG_FILE}" key input saved domain_key=hostname saved_mode
   validate_web_effective_config_path || return 1
   [[ -e "${file}" ]] || return 0
   WEB_EFFECTIVE_CONFIG_READ_FILE="${TP_SECURE_CONFIG_DIR}/effective-web-read.yaml"
@@ -1631,11 +1632,14 @@ load_web_effective_secrets() {
     echo_content red "Managed effective configuration changed during snapshot"
     return 1
   }
-  [[ "$(yaml_read_raw "${WEB_EFFECTIVE_CONFIG_READ_FILE}" deployment_mode)" == "${TP_DEPLOYMENT_MODE}" &&
-    "$(yaml_read_raw "${WEB_EFFECTIVE_CONFIG_READ_FILE}" web_hostname)" == "${TP_WEB_DOMAIN}" ]] || {
-    echo_content red "Managed effective configuration belongs to another Web deployment"
+  [[ "${TP_DEPLOYMENT_MODE}" != combined ]] || domain_key=web_hostname
+  saved_mode="$(yaml_read_raw "${WEB_EFFECTIVE_CONFIG_READ_FILE}" deployment_mode)"
+  [[ -n "${saved_mode}" ]] || saved_mode="$(yaml_read_raw "${WEB_EFFECTIVE_CONFIG_READ_FILE}" purpose)"
+  [[ "${saved_mode}" == "${TP_DEPLOYMENT_MODE}" ]] || {
+    echo_content red "Managed effective configuration belongs to another deployment mode"
     return 1
   }
+  WEB_EFFECTIVE_DOMAIN="$(yaml_read_raw "${WEB_EFFECTIVE_CONFIG_READ_FILE}" "${domain_key}")"
   WEB_SAVED_MARIADB_PASSWORD="$(yaml_read_raw "${WEB_EFFECTIVE_CONFIG_READ_FILE}" mariadb_password)"
   WEB_SAVED_REDIS_PASSWORD="$(yaml_read_raw "${WEB_EFFECTIVE_CONFIG_READ_FILE}" redis_password)"
   WEB_SAVED_SYSADMIN_PASSWORD="$(yaml_read_raw "${WEB_EFFECTIVE_CONFIG_READ_FILE}" sysadmin_password)"
@@ -1652,6 +1656,9 @@ load_web_effective_secrets() {
       return 1
     }
   done
+  MARIADB_PASSWORD="${MARIADB_PASSWORD:-${WEB_SAVED_MARIADB_PASSWORD}}"
+  REDIS_PASSWORD="${REDIS_PASSWORD:-${WEB_SAVED_REDIS_PASSWORD}}"
+  SYSADMIN_PASSWORD="${SYSADMIN_PASSWORD:-${WEB_SAVED_SYSADMIN_PASSWORD}}"
 }
 
 write_web_effective_config() {
@@ -4030,6 +4037,9 @@ main() {
   validate_config "${validation_mode}"
   validate_host_data_root
   validate_entry_spec_binding "${mode}"
+  if [[ "${command}" == install && ( "${mode}" == web || "${mode}" == combined ) ]]; then
+    load_web_effective_secrets
+  fi
 
   if [[ "${command}" == install ]]; then
     if [[ "${mode}" == combined ]]; then
@@ -4041,10 +4051,11 @@ main() {
   if [[ "${command}:${mode}" == install:combined ]]; then
     check_combined_host_preconditions
   fi
-  if [[ "${command}" == install && ( "${mode}" == web || "${mode}" == combined ) ]]; then
-    load_web_effective_secrets
+  if [[ "${command}" == install && -n "${WEB_EFFECTIVE_CONFIG_READ_FILE}" &&
+    "${WEB_EFFECTIVE_DOMAIN}" != "${TP_WEB_DOMAIN}" ]]; then
+    echo_content red "Managed effective configuration belongs to another Web deployment"
+    exit 1
   fi
-
   if [[ "${command}" == install ]]; then
     mark_host_data_root
     retain_verified_release_assets

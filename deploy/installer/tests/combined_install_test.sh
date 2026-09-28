@@ -441,7 +441,10 @@ assert_rejected_without_host_change() {
   if run_installer install --mode combined >"${work}/${case_name}.out" 2>&1; then
     fail "combined replay accepted ${case_name}"
   fi
-  grep -Fq "${diagnostic}" "${work}/${case_name}.out" || fail "${case_name} omitted its diagnostic"
+  grep -Fq "${diagnostic}" "${work}/${case_name}.out" || {
+    sed -n '1,80p' "${work}/${case_name}.out" >&2
+    fail "${case_name} omitted its diagnostic"
+  }
   after="$(snapshot_host)"
   [[ "${before}" == "${after}" ]] || fail "${case_name} changed managed files or containers"
   [[ "${trace_before}" == "$(sed '/^docker read-only node-identity record$/d' "${trace}" | sha256sum)" ]] ||

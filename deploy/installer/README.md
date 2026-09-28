@@ -42,7 +42,7 @@ chmod 600 web.yaml
 ./assets/bootstrap.sh install --mode web --config "$PWD/web.yaml"
 ~~~
 
-若提示缺失软件，使用当前系统的包管理器安装后重新执行 validate/install。生成的密码会写回 Web VPS 的 web.yaml，不要再用本地空密码配置覆盖。确认面板 HTTPS 可访问后，修改下面的 Node 域名和公网 IP，登记身份并记下输出的身份 ID：
+若提示缺失软件，使用当前系统的包管理器安装后重新执行 validate/install。安装器不会改动上传的 web.yaml；空密码首次生成后保存在 Web VPS 的 `/tpdata/trojanpanelnext/effective-web.yaml`（0600），相同空密码输入重跑会复用。不要把这个有效配置提交到 Git。确认面板 HTTPS 可访问后，修改下面的 Node 域名和公网 IP，登记身份并记下输出的身份 ID：
 
 ~~~bash
 install -d -m 700 /tpdata/trojanpanelnext/trojan-panel/config/node-identities
@@ -120,7 +120,7 @@ docker exec trojan-panel /tpdata/trojan-panel/trojan-panel node-identity verify 
 | hostname、email | 当前 VPS 的域名和 ACME 联系邮箱；Node 域名须与登记时相同。 |
 | caddy_image、mariadb_image、redis_image、api_image、web_image、node_agent_image | 固定摘要的镜像；不要改为 latest。 |
 | mariadb_port、redis_port | Web 的数据库/Redis 端口；Node 上须与 Web 一致。 |
-| mariadb_password、redis_password、sysadmin_password | Web 首装可留空，生成后写回 Web VPS 配置。 |
+| mariadb_password、redis_password、sysadmin_password | Web 首装可留空；生成值只写入固定宿主根下的 `effective-web.yaml`，相同空值重跑复用；已保存值的显式漂移需要独立迁移/轮换。 |
 | panel_port、ui_port | Web 面板 API/UI 的本机端口，由 Caddy 反代。 |
 | mariadb_host、redis_host | Node 连接 Web 数据服务的地址。 |
 | mariadb_user、mariadb_password、redis_username、redis_password、redis_auth_username、redis_auth_password | Node 凭据由加密包注入，不手填占位值。 |

@@ -174,9 +174,10 @@ Use a candidate only for isolated-environment acceptance. Complete acceptance, l
 
 For Web download, configuration, validation, and installation commands, see [Web control plane](#web-control-plane) above.
 
-The first installation generates random `sysadmin`, MariaDB, and Redis passwords, writes them back
-to `web.yaml`, and changes its permissions to `600`. The terminal reports only where the secrets
-were saved; it never prints them.
+The first installation generates random `sysadmin`, MariaDB, and Redis passwords and saves them in
+`/tpdata/trojanpanelnext/effective-web.yaml` at mode `0600`. It never modifies the caller-owned
+`web.yaml`; an unchanged input with empty passwords reuses the saved values on replay. Explicit
+credential drift requires a separate migration or rotation. Passwords are never printed.
 Sensitive writes use the Linux amd64 `secure-file` helper, which keeps the parent and original target
 file descriptors open through commit. Existing targets use a verified `renameat2(RENAME_EXCHANGE)`
 with rollback, while new targets use `RENAME_NOREPLACE`; a final-target or parent swap therefore
@@ -187,7 +188,8 @@ Installation returns success only after the configured identity can access Maria
 HTTPS UI responds, and a read-only command inside the API container verifies the real `sysadmin`
 credential. The credential probe exposes no HTTP path, starts no Redis client or limiter, and does not
 issue a session, update login time, or increment login failures. Any failed probe returns non-zero with a secret-free diagnostic.
-Replaying the same configuration reuses all three stored credentials.
+Replaying the same configuration reuses all three stored credentials, even after a failed first
+health gate.
 
 Each successful install writes `allowlist.json` and `allowlist.md` under
 `${TP_DATA}/trojanpanelnext-network`. The plan separates public entry ports from restricted
@@ -347,7 +349,7 @@ All keys live under `trojanpanelnext:` in the YAML file. Use the templates from 
 | `hostname` | Public Web domain resolving to the Web host; Caddy serves HTTPS for it. |
 | `mariadb_port`, `redis_port` | Web data-service ports; a separate Node must use the same ports, with access restricted to authorised Nodes. |
 | `panel_port`, `ui_port` | Local API and Web UI ports proxied by the Entry; do not expose them to all sources. |
-| `mariadb_password`, `redis_password`, `sysadmin_password` | May stay empty on first install; the installer generates and writes them back. Retain the written values on replay and protect the file. |
+| `mariadb_password`, `redis_password`, `sysadmin_password` | May stay empty on first install; the installer stores generated values in the fixed host root's `effective-web.yaml` (0600), not the input file. Empty-value replay reuses them; explicit drift requires migration or rotation. |
 | `grpc_client_cert_path`, `grpc_client_key_path` | Web's client certificate and private-key paths for Node gRPC; the private key stays on Web. |
 | `grpc_server_ca_path` | CA path for verifying the Node gRPC server certificate; the installer PKI flow handles the empty default. |
 | `pki_bundle_dir` | Web mTLS/CA material, default `/tpdata/trojanpanelnext/trojanpanelnext-pki`; Node bundling reads `client-ca.crt` here. |
