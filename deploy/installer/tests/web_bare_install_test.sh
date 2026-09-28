@@ -15,18 +15,23 @@ work="$(mktemp -d)"
 trap 'rm -rf -- "${work}"' EXIT
 config="${work}/web.yaml"
 data="${work}/data"
+export TP_TEST_DATA_ROOT=1
 container_state="${work}/containers"
 trace="${work}/host.trace"
 curl_trace="${work}/curl.trace"
 random_state="${work}/random-state"
 os_release="${work}/debian-12"
 mkdir -p "${container_state}"
+mkdir -p "${work}/trojan-panel/config" "${work}/mariadb/data"
+printf 'legacy-web-secret\n' >"${work}/trojan-panel/config/legacy-secret"
+printf 'legacy-database\n' >"${work}/mariadb/data/legacy-db"
+legacy_before="$(sha256sum "${work}/trojan-panel/config/legacy-secret" "${work}/mariadb/data/legacy-db")"
 printf 'ID=debian\nVERSION_ID="12"\n' >"${os_release}"
 cp "$(dirname "${INSTALLER}")/examples/web.yaml" "${config}"
 sed -i \
-  -e "s#/tpdata/trojan-panel/pki/client.crt#${data}/trojan-panel/pki/client.crt#" \
-  -e "s#/tpdata/trojan-panel/pki/client.key#${data}/trojan-panel/pki/client.key#" \
-  -e "s#/tpdata/trojanpanelnext-pki#${data}/trojanpanelnext-pki#" \
+  -e "s#/tpdata/trojanpanelnext/trojan-panel/pki/client.crt#${data}/trojan-panel/pki/client.crt#" \
+  -e "s#/tpdata/trojanpanelnext/trojan-panel/pki/client.key#${data}/trojan-panel/pki/client.key#" \
+  -e "s#/tpdata/trojanpanelnext/trojanpanelnext-pki#${data}/trojanpanelnext-pki#" \
   "${config}"
 
 # Exercise the same immutable bundle and released installer entrypoint used by
@@ -50,9 +55,9 @@ digest() {
 INSTALLER="${release_bundle}/install.sh"
 cp "${release_bundle}/config-web.yaml" "${config}"
 sed -i \
-  -e "s#/tpdata/trojan-panel/pki/client.crt#${data}/trojan-panel/pki/client.crt#" \
-  -e "s#/tpdata/trojan-panel/pki/client.key#${data}/trojan-panel/pki/client.key#" \
-  -e "s#/tpdata/trojanpanelnext-pki#${data}/trojanpanelnext-pki#" \
+  -e "s#/tpdata/trojanpanelnext/trojan-panel/pki/client.crt#${data}/trojan-panel/pki/client.crt#" \
+  -e "s#/tpdata/trojanpanelnext/trojan-panel/pki/client.key#${data}/trojan-panel/pki/client.key#" \
+  -e "s#/tpdata/trojanpanelnext/trojanpanelnext-pki#${data}/trojanpanelnext-pki#" \
   "${config}"
 
 id() {
@@ -283,7 +288,7 @@ sysadmin_secret="$(awk -F'"' '$1 == "  sysadmin_password: " {print $2}' "${confi
 test "$(tr -d '\n' <"${data}/trojan-panel/config/initial-admin-password")" = "${sysadmin_secret}" ||
   fail 'API initial password file does not match the persisted sysadmin credential'
 
-secret_link_dir="${work}/secret-link-dir"
+secret_link_dir="${data}/secret-link-dir"
 mkdir -p "${secret_link_dir}"
 printf 'do-not-overwrite\n' >"${secret_link_dir}/target"
 ln -s "${secret_link_dir}/target" "${secret_link_dir}/initial-admin-password"
@@ -299,9 +304,10 @@ grep -Fq 'must not contain symbolic links' "${work}/secret-link.out" ||
   fail 'symlink initial administrator password file rejection omitted its diagnostic'
 test "$(cat "${secret_link_dir}/target")" = 'do-not-overwrite' ||
   fail 'symlink initial administrator password target was overwritten'
+rm "${secret_link_dir}/initial-admin-password"
 
-secret_real_parent="${work}/secret-real-parent"
-secret_link_parent="${work}/secret-link-parent"
+secret_real_parent="${data}/secret-real-parent"
+secret_link_parent="${data}/secret-link-parent"
 mkdir -p "${secret_real_parent}"
 ln -s "${secret_real_parent}" "${secret_link_parent}"
 if INITIAL_SYSADMIN_PASSWORD_FILE="${secret_link_parent}/initial-admin-password" \
@@ -314,6 +320,7 @@ if INITIAL_SYSADMIN_PASSWORD_FILE="${secret_link_parent}/initial-admin-password"
 fi
 grep -Fq 'must not contain symbolic links' "${work}/secret-parent-link.out" ||
   fail 'symlink initial administrator password parent rejection omitted its diagnostic'
+rm "${secret_link_parent}"
 
 saved_secrets="$(grep -E '^  (mariadb|redis|sysadmin)_password:' "${config}")"
 mariadb_secret="$(awk -F'"' '$1 == "  mariadb_password: " {print $2}' "${config}")"
@@ -396,5 +403,42 @@ grep -Fq 'docker run -d --name trojan-panel-ui' "${trace}" ||
   fail 'control-plane UI was not deployed'
 grep -Fq 'docker run -d --name trojan-panel-web-caddy' "${trace}" ||
   fail 'ACME entry was not deployed'
+grep -Fq "${data}/mariadb/data:/var/lib/mysql" "${trace}" || fail 'MariaDB host data mapping is wrong'
+grep -Fq "${data}/redis/data:/data" "${trace}" || fail 'Redis host data mapping is wrong'
+grep -Fq "${data}/trojan-panel/config/:/tpdata/trojan-panel/config/" "${trace}" ||
+  fail 'API configuration host-to-container mapping is wrong'
+grep -Fq "${data}/trojan-panel/pki/:/tpdata/trojan-panel/pki/:ro" "${trace}" ||
+  fail 'API client certificate mount is not read-only'
+if grep -Fq "${data}:/tpdata" "${trace}" || grep -Fq ' -v /tpdata:/tpdata' "${trace}"; then
+  fail 'installer mounted the complete data root'
+fi
+
+retained="${data}/releases/1.2.3"
+test -s "${retained}/release-manifest.json" && test -x "${retained}/entry/entryctl.sh" ||
+  fail 'verified Release assets were not retained in the host data root'
+cp "${retained}/verify-assets.sh" "${work}/trusted-verifier"
+cat >"${retained}/verify-assets.sh" <<EOF
+#!/usr/bin/env bash
+touch "${work}/untrusted-verifier-executed"
+exit 0
+EOF
+chmod 0755 "${retained}/verify-assets.sh"
+if TP_DATA="${data}" TP_OS_RELEASE_FILE="${os_release}" \
+  "${INSTALLER}" install --mode web --config "${config}" >"${work}/tampered-release.out" 2>&1; then
+  fail 'replay accepted a modified retained Release verifier'
+fi
+test ! -e "${work}/untrusted-verifier-executed" ||
+  fail 'installer executed unverified retained code'
+cp "${work}/trusted-verifier" "${retained}/verify-assets.sh"
+mv "${release_bundle}" "${work}/upload-removed"
+if ! TP_DATA="${data}" TP_OS_RELEASE_FILE="${os_release}" \
+  TP_HEALTH_ATTEMPTS=2 TP_HEALTH_DELAY_SECONDS=0 \
+  "${retained}/install.sh" install --mode web --config "${config}" >"${work}/retained-rerun.out" 2>&1; then
+  fail 'retained Release cannot rerun after the upload directory disappears'
+fi
+grep -Fq 'Web control plane is healthy' "${work}/retained-rerun.out" ||
+  fail 'retained Release rerun omitted the health gate'
+test "${legacy_before}" = "$(sha256sum "${work}/trojan-panel/config/legacy-secret" "${work}/mariadb/data/legacy-db")" ||
+  fail 'installation or replay changed the legacy sibling layout'
 
 printf 'PASS Web bare installation and strong health contract\n'

@@ -17,9 +17,9 @@ trojanpanelnext:
   mariadb_password: ""
   redis_password: ""
   sysadmin_password: ""
-  grpc_client_cert_path: /tpdata/trojan-panel/pki/client.crt
-  grpc_client_key_path: /tpdata/trojan-panel/pki/client.key
+  grpc_client_cert_path: /tpdata/trojanpanelnext/trojan-panel/pki/client.crt
+  grpc_client_key_path: /tpdata/trojanpanelnext/trojan-panel/pki/client.key
   grpc_server_ca_path: ""
-  pki_bundle_dir: /tpdata/trojanpanelnext-pki
+  pki_bundle_dir: /tpdata/trojanpanelnext/trojanpanelnext-pki
   force: 0
   purge_data: 0

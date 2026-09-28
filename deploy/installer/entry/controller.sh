@@ -165,7 +165,7 @@ entry_plan_spec() {
   local spec="$1"
   entry_validate_spec "${spec}" || return $?
   if [[ "$(jq -r '.schema_version' "${spec}")" == 2 ]]; then
-    entry_v2_plan "${spec}" "${ENTRY_STATE_ROOT:-/tpdata/trojanpanelnext-entry/state}"
+    entry_v2_plan "${spec}" "${ENTRY_STATE_ROOT:-/tpdata/trojanpanelnext/trojanpanelnext-entry/state}"
     return $?
   fi
 

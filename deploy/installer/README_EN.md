@@ -58,7 +58,7 @@ sudo ./bootstrap.sh install --mode web --config ../web.yaml
 Install Web first. On the Web host, in the verified assets directory, create a Node identity and encrypted bootstrap bundle. Replace the example domain, public IP, and Web data-service addresses with real values. The control plane issues the identity ID, generation, and three dedicated credentials; do not manually use the template placeholders.
 
 ```bash
-sudo install -d -m 0700 /tpdata/trojan-panel/config/node-identities
+sudo install -d -m 0700 /tpdata/trojanpanelnext/trojan-panel/config/node-identities
 sudo docker exec trojan-panel /tpdata/trojan-panel/trojan-panel node-identity register \
   --name node-sg --domain node.example.com --public-ip 203.0.113.10 \
   --credential-file /tpdata/trojan-panel/config/node-identities/node-sg.g1.json
@@ -66,11 +66,12 @@ chmod 600 ../node.yaml
 # Edit node.yaml on your local computer before uploading: hostname, email, mariadb_host, redis_host, grpc_tls_server_name;
 # Set control_plane_public_ip for a precise network allowlist;
 # also set mariadb_port and redis_port if Web uses non-default ports.
+sudo install -d -m 0700 /tpdata/trojanpanelnext/node-bundles
 sudo ./node-bundle create \
-  --credential-file /tpdata/trojan-panel/config/node-identities/node-sg.g1.json \
+  --credential-file /tpdata/trojanpanelnext/trojan-panel/config/node-identities/node-sg.g1.json \
   --node-config ../node.yaml \
-  --client-ca /tpdata/trojanpanelnext-pki/client-ca.crt \
-  --output ../node-sg.g1.age
+  --client-ca /tpdata/trojanpanelnext/trojanpanelnext-pki/client-ca.crt \
+  --output /tpdata/trojanpanelnext/node-bundles/node-sg.g1.age
 ```
 
 The credential file is root-managed, so the bundle command above also uses `sudo`. Transfer only `node-sg.g1.age` over a trusted channel into the Node host's `tpnext-upload` directory. Upload and verify the same Release on Node, then run:
@@ -108,10 +109,10 @@ sudo ./bootstrap.sh install --mode combined --config ../combined.yaml
 | `external` | The installer creates **no reverse proxy container**; the external entry owns Web 80/443, ACME, and required plain fallbacks |
 
 With `tls_mode: external` the installer still copies the certificates from `tls_cert_dir` into
-`/tpdata/trojan-panel-core/cert` and mounts them read-only for the kernels, prepares the
-`/tpdata/web` camouflage directory, removes leftover `*-caddy` containers from a previous
+`/tpdata/trojanpanelnext/trojan-panel-core/cert` and mounts them read-only for the kernels, prepares the
+`/tpdata/trojanpanelnext/web` camouflage directory, removes leftover `*-caddy` containers from a previous
 installation, and writes a host-specific contract summary to
-`/tpdata/trojanpanelnext-external/README.md`.
+`/tpdata/trojanpanelnext/trojanpanelnext-external/README.md`.
 
 The Release archive contains `config-web.yaml`, `config-node.yaml`, and `config-combined.yaml`; copy
 the matching template into a working file before editing. The full list of behaviour the external entry
@@ -120,7 +121,7 @@ form in [EXTERNAL.md](EXTERNAL.md).
 
 Xray, NaiveProxy, and Hysteria2 listen directly on their Node protocol ports and terminate their own
 TLS by default; they do not pass through a unified L4 ingress. The node agent records kernel
-listeners in `/tpdata/trojan-panel-core/external/routes.json` for port/firewall audits and plain
+listeners in `/tpdata/trojanpanelnext/trojan-panel-core/external/routes.json` for port/firewall audits and plain
 fallback rendering. It is not an nginx `stream` configuration source. Only routes marked
 `external_fallback_listener_required: true` need a plain-HTTP camouflage listener.
 
@@ -137,15 +138,15 @@ fallback rendering. It is not an nginx `stream` configuration source. Only route
 The installer checks configuration, dependencies, and deployment health, but it does not configure DNS, cloud security groups, or the host firewall. The operator must confirm DNS, open ports, and the target host first; the default ACME entry needs public access to ports 80 and 443. Install, removal, and certificate changes modify the target host directly and require operator review before execution in production.
 
 After a successful install, the current topology's network allowlist is written to
-`/tpdata/trojanpanelnext-network/allowlist.json` and `allowlist.md`. Review it first, then have the
+`/tpdata/trojanpanelnext/trojanpanelnext-network/allowlist.json` and `allowlist.md`. Review it first, then have the
 host or cloud-security operator apply the rules; the installer never changes the firewall:
 
 ```bash
-sudo sed -n '1,240p' /tpdata/trojanpanelnext-network/allowlist.md
-sudo jq . /tpdata/trojanpanelnext-network/allowlist.json
-sudo test ! -e /tpdata/trojan-panel-core/external/routes.json || \
+sudo sed -n '1,240p' /tpdata/trojanpanelnext/trojanpanelnext-network/allowlist.md
+sudo jq . /tpdata/trojanpanelnext/trojanpanelnext-network/allowlist.json
+sudo test ! -e /tpdata/trojanpanelnext/trojan-panel-core/external/routes.json || \
   sudo jq '.routes[] | {network,port,external_fallback_listener_required}' \
-    /tpdata/trojan-panel-core/external/routes.json
+    /tpdata/trojanpanelnext/trojan-panel-core/external/routes.json
 ```
 
 `ingress` entries are host inbound rules and `egress` lists DNS/HTTPS required for installation;
@@ -206,11 +207,12 @@ credentials are injected from the file produced by `node-identity register|rotat
 ```bash
 cp ./config-node.yaml ./node-sg.yaml
 chmod 600 ./node-sg.yaml
+sudo install -d -m 0700 /tpdata/trojanpanelnext/node-bundles
 sudo ./node-bundle create \
-  --credential-file /tpdata/trojan-panel/config/node-identities/node-sg.g1.json \
+  --credential-file /tpdata/trojanpanelnext/trojan-panel/config/node-identities/node-sg.g1.json \
   --node-config ./node-sg.yaml \
-  --client-ca /tpdata/trojanpanelnext-pki/client-ca.crt \
-  --output ./node-sg.g1.age
+  --client-ca /tpdata/trojanpanelnext/trojanpanelnext-pki/client-ca.crt \
+  --output /tpdata/trojanpanelnext/node-bundles/node-sg.g1.age
 ```
 
 The password is read interactively and confirmed by default. Automation may set
@@ -348,7 +350,7 @@ All keys live under `trojanpanelnext:` in the YAML file. Use the templates from 
 | `mariadb_password`, `redis_password`, `sysadmin_password` | May stay empty on first install; the installer generates and writes them back. Retain the written values on replay and protect the file. |
 | `grpc_client_cert_path`, `grpc_client_key_path` | Web's client certificate and private-key paths for Node gRPC; the private key stays on Web. |
 | `grpc_server_ca_path` | CA path for verifying the Node gRPC server certificate; the installer PKI flow handles the empty default. |
-| `pki_bundle_dir` | Web mTLS/CA material, default `/tpdata/trojanpanelnext-pki`; Node bundling reads `client-ca.crt` here. |
+| `pki_bundle_dir` | Web mTLS/CA material, default `/tpdata/trojanpanelnext/trojanpanelnext-pki`; Node bundling reads `client-ca.crt` here. |
 
 ### Node template `config-node.yaml`
 
@@ -374,11 +376,11 @@ All keys live under `trojanpanelnext:` in the YAML file. Use the templates from 
 | --- | --- |
 | `web_hostname`, `node_hostname` | Two distinct domains resolving to this host's public IP; shared Caddy owns 80/443. |
 | `node_name`, `node_public_ip` | Stable local Node name and real public IP; the installer registers its dedicated identity. |
-| `node_identity_credential_file` | Root-only local identity file under `/tpdata/trojan-panel/config/node-identities/`; the default directory is suitable. |
+| `node_identity_credential_file` | Root-only local identity file under `/tpdata/trojanpanelnext/trojan-panel/config/node-identities/`; the default directory is suitable. |
 | `mariadb_port`, `redis_port`, `panel_port`, `ui_port` | Local data-service, API, and UI ports; they must not conflict with 80/443. |
 | `core_port`, `grpc_port`, `grpc_tls_mode` | Local Core and gRPC ports; TLS mode is `mtls`. |
 | `node_caddy_http_port`, `node_caddy_https_port` | Shared Entry ports; combined requires exactly `80` and `443`. |
-| `pki_bundle_dir` | Local Web/Node PKI material, default `/tpdata/trojanpanelnext-pki`. |
+| `pki_bundle_dir` | Local Web/Node PKI material, default `/tpdata/trojanpanelnext/trojanpanelnext-pki`. |
 
 ### Optional external TLS keys
 
@@ -390,9 +392,9 @@ Add these keys to a copied `web` or separate `node` working configuration only w
 | `tls_cert_dir` | empty | External certificate directory; required for `external` + `node` |
 | `tls_cert_file` / `tls_key_file` | empty | Explicit file names when the directory holds several pairs |
 | `bind_address` | `0.0.0.0` | Panel UI listen address; prefer `127.0.0.1` in external mode |
-| `managed_cert_dir` | `/tpdata/trojan-panel-core/cert` | Managed certificate copy; kernels read only this directory |
-| `external_managed_dir` | `/tpdata/trojanpanelnext-external` | Contract directory |
-| `external_routes_dir` | `/tpdata/trojan-panel-core/external` | Directory where the node agent writes `routes.json` |
+| `managed_cert_dir` | `/tpdata/trojanpanelnext/trojan-panel-core/cert` | Managed certificate copy; kernels read only this directory |
+| `external_managed_dir` | `/tpdata/trojanpanelnext/trojanpanelnext-external` | Contract directory |
+| `external_routes_dir` | `/tpdata/trojanpanelnext/trojan-panel-core/external` | Directory where the node agent writes `routes.json` |
 
 Certificate discovery order: the files named by `tls_cert_file`/`tls_key_file`, then
 `fullchain.pem` with `privkey.pem` (the certd layout), then a same-stem `.crt`/`.key` pair

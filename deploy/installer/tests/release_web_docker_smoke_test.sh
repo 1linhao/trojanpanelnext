@@ -79,14 +79,6 @@ push_image() {
 
 (cd "${API_DIR}" && mkdir -p build && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o build/trojan-panel-linux-amd64 .)
 docker build -q --build-arg TARGETOS=linux --build-arg TARGETARCH=amd64 -t "tp-web-api-${suffix}" "${API_DIR}" >/dev/null
-cat >"${work}/api-runtime.Dockerfile" <<EOF
-FROM tp-web-api-${suffix}
-ARG TP_DATA
-RUN mkdir -p "\${TP_DATA}/trojan-panel" && cp /tpdata/trojan-panel/trojan-panel "\${TP_DATA}/trojan-panel/trojan-panel"
-WORKDIR \${TP_DATA}/trojan-panel/
-EOF
-docker build -q --build-arg TP_DATA="${SMOKE_DATA_DIR}" -f "${work}/api-runtime.Dockerfile" \
-  -t "tp-web-api-runtime-${suffix}" "${API_DIR}" >/dev/null
 (cd "${WEB_DIR}" && npx --yes yarn@1.22.22 install --frozen-lockfile && npx --yes yarn@1.22.22 build) >/dev/null
 docker build -q -t "tp-web-ui-${suffix}" "${WEB_DIR}" >/dev/null
 
@@ -98,7 +90,7 @@ FROM mariadb@sha256:07e06f2e7ae9dfc63707a83130a62e00167c827f08fcac7a9aa33f4b6dc3
 COPY schema.sql /docker-entrypoint-initdb.d/00-schema.sql
 EOF
 docker build -q -t "tp-web-mariadb-${suffix}" "${work}/mariadb" >/dev/null
-api_image="$(push_image "tp-web-api-runtime-${suffix}" tpn-api)"
+api_image="$(push_image "tp-web-api-${suffix}" tpn-api)"
 web_image="$(push_image "tp-web-ui-${suffix}" tpn-web)"
 mariadb_image="$(push_image "tp-web-mariadb-${suffix}" tpn-mariadb)"
 docker pull redis@sha256:a93c14584715ec5bd9d2648d58c3b27f89416242bee0bc9e5fb2edc1a4cbec1d >/dev/null
@@ -156,6 +148,7 @@ run_installer() {
     PATH="${work}/tools:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
     CURL_CA_BUNDLE="${work}/entry/cert" \
     TP_DATA="${SMOKE_DATA_DIR}" \
+    TP_TEST_DATA_ROOT=1 \
     TP_RELEASE_WEB_SMOKE_INJECT_ADMIN_FAILURE="${inject_admin_failure}" \
     TP_INSTALL_DEPS=0 TP_OS_RELEASE_FILE="${work}/debian-12" \
     TP_HEALTH_ATTEMPTS=30 TP_HEALTH_DELAY_SECONDS=1 \
@@ -236,6 +229,17 @@ if ! run_installer 0 "${work}/install.out" "${work}/install.err"; then
   fail 'formal release installer failed after health failure injection'
 fi
 grep -Fq 'Web control plane is healthy' "${work}/install.out" || fail 'health success marker missing'
+for container in "${api_container}" "${ui_container}" "${mariadb_container}" "${redis_container}"; do
+  mounts="$(docker inspect --format '{{json .Mounts}}' "${container}")"
+  jq -e --arg root "${SMOKE_DATA_DIR}" '
+    all(.[]; ((.Source | startswith($root + "/")) or .Source == "/etc/localtime") and
+      .Source != $root and .Destination != "/tpdata")
+  ' <<<"${mounts}" >/dev/null || fail "${container} mounted outside the fixed test root or exposed the full root"
+done
+docker inspect --format '{{json .Mounts}}' "${api_container}" | jq -e --arg root "${SMOKE_DATA_DIR}" '
+  any(.[]; .Source == ($root + "/trojan-panel/pki") and
+    .Destination == "/tpdata/trojan-panel/pki" and .RW == false)
+' >/dev/null || fail 'API private-key mount is not the minimum read-only directory'
 for probe in MariaDB Redis 'Web HTTPS' 'sysadmin container credential'; do grep -Fq "Health check passed: ${probe}" "${work}/install.out" || fail "health evidence missing: ${probe}"; done
 login=""
 for _ in $(seq 1 20); do
