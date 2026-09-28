@@ -11,4 +11,7 @@ func TestCatalogEndpointLockUsesIPAddress(t *testing.T) {
 	if compressed == catalogEndpointLockName("2001:db8::77", 8401) {
 		t.Fatal("different gRPC ports must use independent registration locks")
 	}
+	if catalogEndpointLockName("203.0.113.78", 8500) != catalogEndpointLockName("::ffff:203.0.113.78", 8500) {
+		t.Fatal("IPv4 and IPv4-mapped IPv6 must share the same registration lock")
+	}
 }

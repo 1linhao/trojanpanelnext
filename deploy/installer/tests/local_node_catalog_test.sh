@@ -261,7 +261,9 @@ ipv6_a=(--node-key node-ipv6-a --host-id ipv6-host-a --name node-ipv6-a --domain
 ipv6_b=(--node-key node-ipv6-b --host-id ipv6-host-b --name node-ipv6-b --domain ipv6-b.example.com --public-ip 2001:0db8:0:0:0:0:0:77 --grpc-port 8400)
 catalog reconcile "${ipv6_a[@]}" >"${work}/ipv6-a.json"
 reject 'equivalent IPv6 endpoint' catalog reconcile "${ipv6_b[@]}"
-test ! -e "${work}/credentials/node-ipv6-b.binding.json" || fail 'equivalent IPv6 conflict committed a node_key binding'
+test ! -e "${work}/credentials/node-ipv6-b.binding.json" &&
+  test ! -e "${work}/credentials/node-ipv6-b.g1.json" &&
+  test ! -e "${work}/credentials/node-ipv6-b.identity.json" || fail 'equivalent IPv6 conflict published files'
 test "$(db_scalar 'SELECT COUNT(*) FROM node_identity')" = 4 || fail 'equivalent IPv6 conflict inserted an identity'
 test "$(db_scalar 'SELECT COUNT(*) FROM node_server')" = 4 || fail 'equivalent IPv6 conflict inserted a server'
 test "$(docker exec -e "REDISCLI_AUTH=${redis_password}" "${redis_container}" redis-cli --raw ACL USERS | grep -c '^tpn-')" = 8 || fail 'equivalent IPv6 conflict provisioned Redis ACL users'
@@ -269,6 +271,46 @@ test "$(db_scalar "SELECT COUNT(*) FROM mysql.user WHERE LEFT(User,4)='tpn_'")" 
 catalog reconcile "${ipv6_a[@]}" >"${work}/ipv6-a-replay.json"
 cmp "${work}/ipv6-a.json" "${work}/ipv6-a-replay.json" || fail 'IPv6 Node could not replay after equivalent endpoint rejection'
 printf 'TRACE ipv6-equivalent-endpoint=rejected rows=4+4 ACL=4-MariaDB+8-Redis\n'
+
+v4_first=(--node-key node-v4-first --host-id v4-host --name node-v4-first --domain v4-first.example.com --public-ip 203.0.113.78 --grpc-port 8500)
+mapped_second=(--node-key node-mapped-second --host-id mapped-host --name node-mapped-second --domain mapped-second.example.com --public-ip ::ffff:203.0.113.78 --grpc-port 8500)
+catalog reconcile "${v4_first[@]}" >"${work}/v4-first.json"
+reject 'IPv4 then mapped IPv4 endpoint' catalog reconcile "${mapped_second[@]}"
+test ! -e "${work}/credentials/node-mapped-second.binding.json" &&
+  test ! -e "${work}/credentials/node-mapped-second.g1.json" &&
+  test ! -e "${work}/credentials/node-mapped-second.identity.json" || fail 'mapped losing Node published files'
+test "$(db_scalar 'SELECT COUNT(*) FROM node_identity')" = 5 &&
+  test "$(db_scalar 'SELECT COUNT(*) FROM node_server')" = 5 &&
+  test "$(db_scalar "SELECT COUNT(*) FROM mysql.user WHERE LEFT(User,4)='tpn_'")" = 5 &&
+  test "$(docker exec -e "REDISCLI_AUTH=${redis_password}" "${redis_container}" redis-cli --raw ACL USERS | grep -c '^tpn-')" = 10 ||
+  fail 'IPv4 then mapped conflict changed rows or ACL users'
+
+mapped_first=(--node-key node-mapped-first --host-id mapped-first-host --name node-mapped-first --domain mapped-first.example.com --public-ip ::ffff:203.0.113.79 --grpc-port 8600)
+v4_second=(--node-key node-v4-second --host-id v4-second-host --name node-v4-second --domain v4-second.example.com --public-ip 203.0.113.79 --grpc-port 8600)
+catalog reconcile "${mapped_first[@]}" >"${work}/mapped-first.json"
+reject 'mapped IPv4 then IPv4 endpoint' catalog reconcile "${v4_second[@]}"
+test ! -e "${work}/credentials/node-v4-second.binding.json" &&
+  test ! -e "${work}/credentials/node-v4-second.g1.json" &&
+  test ! -e "${work}/credentials/node-v4-second.identity.json" || fail 'IPv4 losing Node published files'
+test "$(db_scalar 'SELECT COUNT(*) FROM node_identity')" = 6 &&
+  test "$(db_scalar 'SELECT COUNT(*) FROM node_server')" = 6 &&
+  test "$(db_scalar "SELECT COUNT(*) FROM mysql.user WHERE LEFT(User,4)='tpn_'")" = 6 &&
+  test "$(docker exec -e "REDISCLI_AUTH=${redis_password}" "${redis_container}" redis-cli --raw ACL USERS | grep -c '^tpn-')" = 12 ||
+  fail 'mapped then IPv4 conflict changed rows or ACL users'
+
+v4_other_port=(--node-key node-v4-other-port --host-id other-port-host --name node-v4-other-port --domain v4-other-port.example.com --public-ip ::ffff:203.0.113.78 --grpc-port 8501)
+catalog reconcile "${v4_other_port[@]}" >"${work}/v4-other-port.json"
+test "$(db_scalar 'SELECT COUNT(*) FROM node_identity')" = 7 &&
+  test "$(db_scalar 'SELECT COUNT(*) FROM node_server')" = 7 || fail 'different gRPC port was not registered independently'
+test "$(db_scalar "SELECT COUNT(*) FROM mysql.user WHERE LEFT(User,4)='tpn_'")" = 7 &&
+  test "$(docker exec -e "REDISCLI_AUTH=${redis_password}" "${redis_container}" redis-cli --raw ACL USERS | grep -c '^tpn-')" = 14 ||
+  fail 'different-port Node did not receive independent ACL users'
+catalog reconcile "${v4_first[@]}" >"${work}/v4-first-replay.json"
+cmp "${work}/v4-first.json" "${work}/v4-first-replay.json" || fail 'IPv4 winner replay changed its identity'
+catalog reconcile "${mapped_first[@]}" >"${work}/mapped-first-replay.json"
+cmp "${work}/mapped-first.json" "${work}/mapped-first-replay.json" || fail 'mapped winner replay changed its identity'
+reject 'same identity mapped spelling drift' catalog reconcile --node-key node-v4-first --host-id v4-host --name node-v4-first --domain v4-first.example.com --public-ip ::ffff:203.0.113.78 --grpc-port 8500
+printf 'TRACE mapped-ipv4=both-orders-rejected other-port=accepted rows=7+7\n'
 
 printf 'TRACE ids=node-one:%s/%s,node-two:%s/%s generation=1 rows=2+2 ACL=2-MariaDB+4-Redis\n' \
   "${one_id}" "${one_server}" "${two_id}" "${two_server}"

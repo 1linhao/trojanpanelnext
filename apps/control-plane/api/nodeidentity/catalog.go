@@ -221,7 +221,7 @@ func runCatalog(args []string, stdout, stderr io.Writer) int {
 }
 
 func catalogEndpointLockName(publicIP string, grpcPort uint) string {
-	// Match the address equivalence used by INET6_ATON in catalogIdentity.
+	// Match net.IP.Equal, including IPv4 and its IPv4-mapped IPv6 form.
 	digest := sha256.Sum256([]byte(net.ParseIP(publicIP).String() + "\x00" + strconv.FormatUint(uint64(grpcPort), 10)))
 	return "tpn-node-endpoint:" + hex.EncodeToString(digest[:20])
 }
@@ -279,12 +279,11 @@ func (manager *lifecycle) catalogIdentity(ctx context.Context, expected catalogB
 		return nil, err
 	}
 	if len(matches) == 0 {
-		var serverCount uint
-		if err = manager.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM node_server WHERE name=? OR grpc_tls_server_name=? OR (INET6_ATON(ip)=INET6_ATON(?) AND grpc_port=?)`,
-			expected.Name, expected.Domain, expected.PublicIP, expected.GRPCPort).Scan(&serverCount); err != nil {
-			return nil, err
+		conflicts, conflictErr := manager.catalogServerConflicts(ctx, expected, 0)
+		if conflictErr != nil {
+			return nil, conflictErr
 		}
-		if serverCount != 0 {
+		if conflicts {
 			return nil, errors.New("unmanaged node_server conflicts with the requested Node")
 		}
 		return nil, nil
@@ -325,10 +324,38 @@ func (manager *lifecycle) catalogIdentity(ctx context.Context, expected catalogB
 		item.MariaDBUsername, item.RedisUsername, item.RedisAuthUsername).Scan(&conflictingIdentities); err != nil || conflictingIdentities != 0 {
 		return nil, errors.New("data-layer ACL identity is shared with another Node")
 	}
-	var conflictingServers uint
-	if err = manager.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM node_server WHERE id<>? AND (name=? OR grpc_tls_server_name=? OR (INET6_ATON(ip)=INET6_ATON(?) AND grpc_port=?))`,
-		item.NodeServerID, expected.Name, expected.Domain, expected.PublicIP, expected.GRPCPort).Scan(&conflictingServers); err != nil || conflictingServers != 0 {
+	conflicts, conflictErr := manager.catalogServerConflicts(ctx, expected, item.NodeServerID)
+	if conflictErr != nil || conflicts {
 		return nil, errors.New("another node_server conflicts with the requested Node")
 	}
 	return &item, nil
+}
+
+func (manager *lifecycle) catalogServerConflicts(ctx context.Context, expected catalogBinding, exceptID uint64) (bool, error) {
+	// Retain database name/domain collation, then use the lock's Go IP
+	// equivalence for endpoints, including IPv4-mapped IPv6 addresses.
+	var namedCount uint
+	if err := manager.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM node_server WHERE id<>? AND (name=? OR grpc_tls_server_name=?)`,
+		exceptID, expected.Name, expected.Domain).Scan(&namedCount); err != nil {
+		return false, err
+	}
+	if namedCount != 0 {
+		return true, nil
+	}
+	rows, err := manager.db.QueryContext(ctx, `SELECT ip FROM node_server WHERE id<>? AND grpc_port=?`, exceptID, expected.GRPCPort)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	expectedIP := net.ParseIP(expected.PublicIP)
+	for rows.Next() {
+		var otherIP string
+		if err := rows.Scan(&otherIP); err != nil {
+			return false, err
+		}
+		if expectedIP.Equal(net.ParseIP(otherIP)) {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }

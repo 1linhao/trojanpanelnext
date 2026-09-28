@@ -26,4 +26,6 @@ The default template describes an external computer reaching separate Web and No
 
 `hosts` holds execution transport, while `web.domain`, `web.public_ip`, and each Node's `domain` and `public_ip` hold service addresses. SSH can use a root key, or an ordinary user's key with `sudo -n` in later deployment. `node_key` is the stable key for a future Node state path; appending or reordering the array preserves existing paths. Removing or renaming a Node does not authorize uninstall, revocation, or rotation. `plan` only validates YAML and topology and prints a secret-free per-host plan. This ticket provides no `check` or `deploy` command.
 
+Web `node-identity catalog reconcile` checks endpoint conflicts by Node service IP and gRPC port. During unified deployment registration, do not run bare `node-identity register` concurrently for the same endpoint. Bare `register` retains its manual registration contract and does not create a catalog `node_key` binding.
+
 The config file is mode 0600 and the verified asset work directory is mode 0700. Use a `*.local.yaml` config name; inside a Git worktree, the CLI requires both config and work directory to be ignored by Git. Existing paths are never overwritten. Do not copy the Web-privileged unified YAML to a Node VPS.
