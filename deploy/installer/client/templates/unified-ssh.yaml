@@ -1,0 +1,48 @@
+schema_version: 1
+release:
+  tag: __RELEASE_TAG__
+  sha256: __ARCHIVE_SHA256__
+hosts:
+  web-host:
+    transport: ssh
+    ssh:
+      user: root
+      hostname: 203.0.113.10
+      port: 22
+      identity_file: ""
+      config_file: ""
+  node-host:
+    transport: ssh
+    ssh:
+      user: root
+      hostname: 203.0.113.20
+      port: 22
+      identity_file: ""
+      config_file: ""
+web:
+  host: web-host
+  domain: panel.example.com
+  public_ip: 203.0.113.10
+  email: admin@example.com
+  settings:
+    mariadb_port: 9507
+    redis_port: 6378
+    panel_port: 8081
+    ui_port: 8888
+  passwords:
+    mariadb: ""
+    redis: ""
+    sysadmin: ""
+nodes:
+  - node_key: node-one
+    host: node-host
+    name: node-one
+    domain: node.example.com
+    public_ip: 203.0.113.20
+    settings:
+      grpc_port: 8100
+      core_port: 8082
+      node_caddy_http_port: 80
+      node_caddy_https_port: 8863
+    passwords:
+      bundle: ""

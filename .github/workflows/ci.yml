@@ -147,6 +147,42 @@ jobs:
       - name: Test combined shared Entry with Docker
         run: bash deploy/installer/tests/combined_docker_smoke_test.sh
 
+  client-init:
+    name: client init and topology (${{ matrix.os }})
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Install pinned mikefarah yq v4
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          case "$(uname -s)/$(uname -m)" in
+            Linux/x86_64)
+              asset=yq_linux_amd64
+              expected=b96de04645707e14a12f52c37e6266832e03c29e95b9b139cddcae7314466e69
+              ;;
+            Darwin/x86_64)
+              asset=yq_darwin_amd64
+              expected=5580ff2c1fc80dd91f248b3e19af2431f1c95767ad0949a60176601ca5140318
+              ;;
+            Darwin/arm64)
+              asset=yq_darwin_arm64
+              expected=602dbbc116af9eb8a91d2239d0ec286eb9c90b94e76676d5268ab6ca184719b6
+              ;;
+            *) exit 1 ;;
+          esac
+          curl -fLsS --retry 3 "https://github.com/mikefarah/yq/releases/download/v4.45.4/${asset}" -o "$RUNNER_TEMP/yq"
+          actual="$(shasum -a 256 "$RUNNER_TEMP/yq" | awk '{print $1}')"
+          test "$actual" = "$expected"
+          chmod 755 "$RUNNER_TEMP/yq"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - name: Test local init and topology behavior
+        shell: bash
+        run: bash deploy/installer/tests/local_init_test.sh
+
   docs:
     name: documentation site
     runs-on: ubuntu-latest
@@ -187,7 +223,7 @@ jobs:
   gate:
     name: gate
     if: always()
-    needs: [repository, api, web, node-agent, installer, docs, docker-smoke]
+    needs: [repository, api, web, node-agent, installer, client-init, docs, docker-smoke]
     runs-on: ubuntu-latest
     steps:
       - name: Require every CI job to pass
@@ -197,6 +233,7 @@ jobs:
           WEB_RESULT: ${{ needs.web.result }}
           NODE_AGENT_RESULT: ${{ needs.node-agent.result }}
           INSTALLER_RESULT: ${{ needs.installer.result }}
+          CLIENT_INIT_RESULT: ${{ needs.client-init.result }}
           DOCS_RESULT: ${{ needs.docs.result }}
           DOCKER_SMOKE_RESULT: ${{ needs.docker-smoke.result }}
         shell: bash
@@ -208,6 +245,7 @@ jobs:
             "$WEB_RESULT" \
             "$NODE_AGENT_RESULT" \
             "$INSTALLER_RESULT" \
+            "$CLIENT_INIT_RESULT" \
             "$DOCS_RESULT" \
             "$DOCKER_SMOKE_RESULT"; do
             test "$result" = success
