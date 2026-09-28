@@ -107,3 +107,4 @@ for domain in panel.example.test node.example.test; do
 done
 
 printf 'PASS combined Docker shared listener, dual-domain HTTPS, certificates, and direct Node exposure smoke\n'
+bash "$(dirname "${BASH_SOURCE[0]}")/combined_rotation_cli_test.sh"

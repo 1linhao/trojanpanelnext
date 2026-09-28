@@ -21,7 +21,7 @@
     {
       "name": "install",
       "path": "install.sh",
-      "sha256": "7c07dac14abfb5714e9a964d7ac5ec9b041e40c48dc22c361b0e712f8fec958f"
+      "sha256": "4389b7693fc2b707bed3b980db8d611a65c30b70b6f5fc4f5691b51d7a38d198"
     },
     {
       "name": "secure-file",
