@@ -51,7 +51,7 @@
     {
       "name": "client/tpnext",
       "path": "client/tpnext.sh",
-      "sha256": "5c77b9f38adccceecf5e80b16d8c3bc1c023bfb9b747926bdd0949588562bc1a"
+      "sha256": "926b9527310a0faf64503f9834d808ad4384680d3fa044540f2c7bb2d639369a"
     },
     {
       "name": "client/topology",
