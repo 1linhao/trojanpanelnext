@@ -190,6 +190,10 @@ validate_host_data_root() {
       if [[ "${TP_TEST_DATA_ROOT:-0}" == 1 && "${ancestor}" == /tmp &&
         "${owner}" == 0 && "${mode}" == 1777 ]]; then
         : # Isolated test roots live below a private mktemp directory.
+      elif [[ "${TP_TEST_DATA_ROOT:-0}" == 1 && "${ancestor}" == /tmp/* &&
+        "${mode}" == 700 && "${SUDO_UID:-}" =~ ^[0-9]+$ &&
+        "${owner}" == "${SUDO_UID}" ]]; then
+        : # Docker smoke runs the installer as root below the test user's mktemp.
       elif [[ "${owner}" != "${EUID}" && "${owner}" != 0 ]] ||
         (( (8#${mode} & 0022) != 0 )); then
         echo_content red "Host data root parent has unsafe ownership or permissions: ${ancestor}"
