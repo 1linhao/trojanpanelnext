@@ -67,6 +67,71 @@ created="$(entry_v2_reconcile "$tmp/spec" "$ENTRY_STATE_ROOT")"
 file_digest="$(printf '%s' "$(sha256sum "$CADDY_ADAPTER_ROOT/Caddyfile" | awk '{print $1}')" | sha256sum | awk '{print $1}')"
 [[ "$(jq -r --arg id "$CADDY_ADAPTER_ROOT/Caddyfile" '.resources[] | select(.id == $id) | .identity.digest' <<<"$created")" == "$file_digest" ]] || fail 'file identity was not based on content'
 
+# Inspect an existing labeled Caddy container without contacting Docker. The
+# writable /config bind must belong to this deployment before reuse.
+caddy_test_docker() {
+  [[ "$1" == inspect ]] || return 1
+  local format="${3:-}"
+  [[ "$2" == -f ]] || return 0
+  if [[ "$format" == *'range .Config.Env'* ]]; then
+    printf '%s\n' "$CADDY_TEST_NODE_ENVS"
+    return
+  fi
+  if [[ -n "${CADDY_TEST_NODE_CONTAINER:-}" && "$format" == *"Destination \"$CADDY_TEST_NODE_CONTAINER\""* ]]; then
+    if [[ "$format" == *'.Source'* ]]; then
+      printf '%s\n' "$CADDY_TEST_NODE_SOURCE"
+    else
+      printf '%s\n' "$CADDY_TEST_NODE_RW"
+    fi
+    return
+  fi
+  case "$format" in
+    '{{.Id}}') printf 'existing-caddy\n' ;;
+    *'io.trojanpanelnext.deployment'*) jq -r '.deployment_id' "$tmp/spec" ;;
+    *'io.trojanpanelnext.owner-token'*) jq -r '.owner_token' "$tmp/spec" ;;
+    '{{.Config.Image}}') printf '%s\n' "$CADDY_ADAPTER_IMAGE" ;;
+    *'Destination "/etc/caddy/Caddyfile"'*) printf '%s/Caddyfile\n' "$CADDY_ADAPTER_ROOT" ;;
+    *'Destination "/data"'*) printf '%s/data\n' "$CADDY_ADAPTER_ROOT" ;;
+    *'Destination "/srv"'*) printf '%s\n' "$CADDY_ADAPTER_WEB_ROOT" ;;
+    *'Destination "/config"'*)
+      if [[ "$format" == *'.Source'* ]]; then
+        printf '%s\n' "$CADDY_TEST_CONFIG_SOURCE"
+      else
+        printf '%s\n' "$CADDY_TEST_CONFIG_RW"
+      fi ;;
+    *) return 1 ;;
+  esac
+}
+export CADDY_ADAPTER_FAKE=0 CADDY_ADAPTER_DOCKER=caddy_test_docker
+export CADDY_ADAPTER_WEB_ROOT="$tmp/webroot"
+export CADDY_ADAPTER_IMAGE="test.invalid/caddy@sha256:$(printf '0%.0s' {1..64})"
+CADDY_TEST_CONFIG_SOURCE="$CADDY_ADAPTER_ROOT/config"
+CADDY_TEST_CONFIG_RW=true
+caddy_adapter_ensure_container "$tmp/spec" "$CADDY_ADAPTER_ROOT" || fail 'owned Caddy config mount was rejected'
+for source in "$tmp/foreign-config" ''; do
+  CADDY_TEST_CONFIG_SOURCE="$source"
+  expect_fail caddy_adapter_ensure_container "$tmp/spec" "$CADDY_ADAPTER_ROOT"
+done
+CADDY_TEST_CONFIG_SOURCE="$CADDY_ADAPTER_ROOT/config"
+CADDY_TEST_CONFIG_RW=false
+expect_fail caddy_adapter_ensure_container "$tmp/spec" "$CADDY_ADAPTER_ROOT"
+CADDY_TEST_NODE_SOURCE="$(jq -r '.roles.node.certificate_consumer' "$tmp/spec")"
+CADDY_TEST_NODE_CONTAINER="$(caddy_adapter_container_path "$CADDY_TEST_NODE_SOURCE")"
+CADDY_TEST_NODE_ENVS="$(printf 'crt_path=%s/fullchain.pem\nkey_path=%s/privkey.pem' "$CADDY_TEST_NODE_CONTAINER" "$CADDY_TEST_NODE_CONTAINER")"
+CADDY_TEST_NODE_RW=false
+caddy_adapter_check_node_cert_mount "$CADDY_TEST_NODE_SOURCE" test-core || fail 'owned Node certificate mount was rejected'
+CADDY_TEST_NODE_ENVS='crt_path=/wrong/fullchain.pem'
+expect_fail caddy_adapter_check_node_cert_mount "$CADDY_TEST_NODE_SOURCE" test-core
+CADDY_TEST_NODE_ENVS="$(printf 'crt_path=%s/fullchain.pem\nkey_path=%s/privkey.pem' "$CADDY_TEST_NODE_CONTAINER" "$CADDY_TEST_NODE_CONTAINER")"
+CADDY_TEST_NODE_SOURCE="$tmp/foreign-consumer"
+expect_fail caddy_adapter_check_node_cert_mount "$(jq -r '.roles.node.certificate_consumer' "$tmp/spec")" test-core
+CADDY_TEST_NODE_SOURCE="$(jq -r '.roles.node.certificate_consumer' "$tmp/spec")"
+CADDY_TEST_NODE_RW=true
+expect_fail caddy_adapter_check_node_cert_mount "$CADDY_TEST_NODE_SOURCE" test-core
+export CADDY_ADAPTER_FAKE=1
+unset CADDY_ADAPTER_DOCKER CADDY_ADAPTER_WEB_ROOT CADDY_ADAPTER_IMAGE CADDY_TEST_CONFIG_SOURCE CADDY_TEST_CONFIG_RW
+unset CADDY_TEST_NODE_SOURCE CADDY_TEST_NODE_CONTAINER CADDY_TEST_NODE_ENVS CADDY_TEST_NODE_RW
+
 export CADDY_ADAPTER_PORT_CHECK_CMD='false'
 unchanged="$(entry_v2_reconcile "$tmp/spec" "$ENTRY_STATE_ROOT")"
 [[ "$(jq -r '.result' <<<"$unchanged")" == unchanged ]] || fail 'same target was not idempotent'
