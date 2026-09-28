@@ -2,6 +2,8 @@
 
 [简体中文](README.md) | English
 
+For the unified `hosts`/`nodes[]` CLI in future releases, follow the [local initialization guide](client/README_EN.md): pin one Release archive and SHA256, verify it, then run its bundled `client/tpnext.sh`. The `v0.1.0-rc.3` manual Web/Node acceptance instructions below predate that CLI.
+
 The installer deploys TrojanPanel Next directly on a supported Linux host without an external VPS management system, control panel, or orchestration backend. Deployment uses one versioned Release, one YAML file, and one explicit deployment mode.
 
 ## Purpose modes
@@ -401,7 +403,7 @@ Passwords are never printed. Treat populated configuration files as secrets and 
 ## Release asset contents and trust boundary
 
 The release workflow uses `release/generate-assets.sh` to produce matching versions of
-`bootstrap.sh`, `install.sh`, `node-bundle`, the `secure-file` helper for descriptor-safe reads and atomic sensitive writes, the `web|node|combined` configuration templates,
+`bootstrap.sh`, `install.sh`, `node-bundle`, the `secure-file` helper for descriptor-safe reads and atomic sensitive writes, the `web|node|combined` configuration templates, the unified client CLI, its topology parser and `hosts`/`nodes[]` templates,
 `release-manifest.json`, and `SHA256SUMS`. Product and runtime images are pinned as
 `name@sha256:<digest>`. Before invoking the installer, `bootstrap.sh` runs the bundled
 `verify-assets.sh` to verify versions, asset digests, image references, and configuration. The
@@ -410,7 +412,7 @@ mutation boundary. The verifier only depends on Bash, awk, grep, and coreutils; 
 a preinstalled `jq`. It checks `SHA256SUMS` against its fixed asset
 set, rejects symlink components in bundle paths, and accepts only the generator's printable ASCII +
 LF manifest bytes before sourcing or executing any other bundled program. Both entrypoints verify all
-15 assets, including `secure-file` and `node-bundle`, before a helper can first execute, then verify the configuration
+22 assets, including `secure-file`, `node-bundle`, and the client CLI, before a helper can first execute, then verify the configuration
 contract again from the descriptor-safe snapshot before crossing the host mutation boundary.
 
 The publishing workflow retains an SBOM and maximum provenance for every product image, and creates

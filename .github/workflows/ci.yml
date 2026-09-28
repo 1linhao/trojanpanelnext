@@ -155,6 +155,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        if: matrix.os == 'ubuntu-latest'
+        with:
+          go-version: 1.23.x
+          cache: false
       - name: Install pinned mikefarah yq v4
         shell: bash
         run: |
@@ -182,6 +187,10 @@ jobs:
       - name: Test local init and topology behavior
         shell: bash
         run: bash deploy/installer/tests/local_init_test.sh
+      - name: Test packaged Release CLI and topology contract
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: bash deploy/installer/tests/local_release_bundle_test.sh
 
   docs:
     name: documentation site
