@@ -405,6 +405,78 @@ test "$(stat -c '%a' "${data}/trojan-panel/config/node-identities/combined-node.
 grep -q '^docker exec trojan-panel /tpdata/trojan-panel/trojan-panel node-identity verify --id ' "${trace}" || fail 'combined install did not verify Web-to-Node mTLS/gRPC'
 
 # Same-version replay converges without a second Entry or identity.
+state="${data}/trojanpanelnext-installer/combined.state"
+grep -Fxq 'node_name=combined-node' "${state}" || fail 'committed state omitted the Node name'
+grep -Fxq 'node_public_ip=203.0.113.10' "${state}" || fail 'committed state omitted the Node public IP'
+snapshot_host() {
+  {
+    find "${data}" "${containers}" -printf '%y %m %p %l\n' | LC_ALL=C sort
+    find "${data}" "${containers}" -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum
+  } | sha256sum | cut -d ' ' -f 1
+}
+assert_rejected_without_host_change() {
+  local case_name="$1" diagnostic="$2" before after trace_before
+  before="$(snapshot_host)"
+  trace_before="$(sha256sum "${trace}" "${work}/identity.trace" 2>/dev/null || true)"
+  if run_installer install --mode combined >"${work}/${case_name}.out" 2>&1; then
+    fail "combined replay accepted ${case_name}"
+  fi
+  grep -Fq "${diagnostic}" "${work}/${case_name}.out" || fail "${case_name} omitted its diagnostic"
+  after="$(snapshot_host)"
+  [[ "${before}" == "${after}" ]] || fail "${case_name} changed managed files or containers"
+  [[ "${trace_before}" == "$(sha256sum "${trace}" "${work}/identity.trace" 2>/dev/null || true)" ]] ||
+    fail "${case_name} called Docker or changed the Node identity"
+}
+cp "${config}" "${work}/committed-combined.yaml"
+for drift in name ip mixed; do
+  cp "${work}/committed-combined.yaml" "${config}"
+  if [[ "${drift}" == name || "${drift}" == mixed ]]; then
+    sed -i 's/node_name: combined-node/node_name: changed-node/' "${config}"
+  fi
+  if [[ "${drift}" == ip || "${drift}" == mixed ]]; then
+    sed -i 's/node_public_ip: 203.0.113.10/node_public_ip: 198.51.100.20/' "${config}"
+  fi
+  assert_rejected_without_host_change "${drift}-drift" 'credential identity metadata differs from the requested deployment'
+done
+cp "${work}/committed-combined.yaml" "${config}"
+cp "${state}" "${work}/committed-combined.state"
+sed -i '/^node_name=/d' "${state}"
+assert_rejected_without_host_change old-state-missing-name 'Installer state lacks committed combined Node identity metadata'
+cp "${work}/committed-combined.state" "${state}"
+sed -i '/^node_public_ip=/d' "${state}"
+assert_rejected_without_host_change old-state-missing-ip 'Installer state lacks committed combined Node identity metadata'
+cp "${work}/committed-combined.state" "${state}"
+
+credential="${data}/trojan-panel/config/node-identities/combined-node.json"
+cp "${credential}" "${work}/committed-combined-credential.json"
+for drift in name ip domain identity server; do
+  case "${drift}" in
+  name) change='.node_name = "changed-node"' ;;
+  ip) change='.public_ip = "198.51.100.20"' ;;
+  domain) change='.node_domain = "changed.example.com"' ;;
+  identity) change='.node_identity_id = "22222222-2222-4333-8444-555555555555"' ;;
+  server) change='.node_server_id = 43' ;;
+  esac
+  jq "${change}" "${work}/committed-combined-credential.json" >"${credential}"
+  chmod 0600 "${credential}"
+  assert_rejected_without_host_change "credential-${drift}-drift" 'explicit revoke and registration'
+done
+cp "${work}/committed-combined-credential.json" "${credential}"
+
+# A crash after registering the Node identity but before committing installer
+# state can be retried with the same identity. A changed request cannot adopt
+# that credential during recovery.
+mv "${state}" "${work}/interrupted-combined.state"
+sed -i 's/node_name: combined-node/node_name: changed-node/' "${config}"
+assert_rejected_without_host_change interrupted-name-drift 'credential identity metadata differs from the requested deployment'
+cp "${work}/committed-combined.yaml" "${config}"
+run_installer install --mode combined >"${work}/interrupted-replay.out" 2>&1 || {
+  sed -n '1,120p' "${work}/interrupted-replay.out" >&2
+  fail 'interrupted combined replay did not recover'
+}
+test -s "${state}" || fail 'interrupted combined replay did not commit installer state'
+cmp -s "${state}" "${work}/committed-combined.state" || fail 'interrupted replay changed committed identity metadata'
+
 sed -i 's/web_hostname: panel.example.com/web_hostname: changed.example.com/' "${config}"
 if run_installer install --mode combined >"${work}/domain-drift.out" 2>&1; then
   fail 'combined replay accepted a domain change'

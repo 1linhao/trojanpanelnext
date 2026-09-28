@@ -2122,9 +2122,36 @@ installer_state_value() {
 }
 
 check_same_version_replay_preconditions() {
-  local mode="$1" state expected actual key
+  local mode="$1" state expected actual key credential_file
   state="$(installer_state_path_for "${mode}")"
   INSTALLER_STATE_FILE="${state}"
+  if [[ "${mode}" == combined ]]; then
+    credential_file="${NODE_IDENTITY_CREDENTIAL_FILE}"
+    if [[ -e "${credential_file}" || -L "${credential_file}" ]]; then
+      [[ "${NODE_IDENTITY_GENERATION}" =~ ^[1-9][0-9]*$ ]] || {
+        echo_content red "Combined Node credential identity generation is invalid; manual recovery is required"
+        return 1
+      }
+      [[ -f "${credential_file}" && ! -L "${credential_file}" &&
+        "${NODE_IDENTITY_ID}" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ &&
+        "${NODE_SERVER_ID}" =~ ^[1-9][0-9]*$ ]] || {
+        echo_content red "Combined Node credential metadata is incomplete or unsafe; manual recovery is required"
+        return 1
+      }
+      jq -e --arg name "${TP_NODE_NAME}" --arg ip "${TP_NODE_PUBLIC_IP}" \
+        --arg domain "${TP_NODE_DOMAIN}" --arg id "${NODE_IDENTITY_ID}" \
+        --arg server "${NODE_SERVER_ID}" --arg generation "${NODE_IDENTITY_GENERATION}" \
+        '.node_name == $name and .public_ip == $ip and .node_domain == $domain and
+         .node_identity_id == $id and (.node_server_id | tostring) == $server and
+         (.generation | tostring) == $generation' "${credential_file}" >/dev/null 2>&1 || {
+        echo_content red "Combined Node credential identity metadata differs from the requested deployment; explicit revoke and registration is required"
+        return 1
+      }
+    elif [[ -e "${state}" || -L "${state}" ]]; then
+      echo_content red "Committed combined Node credential is missing; manual recovery is required"
+      return 1
+    fi
+  fi
   [[ ! -e "${state}" && ! -L "${state}" ]] && return 0
   [[ -f "${state}" && ! -L "${state}" ]] || {
     echo_content red "Installer state is not a safe regular file: ${state}"
@@ -2181,6 +2208,21 @@ check_same_version_replay_preconditions() {
     }
   fi
   if [[ "${mode}" == combined ]]; then
+    for key in node_name node_public_ip; do
+      case "$key" in
+      node_name) expected="$TP_NODE_NAME" ;;
+      node_public_ip) expected="$TP_NODE_PUBLIC_IP" ;;
+      esac
+      actual="$(installer_state_value "${key}" "${state}")"
+      [[ -n "${actual}" ]] || {
+        echo_content red "Installer state lacks committed combined Node identity metadata; manual recovery is required"
+        return 1
+      }
+      [[ "${actual}" == "${expected}" ]] || {
+        echo_content red "Same-version combined Node identity metadata changes require explicit revoke and registration"
+        return 1
+      }
+    done
     for key in node_identity_id node_server_id; do
       case "$key" in
       node_identity_id) expected="$NODE_IDENTITY_ID" ;;
@@ -2266,7 +2308,7 @@ write_installer_state() {
     case "${mode}" in
     web) printf 'domain=%s\n' "${TP_WEB_DOMAIN}" ;;
     node) printf 'domain=%s\nnode_identity_id=%s\nnode_server_id=%s\nnode_identity_generation=%s\n' "${TP_NODE_DOMAIN}" "${NODE_IDENTITY_ID}" "${NODE_SERVER_ID}" "${NODE_IDENTITY_GENERATION}" ;;
-    combined) printf 'web_domain=%s\nnode_domain=%s\nnode_identity_id=%s\nnode_server_id=%s\nnode_identity_generation=%s\n' "${TP_WEB_DOMAIN}" "${TP_NODE_DOMAIN}" "${NODE_IDENTITY_ID}" "${NODE_SERVER_ID}" "${NODE_IDENTITY_GENERATION}" ;;
+    combined) printf 'web_domain=%s\nnode_domain=%s\nnode_name=%s\nnode_public_ip=%s\nnode_identity_id=%s\nnode_server_id=%s\nnode_identity_generation=%s\n' "${TP_WEB_DOMAIN}" "${TP_NODE_DOMAIN}" "${TP_NODE_NAME}" "${TP_NODE_PUBLIC_IP}" "${NODE_IDENTITY_ID}" "${NODE_SERVER_ID}" "${NODE_IDENTITY_GENERATION}" ;;
     esac
   } >"${temporary}"
   mv -f -- "${temporary}" "${state}"
@@ -3688,17 +3730,6 @@ main() {
   if [[ "${command}" == validate ]]; then
     load_config "${mode}" "${TP_CONFIG_READ_FILE}"
   else
-    if [[ "${command}" == install ]]; then
-      if [[ -n "${ENTRY_SPEC_FILE}" && "${INSTALLER_ASSET_VERSION}" != development ]]; then
-        install_entry_runtime_assets || {
-          echo_content red "Could not persist verified EntryController runtime assets"
-          exit 1
-        }
-      fi
-    fi
-    if [[ "${command}" != validate && -x "${ENTRY_RUNTIME_DIR}/entryctl.sh" && ! -L "${ENTRY_RUNTIME_DIR}/entryctl.sh" ]]; then
-      ENTRYCTL_PATH="${ENTRY_RUNTIME_DIR}/entryctl.sh"
-    fi
     load_config "${mode}" "${TP_CONFIG_READ_FILE}"
   fi
   if [[ "${TP_NODE_BUNDLE_ACTIVE}" == 1 ]]; then
@@ -3719,6 +3750,16 @@ main() {
       load_combined_identity_metadata
     fi
     check_same_version_replay_preconditions "${mode}"
+  fi
+
+  if [[ "${command}" == install && -n "${ENTRY_SPEC_FILE}" && "${INSTALLER_ASSET_VERSION}" != development ]]; then
+    install_entry_runtime_assets || {
+      echo_content red "Could not persist verified EntryController runtime assets"
+      exit 1
+    }
+  fi
+  if [[ "${command}" != validate && -x "${ENTRY_RUNTIME_DIR}/entryctl.sh" && ! -L "${ENTRY_RUNTIME_DIR}/entryctl.sh" ]]; then
+    ENTRYCTL_PATH="${ENTRY_RUNTIME_DIR}/entryctl.sh"
   fi
 
   if [[ "${command}:${mode}" == install:combined ]]; then
