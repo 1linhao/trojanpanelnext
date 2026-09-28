@@ -26,7 +26,7 @@ cleanup_test() {
   if [[ -n "${TP_SECURE_CONFIG_DIR:-}" && -d "${TP_SECURE_CONFIG_DIR}" ]]; then
     rm -rf -- "${TP_SECURE_CONFIG_DIR}"
   fi
-  rm -rf -- "${work}"
+  rm -rf -- "${work}" 2>/dev/null || sudo -n rm -rf -- "${work}"
 }
 trap cleanup_test EXIT
 
@@ -85,6 +85,7 @@ printf 'test-ca\n' >"${GRPC_CLIENT_CA_PATH}"
 deploy_core "${TP_NODE_DOMAIN}" >/dev/null
 first_id="$(docker inspect --format '{{.Id}}' "${container}")"
 runtime_config="${TP_DATA}/trojan-panel-core/config/config.ini"
+container_runtime_config="$(container_data_path "${runtime_config}")"
 first_digest="$(sha256sum "${runtime_config}" | awk '{print $1}')"
 for _ in $(seq 1 30); do
   observed_digest="$(docker exec "${container}" cat /tmp/observed-node-config-sha256 2>/dev/null || true)"
@@ -100,9 +101,9 @@ for secret in "${MARIADB_PASSWORD}" "${REDIS_PASSWORD}" "${REDIS_AUTH_PASSWORD}"
   ! grep -Fq -- "${secret}" "${work}/env-one" "${work}/argv-one" "${work}/logs-one" ||
     fail 'generation-one Node data credential leaked through container metadata or logs'
 done
-docker inspect "${container}" --format '{{range .Mounts}}{{if eq .Destination "'"${runtime_config}"'"}}{{.RW}}{{end}}{{end}}' |
+docker inspect "${container}" --format '{{range .Mounts}}{{if eq .Destination "'"${container_runtime_config}"'"}}{{.RW}}{{end}}{{end}}' |
   grep -Fxq false || fail 'Node Agent credential file mount is not read-only'
-if docker exec "${container}" sh -c "printf tampered >>'${runtime_config}'" >/dev/null 2>&1; then
+if docker exec "${container}" sh -c "printf tampered >>'${container_runtime_config}'" >/dev/null 2>&1; then
   fail 'running Node Agent could write its credential file mount'
 fi
 

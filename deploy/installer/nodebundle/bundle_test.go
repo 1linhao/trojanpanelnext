@@ -144,7 +144,7 @@ func TestDecryptRevalidatesCompleteNodeConfigurationSchema(t *testing.T) {
 			return bytes.ReplaceAll(config, []byte(nodeClientCAPath), []byte("/tmp/attacker/client-ca.crt"))
 		},
 		"absolute kernel runtime path": func(config []byte) []byte {
-			return bytes.ReplaceAll(config, []byte("/tpdata/trojan-panel-core/runtime"), []byte("/root/attacker-runtime"))
+			return bytes.ReplaceAll(config, []byte("/tpdata/trojanpanelnext/trojan-panel-core/runtime"), []byte("/root/attacker-runtime"))
 		},
 		"unknown key": func(config []byte) []byte {
 			return append(config, []byte("  attacker_output_path: /root/owned\n")...)
@@ -510,7 +510,7 @@ func TestCreatePinsNodePKIPaths(t *testing.T) {
 		t.Fatal(err)
 	}
 	contents = bytes.ReplaceAll(contents,
-		[]byte("grpc_client_ca_path: /tpdata/trojan-panel-core/pki/client-ca.crt"),
+		[]byte("grpc_client_ca_path: /tpdata/trojanpanelnext/trojan-panel-core/pki/client-ca.crt"),
 		[]byte("grpc_client_ca_path: /tmp/attacker-controlled.crt"))
 	if err = os.WriteFile(configPath, contents, 0600); err != nil {
 		t.Fatal(err)
@@ -606,9 +606,9 @@ func writeTestConfig(t *testing.T, root string) string {
   node_identity_generation: 1
   grpc_tls_mode: mtls
   grpc_tls_server_name: node.example.com
-  grpc_client_ca_path: /tpdata/trojan-panel-core/pki/client-ca.crt
-  pki_bundle_dir: /tpdata/trojanpanelnext-pki
-  kernel_runtime_path: /tpdata/trojan-panel-core/runtime
+  grpc_client_ca_path: /tpdata/trojanpanelnext/trojan-panel-core/pki/client-ca.crt
+  pki_bundle_dir: /tpdata/trojanpanelnext/trojanpanelnext-pki
+  kernel_runtime_path: /tpdata/trojanpanelnext/trojan-panel-core/runtime
   force: 0
   purge_data: 0
 `

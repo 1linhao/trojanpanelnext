@@ -46,7 +46,7 @@ for name in "${registry}" "${entry}" "${api_container}" "${ui_container}" "${mar
     fail "smoke container name is unexpectedly occupied: ${name}"
   fi
 done
-mkdir -m 0755 "${SMOKE_DATA_DIR}"
+sudo -n install -d -m 0755 "${SMOKE_DATA_DIR}"
 data_created=1
 
 cleanup() {
@@ -79,14 +79,6 @@ push_image() {
 
 (cd "${API_DIR}" && mkdir -p build && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o build/trojan-panel-linux-amd64 .)
 docker build -q --build-arg TARGETOS=linux --build-arg TARGETARCH=amd64 -t "tp-web-api-${suffix}" "${API_DIR}" >/dev/null
-cat >"${work}/api-runtime.Dockerfile" <<EOF
-FROM tp-web-api-${suffix}
-ARG TP_DATA
-RUN mkdir -p "\${TP_DATA}/trojan-panel" && cp /tpdata/trojan-panel/trojan-panel "\${TP_DATA}/trojan-panel/trojan-panel"
-WORKDIR \${TP_DATA}/trojan-panel/
-EOF
-docker build -q --build-arg TP_DATA="${SMOKE_DATA_DIR}" -f "${work}/api-runtime.Dockerfile" \
-  -t "tp-web-api-runtime-${suffix}" "${API_DIR}" >/dev/null
 (cd "${WEB_DIR}" && npx --yes yarn@1.22.22 install --frozen-lockfile && npx --yes yarn@1.22.22 build) >/dev/null
 docker build -q -t "tp-web-ui-${suffix}" "${WEB_DIR}" >/dev/null
 
@@ -98,7 +90,7 @@ FROM mariadb@sha256:07e06f2e7ae9dfc63707a83130a62e00167c827f08fcac7a9aa33f4b6dc3
 COPY schema.sql /docker-entrypoint-initdb.d/00-schema.sql
 EOF
 docker build -q -t "tp-web-mariadb-${suffix}" "${work}/mariadb" >/dev/null
-api_image="$(push_image "tp-web-api-runtime-${suffix}" tpn-api)"
+api_image="$(push_image "tp-web-api-${suffix}" tpn-api)"
 web_image="$(push_image "tp-web-ui-${suffix}" tpn-web)"
 mariadb_image="$(push_image "tp-web-mariadb-${suffix}" tpn-mariadb)"
 docker pull redis@sha256:a93c14584715ec5bd9d2648d58c3b27f89416242bee0bc9e5fb2edc1a4cbec1d >/dev/null
@@ -130,6 +122,7 @@ sed -i \
   "${config}"
 printf '  tls_mode: external\n' >>"${config}"
 chmod 0600 "${config}"
+input_sha256="$(sha256sum "${config}" | awk '{print $1}')"
 
 mkdir -p "${work}/tools"
 curl -fsSL https://github.com/mikefarah/yq/releases/download/v4.53.6/yq_linux_amd64 -o "${work}/tools/yq"
@@ -156,6 +149,7 @@ run_installer() {
     PATH="${work}/tools:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
     CURL_CA_BUNDLE="${work}/entry/cert" \
     TP_DATA="${SMOKE_DATA_DIR}" \
+    TP_TEST_DATA_ROOT=1 \
     TP_RELEASE_WEB_SMOKE_INJECT_ADMIN_FAILURE="${inject_admin_failure}" \
     TP_INSTALL_DEPS=0 TP_OS_RELEASE_FILE="${work}/debian-12" \
     TP_HEALTH_ATTEMPTS=30 TP_HEALTH_DELAY_SECONDS=1 \
@@ -174,30 +168,36 @@ redis_created=1
 if run_installer 1 "${work}/injected-failure.out" "${work}/injected-failure.err"; then
   fail 'injected unhealthy administrator credential unexpectedly passed'
 fi
+effective_config="${SMOKE_DATA_DIR}/effective-web.yaml"
+sudo -n test -s "${effective_config}" || fail 'managed effective Web configuration was not retained'
+[[ "$(sha256sum "${config}" | awk '{print $1}')" == "${input_sha256}" ]] ||
+  fail 'installer changed caller-owned Web configuration'
 docker logs "${api_container}" >"${work}/api.log" 2>&1 || true
 sudo -n bash -c \
   'source "$1"; smoke_print_install_failure_diagnostics "$2" "$3" "$4" "$5"' \
-  _ "${SMOKE_HELPERS}" "${config}" "${work}/injected-failure.out" \
+  _ "${SMOKE_HELPERS}" "${effective_config}" "${work}/injected-failure.out" \
   "${work}/injected-failure.err" "${work}/api.log" \
   >"${work}/failure-diagnostics" 2>&1
-grep -Fq 'Health check failed: sysadmin container credential' "${work}/failure-diagnostics" ||
+grep -Fq 'Health check failed: sysadmin container credential' "${work}/failure-diagnostics" || {
+  sed -n '1,100p' "${work}/failure-diagnostics" >&2
   fail 'injected unhealthy credential lacked a useful health diagnostic'
+}
 grep -Fq "Check container ${api_container}" "${work}/failure-diagnostics" ||
   fail 'injected unhealthy credential lacked an API container locator'
 sudo -n bash -c \
   'source "$1"; smoke_assert_diagnostics_sanitized "$2" "$3"' \
-  _ "${SMOKE_HELPERS}" "${config}" "${work}/failure-diagnostics" ||
+  _ "${SMOKE_HELPERS}" "${effective_config}" "${work}/failure-diagnostics" ||
   fail 'injected failure diagnostics leaked a configured credential'
 
 initial_admin_password_file="${SMOKE_DATA_DIR}/trojan-panel/config/initial-admin-password"
 admin_credential_state() {
   sudo -n bash -c \
     'source "$1"; smoke_report_admin_credential_state "$2" "$3" "$4"' \
-    _ "${SMOKE_HELPERS}" "${config}" "${initial_admin_password_file}" "${api_container}"
+    _ "${SMOKE_HELPERS}" "${effective_config}" "${initial_admin_password_file}" "${api_container}"
 }
 sudo -n bash -c \
   'source "$1"; expected="$(smoke_config_secret "$2" sysadmin_password)"; actual="$(<"$3")"; [[ -n "${expected}" && "${actual}" != "${expected}" ]]' \
-  _ "${SMOKE_HELPERS}" "${config}" "${initial_admin_password_file}" ||
+  _ "${SMOKE_HELPERS}" "${effective_config}" "${initial_admin_password_file}" ||
   fail 'Docker failure injection did not change the initial administrator credential'
 injected_state=""
 for _ in $(seq 1 10); do
@@ -211,10 +211,10 @@ done
 # installer pass then verifies recovery from the real health failure.
 sudo -n bash -c \
   'source "$1"; expected="$(smoke_config_secret "$2" sysadmin_password)"; [[ -n "${expected}" ]]; printf "%s\\n" "${expected}" >"$3"; chmod 0600 "$3"' \
-  _ "${SMOKE_HELPERS}" "${config}" "${initial_admin_password_file}"
+  _ "${SMOKE_HELPERS}" "${effective_config}" "${initial_admin_password_file}"
 sudo -n bash -c \
   'source "$1"; expected="$(smoke_config_secret "$2" sysadmin_password)"; actual="$(<"$3")"; byte_count="$(wc -c <"$3")"; expected_bytes=$((${#expected} + 1)); [[ -n "${expected}" && "${actual}" == "${expected}" && "${byte_count}" -eq "${expected_bytes}" ]]' \
-  _ "${SMOKE_HELPERS}" "${config}" "${initial_admin_password_file}" ||
+  _ "${SMOKE_HELPERS}" "${effective_config}" "${initial_admin_password_file}" ||
   fail 'failed to restore the isolated administrator credential after injection'
 restored_state=""
 for _ in $(seq 1 10); do
@@ -228,14 +228,25 @@ done
 if ! run_installer 0 "${work}/install.out" "${work}/install.err"; then
   sudo -n bash -c \
     'source "$1"; smoke_report_admin_credential_state "$2" "$3" "$4"' \
-    _ "${SMOKE_HELPERS}" "${config}" "${initial_admin_password_file}" "${api_container}" >&2
+    _ "${SMOKE_HELPERS}" "${effective_config}" "${initial_admin_password_file}" "${api_container}" >&2
   docker logs "${api_container}" >"${work}/api.log" 2>&1 || true
   sudo -n bash -c \
     'source "$1"; smoke_print_install_failure_diagnostics "$2" "$3" "$4" "$5"' \
-    _ "${SMOKE_HELPERS}" "${config}" "${work}/install.out" "${work}/install.err" "${work}/api.log"
+    _ "${SMOKE_HELPERS}" "${effective_config}" "${work}/install.out" "${work}/install.err" "${work}/api.log"
   fail 'formal release installer failed after health failure injection'
 fi
 grep -Fq 'Web control plane is healthy' "${work}/install.out" || fail 'health success marker missing'
+for container in "${api_container}" "${ui_container}" "${mariadb_container}" "${redis_container}"; do
+  mounts="$(docker inspect --format '{{json .Mounts}}' "${container}")"
+  jq -e --arg root "${SMOKE_DATA_DIR}" '
+    all(.[]; ((.Source | startswith($root + "/")) or .Source == "/etc/localtime") and
+      .Source != $root and .Destination != "/tpdata")
+  ' <<<"${mounts}" >/dev/null || fail "${container} mounted outside the fixed test root or exposed the full root"
+done
+docker inspect --format '{{json .Mounts}}' "${api_container}" | jq -e --arg root "${SMOKE_DATA_DIR}" '
+  any(.[]; .Source == ($root + "/trojan-panel/pki") and
+    .Destination == "/tpdata/trojan-panel/pki" and .RW == false)
+' >/dev/null || fail 'API private-key mount is not the minimum read-only directory'
 for probe in MariaDB Redis 'Web HTTPS' 'sysadmin container credential'; do grep -Fq "Health check passed: ${probe}" "${work}/install.out" || fail "health evidence missing: ${probe}"; done
 login=""
 for _ in $(seq 1 20); do
@@ -245,10 +256,10 @@ done
 grep -Fq '"token"' <<<"${login}" || fail 'administrator login through TLS entry did not return a token'
 sudo -n bash -c \
   'source "$1"; smoke_assert_diagnostics_sanitized "$2" "$3"' \
-  _ "${SMOKE_HELPERS}" "${config}" "${work}/install.out" ||
+  _ "${SMOKE_HELPERS}" "${effective_config}" "${work}/install.out" ||
   fail 'successful installer output leaked a configured credential'
 sudo -n bash -c \
   'source "$1"; smoke_assert_diagnostics_sanitized "$2" "$3"' \
-  _ "${SMOKE_HELPERS}" "${config}" "${work}/install.err" ||
+  _ "${SMOKE_HELPERS}" "${effective_config}" "${work}/install.err" ||
   fail 'successful installer error output leaked a configured credential'
 printf '%s\n' 'PASS released Web Docker smoke (formal installer, real TLS, MariaDB, Redis, and administrator API)'

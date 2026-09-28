@@ -11,14 +11,14 @@ trojanpanelnext:
   tls_mode: external
   # Certificate directory produced by your own ACME tooling. The installer looks
   # for fullchain.pem/privkey.pem (certd layout) or a same-stem .crt/.key pair.
-  # The pair is copied to /tpdata/trojan-panel-core/cert and mounted read-only
+  # The pair is copied to /tpdata/trojanpanelnext/trojan-panel-core/cert and mounted read-only
   # into the core container, which never reads your original directory.
   tls_cert_dir: /etc/vps-factory/certs/node.example.com
   # Optional explicit names when the directory holds several pairs.
   # tls_cert_file: fullchain.pem
   # tls_key_file: privkey.pem
   # Optional override of the managed copy the kernels read.
-  # managed_cert_dir: /tpdata/trojan-panel-core/cert
+  # managed_cert_dir: /tpdata/trojanpanelnext/trojan-panel-core/cert
 
   # This key currently affects only the Web UI and is retained for schema
   # compatibility on Node. It does not bind Core, gRPC, or kernel listeners.
@@ -54,9 +54,9 @@ trojanpanelnext:
   node_identity_generation: 1
   grpc_tls_mode: mtls
   grpc_tls_server_name: node.example.com
-  grpc_client_ca_path: /tpdata/trojan-panel-core/pki/client-ca.crt
-  pki_bundle_dir: /tpdata/trojanpanelnext-pki
-  kernel_runtime_path: /tpdata/trojan-panel-core/runtime
+  grpc_client_ca_path: /tpdata/trojanpanelnext/trojan-panel-core/pki/client-ca.crt
+  pki_bundle_dir: /tpdata/trojanpanelnext/trojanpanelnext-pki
+  kernel_runtime_path: /tpdata/trojanpanelnext/trojan-panel-core/runtime
 
   force: 0
   purge_data: 0

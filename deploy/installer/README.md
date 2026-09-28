@@ -42,10 +42,10 @@ chmod 600 web.yaml
 ./assets/bootstrap.sh install --mode web --config "$PWD/web.yaml"
 ~~~
 
-若提示缺失软件，使用当前系统的包管理器安装后重新执行 validate/install。生成的密码会写回 Web VPS 的 web.yaml，不要再用本地空密码配置覆盖。确认面板 HTTPS 可访问后，修改下面的 Node 域名和公网 IP，登记身份并记下输出的身份 ID：
+若提示缺失软件，使用当前系统的包管理器安装后重新执行 validate/install。安装器不会改动上传的 web.yaml；空密码首次生成后保存在 Web VPS 的 `/tpdata/trojanpanelnext/effective-web.yaml`（0600），相同空密码输入重跑会复用。不要把这个有效配置提交到 Git。确认面板 HTTPS 可访问后，修改下面的 Node 域名和公网 IP，登记身份并记下输出的身份 ID：
 
 ~~~bash
-install -d -m 700 /tpdata/trojan-panel/config/node-identities
+install -d -m 700 /tpdata/trojanpanelnext/trojan-panel/config/node-identities
 docker exec trojan-panel /tpdata/trojan-panel/trojan-panel node-identity register --name node-1 --domain node.example.com --public-ip NODE_IP --credential-file /tpdata/trojan-panel/config/node-identities/node-1.g1.json
 ~~~
 
@@ -71,7 +71,8 @@ bash upload-assets.sh --mode node-config --host root@WEB_IP --work-dir "$WORK"
 ~~~bash
 cd ~/tpnext-upload
 chmod 600 node.yaml
-./assets/node-bundle create --credential-file /tpdata/trojan-panel/config/node-identities/node-1.g1.json --node-config "$PWD/node.yaml" --client-ca /tpdata/trojanpanelnext-pki/client-ca.crt --output "$PWD/node-1.g1.age"
+install -d -m 700 /tpdata/trojanpanelnext/node-bundles
+./assets/node-bundle create --credential-file /tpdata/trojanpanelnext/trojan-panel/config/node-identities/node-1.g1.json --node-config "$PWD/node.yaml" --client-ca /tpdata/trojanpanelnext/trojanpanelnext-pki/client-ca.crt --output /tpdata/trojanpanelnext/node-bundles/node-1.g1.age
 ~~~
 
 只传输加密后的 node-1.g1.age；Web 上的明文身份文件和 CA 私钥不离开 Web VPS。
@@ -79,7 +80,7 @@ chmod 600 node.yaml
 ### 本地电脑：发送安装包和加密包到 Node
 
 ~~~bash
-scp root@WEB_IP:tpnext-upload/node-1.g1.age "$WORK/node-1.g1.age"
+scp root@WEB_IP:/tpdata/trojanpanelnext/node-bundles/node-1.g1.age "$WORK/node-1.g1.age"
 chmod 600 "$WORK/node-1.g1.age"
 bash upload-assets.sh --mode node --host root@NODE_IP --work-dir "$WORK" --bundle "$WORK/node-1.g1.age"
 ~~~
@@ -107,7 +108,7 @@ chmod 600 node-1.g1.age
 docker exec trojan-panel /tpdata/trojan-panel/trojan-panel node-identity verify --id '填入登记输出的身份 ID' --challenge '填入 Node 安装输出的 challenge'
 ~~~
 
-验证成功后 Node 安装完成。按 /tpdata/trojanpanelnext-network/allowlist.md 配置防火墙和云安全组；Web 公网入口通常为 80/443，Node 默认为 80/8863，Node gRPC 8100 只允许 Web 访问。
+验证成功后 Node 安装完成。按 /tpdata/trojanpanelnext/trojanpanelnext-network/allowlist.md 配置防火墙和云安全组；Web 公网入口通常为 80/443，Node 默认为 80/8863，Node gRPC 8100 只允许 Web 访问。
 
 ### 配置字段：Web / Node
 
@@ -119,7 +120,7 @@ docker exec trojan-panel /tpdata/trojan-panel/trojan-panel node-identity verify 
 | hostname、email | 当前 VPS 的域名和 ACME 联系邮箱；Node 域名须与登记时相同。 |
 | caddy_image、mariadb_image、redis_image、api_image、web_image、node_agent_image | 固定摘要的镜像；不要改为 latest。 |
 | mariadb_port、redis_port | Web 的数据库/Redis 端口；Node 上须与 Web 一致。 |
-| mariadb_password、redis_password、sysadmin_password | Web 首装可留空，生成后写回 Web VPS 配置。 |
+| mariadb_password、redis_password、sysadmin_password | Web 首装可留空；生成值只写入固定宿主根下的 `effective-web.yaml`，相同空值重跑复用；已保存值的显式漂移需要独立迁移/轮换。 |
 | panel_port、ui_port | Web 面板 API/UI 的本机端口，由 Caddy 反代。 |
 | mariadb_host、redis_host | Node 连接 Web 数据服务的地址。 |
 | mariadb_user、mariadb_password、redis_username、redis_password、redis_auth_username、redis_auth_password | Node 凭据由加密包注入，不手填占位值。 |
@@ -172,7 +173,7 @@ chmod 600 combined.yaml
 ./assets/bootstrap.sh install --mode combined --config "$PWD/combined.yaml"
 ~~~
 
-确认面板 HTTPS、Node gRPC/mTLS 健康，并按 /tpdata/trojanpanelnext-network/allowlist.md 配置防火墙和云安全组。combined 的 Caddy 入口占用 80/443；安装器不会自行修改防火墙。
+确认面板 HTTPS、Node gRPC/mTLS 健康，并按 /tpdata/trojanpanelnext/trojanpanelnext-network/allowlist.md 配置防火墙和云安全组。combined 的 Caddy 入口占用 80/443；安装器不会自行修改防火墙。
 
 ### 配置字段：combined
 

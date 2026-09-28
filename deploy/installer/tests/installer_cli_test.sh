@@ -110,6 +110,10 @@ assert_fails env TP_DEPLOYMENT_MODE=web "${INSTALLER}" validate --mode web --con
 cp "$(dirname "${INSTALLER}")/examples/web.yaml" "${canonical_config}"
 "${INSTALLER}" validate --mode web --config "${canonical_config}" |
   grep -q 'valid for web deployment mode'
+cp "${canonical_config}" "${path_contract_dir}/override-root.yaml"
+printf '  data_root: /tmp/foreign-root\n' >>"${path_contract_dir}/override-root.yaml"
+assert_fails "${INSTALLER}" validate --mode web --config "${path_contract_dir}/override-root.yaml"
+assert_fails env TP_DATA="${path_contract_dir}/data" "${INSTALLER}" validate --mode web --config "${canonical_config}"
 sed \
   -e 's/^  deployment_mode:/  purpose:/' \
   -e 's/^  api_image:/  panel_image:/' \
@@ -645,7 +649,7 @@ if sed -n '/^deploy_core()/,/^}/p' "${INSTALLER}" |
   grep -Eq -- '-e "?(mariadb_pas|MARIADB_PASSWORD|redis_pass|REDIS_PASSWORD|REDIS_AUTH_PASSWORD)='; then
   fail 'Node data credentials are still passed through docker environment arguments'
 fi
-grep -Fq '${runtime_config}:${runtime_config}:ro' "${INSTALLER}" ||
+grep -Fq '${runtime_config}:${TP_CONTAINER_DATA}/trojan-panel-core/config/config.ini:ro' "${INSTALLER}" ||
   fail 'Node Agent runtime credential file is not mounted read-only'
 grep -Fq 'TP_NODE_CONFIG_SHA256' "${INSTALLER}" ||
   fail 'Node Agent container reconciliation does not track the runtime credential generation'
@@ -668,7 +672,7 @@ test "$(grep -c 'recreate container' "${external_cases_dir}/node-config-generati
 # The documented manifest path, image default, and installer mount must agree.
 grep -q 'TP_EXTERNAL_DIR=/tpdata/trojan-panel-core/external' \
   "$(dirname "${INSTALLER}")/../../apps/node-agent/Dockerfile"
-grep -q 'EXTERNAL_ROUTES_DIR}:${EXTERNAL_ROUTES_DIR}' "${INSTALLER}"
+grep -Fq 'EXTERNAL_ROUTES_DIR}:${TP_CONTAINER_DATA}/trojan-panel-core/external' "${INSTALLER}"
 
 # The generated on-host contract must exist, name the routes file, and never
 # leak a credential.

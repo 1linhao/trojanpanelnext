@@ -28,12 +28,12 @@ const (
 	manifestPath        = "manifest.json"
 	configPath          = "config-node.yaml"
 	clientCAPath        = "pki/client-ca.crt"
-	nodeClientCAPath    = "/tpdata/trojan-panel-core/pki/client-ca.crt"
-	nodePKIBundleDir    = "/tpdata/trojanpanelnext-pki"
-	nodeKernelRuntime   = "/tpdata/trojan-panel-core/runtime"
-	nodeManagedCertDir  = "/tpdata/trojan-panel-core/cert"
-	nodeExternalDir     = "/tpdata/trojanpanelnext-external"
-	nodeExternalRoutes  = "/tpdata/trojan-panel-core/external"
+	nodeClientCAPath    = "/tpdata/trojanpanelnext/trojan-panel-core/pki/client-ca.crt"
+	nodePKIBundleDir    = "/tpdata/trojanpanelnext/trojanpanelnext-pki"
+	nodeKernelRuntime   = "/tpdata/trojanpanelnext/trojan-panel-core/runtime"
+	nodeManagedCertDir  = "/tpdata/trojanpanelnext/trojan-panel-core/cert"
+	nodeExternalDir     = "/tpdata/trojanpanelnext/trojanpanelnext-external"
+	nodeExternalRoutes  = "/tpdata/trojanpanelnext/trojan-panel-core/external"
 )
 
 var bundleInventory = []string{configPath, manifestPath, clientCAPath}

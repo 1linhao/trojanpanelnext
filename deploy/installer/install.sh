@@ -6,7 +6,8 @@ export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH
 ECHO_TYPE="echo -e"
 YQ_VERSION="v4.53.6"
 
-TP_DATA="${TP_DATA:-/tpdata}"
+TP_DATA="${TP_DATA:-/tpdata/trojanpanelnext}"
+TP_CONTAINER_DATA=/tpdata
 WEB_PATH="${WEB_PATH:-${TP_DATA}/web}"
 INITIAL_SYSADMIN_PASSWORD_FILE="${INITIAL_SYSADMIN_PASSWORD_FILE:-${TP_DATA}/trojan-panel/config/initial-admin-password}"
 TP_PKI_BUNDLE_DIR="${TP_PKI_BUNDLE_DIR:-${TP_DATA}/trojanpanelnext-pki}"
@@ -17,7 +18,6 @@ NODE_BUNDLE_HELPER_OVERRIDE="${NODE_BUNDLE_HELPER:-}"
 NODE_BUNDLE_HELPER="${NODE_BUNDLE_HELPER_OVERRIDE:-${INSTALLER_DIR}/node-bundle}"
 ENTRYCTL_PATH_OVERRIDE="${ENTRYCTL_PATH:-}"
 ENTRYCTL_PATH="${ENTRYCTL_PATH_OVERRIDE:-${INSTALLER_DIR}/entry/entryctl.sh}"
-ENTRY_RUNTIME_DIR="${ENTRY_RUNTIME_DIR:-/usr/local/lib/trojanpanelnext/entry}"
 ENTRY_SPEC_FILE="${ENTRY_SPEC_FILE:-}"
 EXTERNAL_MANAGED_DIR="${EXTERNAL_MANAGED_DIR:-${TP_DATA}/trojanpanelnext-external}"
 EXTERNAL_ROUTES_DIR="${EXTERNAL_ROUTES_DIR:-${TP_DATA}/trojan-panel-core/external}"
@@ -25,6 +25,7 @@ MANAGED_CERT_DIR="${MANAGED_CERT_DIR:-${TP_DATA}/trojan-panel-core/cert}"
 NETWORK_PLAN_DIR="${NETWORK_PLAN_DIR:-${TP_DATA}/trojanpanelnext-network}"
 INSTALLER_STATE_DIR="${INSTALLER_STATE_DIR:-${TP_DATA}/trojanpanelnext-installer}"
 INSTALLER_STATE_FILE=""
+WEB_EFFECTIVE_CONFIG_FILE="${TP_DATA}/effective-web.yaml"
 
 MARIADB_CONTAINER="${MARIADB_CONTAINER:-trojan-panel-mariadb}"
 REDIS_CONTAINER="${REDIS_CONTAINER:-trojan-panel-redis}"
@@ -101,6 +102,12 @@ TP_CONFIG_ROOT="${TP_CONFIG_ROOT:-}"
 TP_CONFIG_FILE=""
 TP_CONFIG_READ_FILE=""
 TP_CONFIG_IDENTITY=""
+WEB_EFFECTIVE_CONFIG_IDENTITY=""
+WEB_EFFECTIVE_CONFIG_READ_FILE=""
+WEB_EFFECTIVE_DOMAIN=""
+WEB_SAVED_MARIADB_PASSWORD=""
+WEB_SAVED_REDIS_PASSWORD=""
+WEB_SAVED_SYSADMIN_PASSWORD=""
 TP_REQUEST_COMMAND=""
 TP_REQUEST_MODE=""
 INSTALLER_ASSET_VERSION="development"
@@ -146,6 +153,155 @@ echo_content() {
   "skyBlue") ${ECHO_TYPE} "\033[36m$2\033[0m" ;;
   *) ${ECHO_TYPE} "$2" ;;
   esac
+}
+
+# Installer paths name host storage; application paths keep the image's /tpdata
+# layout. Only owned paths below the dedicated host root may be translated.
+container_data_path() {
+  local path="$1"
+  case "${path}" in
+  "${TP_DATA}") printf '%s\n' "${TP_CONTAINER_DATA}" ;;
+  "${TP_DATA}/"*) printf '%s%s\n' "${TP_CONTAINER_DATA}" "${path#"${TP_DATA}"}" ;;
+  *) printf '%s\n' "${path}" ;;
+  esac
+}
+
+validate_host_data_root() {
+  local path marker ancestor owner mode
+  [[ "${TP_DATA}" == /tpdata/trojanpanelnext || "${TP_TEST_DATA_ROOT:-0}" == 1 ]] || {
+    echo_content red "Host data root is fixed at /tpdata/trojanpanelnext"
+    return 1
+  }
+  [[ "${TP_DATA}" == /* && "${TP_DATA}" != / && "${TP_DATA}" != *'//'* &&
+    "${TP_DATA}" != */../* && "${TP_DATA}" != */./* &&
+    "$(realpath -m -- "${TP_DATA}")" == "${TP_DATA}" ]] || {
+    echo_content red "Host data root is non-canonical or contains a symbolic link: ${TP_DATA}"
+    return 1
+  }
+  ancestor="$(dirname -- "${TP_DATA}")"
+  while :; do
+    if [[ -e "${ancestor}" || -L "${ancestor}" ]]; then
+      [[ -d "${ancestor}" && ! -L "${ancestor}" ]] || {
+        echo_content red "Host data root parent is not a safe directory: ${ancestor}"
+        return 1
+      }
+      owner="$(stat -c %u -- "${ancestor}")"
+      mode="$(stat -c %a -- "${ancestor}")"
+      if [[ "${TP_TEST_DATA_ROOT:-0}" == 1 && "${ancestor}" == /tmp &&
+        "${owner}" == 0 && "${mode}" == 1777 ]]; then
+        : # Isolated test roots live below a private mktemp directory.
+      elif [[ "${TP_TEST_DATA_ROOT:-0}" == 1 && "${ancestor}" == /tmp/* &&
+        "${mode}" == 700 && "${SUDO_UID:-}" =~ ^[0-9]+$ &&
+        "${owner}" == "${SUDO_UID}" ]]; then
+        : # Docker smoke runs the installer as root below the test user's mktemp.
+      elif [[ "${owner}" != "${EUID}" && "${owner}" != 0 ]] ||
+        (( (8#${mode} & 0022) != 0 )); then
+        echo_content red "Host data root parent has unsafe ownership or permissions: ${ancestor}"
+        return 1
+      fi
+    fi
+    [[ "${ancestor}" != / ]] || break
+    ancestor="$(dirname -- "${ancestor}")"
+  done
+  marker="${TP_DATA}/.trojanpanelnext-data-root"
+  if [[ -e "${TP_DATA}" || -L "${TP_DATA}" ]]; then
+    [[ -d "${TP_DATA}" && ! -L "${TP_DATA}" ]] || {
+      echo_content red "Host data root is not a safe directory: ${TP_DATA}"
+      return 1
+    }
+    owner="$(stat -c %u -- "${TP_DATA}")"
+    mode="$(stat -c %a -- "${TP_DATA}")"
+    if [[ "${owner}" != "${EUID}" ]] || (( (8#${mode} & 0022) != 0 )); then
+      echo_content red "Host data root has unsafe ownership or permissions: ${TP_DATA}"
+      return 1
+    fi
+    if [[ ! -f "${marker}" || -L "${marker}" ]]; then
+      [[ -z "$(find "${TP_DATA}" -mindepth 1 -maxdepth 1 -print -quit)" ]] || {
+        echo_content red "Host data root has unowned contents: ${TP_DATA}"
+        return 1
+      }
+    else
+      [[ "$(stat -c %u "${marker}")" == "${EUID}" &&
+        "$(stat -c %a "${marker}")" == 600 &&
+        "$(cat "${marker}")" == 'trojanpanelnext-data-root-v1' ]] || {
+        echo_content red "Host data root ownership marker is invalid: ${marker}"
+        return 1
+      }
+    fi
+    if [[ -n "$(find "${TP_DATA}" -type l -print -quit)" ]]; then
+      echo_content red "Host data root must not contain symbolic links: ${TP_DATA}"
+      return 1
+    fi
+  fi
+  for path in "${TP_DATA}" "${WEB_PATH}" "${INITIAL_SYSADMIN_PASSWORD_FILE}" \
+    "${TP_PKI_BUNDLE_DIR}" "${EXTERNAL_MANAGED_DIR}" "${EXTERNAL_ROUTES_DIR}" \
+    "${MANAGED_CERT_DIR}" "${NETWORK_PLAN_DIR}" "${INSTALLER_STATE_DIR}" \
+    "${COMBINED_ENTRY_ROOT}" "${COMBINED_ENTRY_STATE_ROOT}" "${COMBINED_ENTRY_SPEC}" \
+    "${GRPC_CLIENT_CA_PATH}" "${GRPC_CLIENT_CERT_PATH}" "${GRPC_CLIENT_KEY_PATH}" \
+    "${KERNEL_RUNTIME_PATH}" "${NODE_IDENTITY_CREDENTIAL_FILE:-${TP_DATA}/trojan-panel/config/node-identities/combined-node.json}"; do
+    [[ "${TP_NODE_BUNDLE_ACTIVE}" != 1 || "${path}" != "${TP_PKI_BUNDLE_DIR}" ]] || continue
+    case "${path}" in
+      "${TP_DATA}"|"${TP_DATA}/"*) ;;
+      *) echo_content red "Managed data path must stay below ${TP_DATA}: ${path}"; return 1 ;;
+    esac
+    [[ "$(realpath -m -- "${path}")" == "${path}" ]] || {
+      echo_content red "Managed data path must not contain symbolic links or non-canonical components: ${path}"
+      return 1
+    }
+  done
+}
+
+validate_web_effective_config_path() {
+  local parent="${TP_DATA}" file="${WEB_EFFECTIVE_CONFIG_FILE}" mode
+  if [[ -e "${parent}" || -L "${parent}" ]]; then
+    [[ -d "${parent}" && ! -L "${parent}" && "$(stat -c %u -- "${parent}")" == "${EUID}" ]] || {
+      echo_content red "Managed effective configuration directory has unsafe ownership: ${parent}"
+      return 1
+    }
+    mode="$(stat -c %a -- "${parent}")"
+    (( (8#${mode} & 0022) == 0 )) || {
+      echo_content red "Managed effective configuration directory is writable by others: ${parent}"
+      return 1
+    }
+  fi
+  if [[ -e "${file}" || -L "${file}" ]]; then
+    [[ -f "${file}" && ! -L "${file}" && "$(stat -c %u -- "${file}")" == "${EUID}" &&
+      "$(stat -c %a -- "${file}")" == 600 ]] || {
+      echo_content red "Managed effective configuration is not a safe owned 0600 file: ${file}"
+      return 1
+    }
+  fi
+}
+
+translate_test_data_paths() {
+  [[ "${TP_TEST_DATA_ROOT:-0}" == 1 && "${TP_DATA}" != /tpdata/trojanpanelnext ]] || return 0
+  local name value
+  for name in WEB_PATH INITIAL_SYSADMIN_PASSWORD_FILE TP_PKI_BUNDLE_DIR EXTERNAL_MANAGED_DIR \
+    EXTERNAL_ROUTES_DIR MANAGED_CERT_DIR NETWORK_PLAN_DIR INSTALLER_STATE_DIR \
+    COMBINED_ENTRY_ROOT COMBINED_ENTRY_STATE_ROOT COMBINED_ENTRY_SPEC \
+    GRPC_CLIENT_CA_PATH GRPC_CLIENT_CERT_PATH GRPC_CLIENT_KEY_PATH \
+    KERNEL_RUNTIME_PATH NODE_IDENTITY_CREDENTIAL_FILE; do
+    value="${!name:-}"
+    case "${value}" in
+      /tpdata/trojanpanelnext/*) printf -v "$name" '%s%s' "$TP_DATA" "${value#/tpdata/trojanpanelnext}" ;;
+    esac
+  done
+}
+
+mark_host_data_root() {
+  local marker="${TP_DATA}/.trojanpanelnext-data-root" temporary
+  mkdir -p "${TP_DATA}"
+  [[ -e "${marker}" ]] && return 0
+  temporary="$(mktemp "${TP_DATA}/.data-root.XXXXXXXX")"
+  printf 'trojanpanelnext-data-root-v1\n' >"${temporary}"
+  chmod 0600 "${temporary}"
+  mv -Tn -- "${temporary}" "${marker}"
+  if [[ -e "${temporary}" ]]; then
+    rm -f -- "${temporary}"
+    echo_content red "Host data root ownership marker appeared concurrently"
+    return 1
+  fi
+  validate_host_data_root
 }
 
 usage() {
@@ -363,25 +519,52 @@ entry_controller() {
   esac
 }
 
-install_entry_runtime_assets() {
-  local target="${ENTRY_RUNTIME_DIR}" source
-  [[ "${target}" == /usr/local/lib/trojanpanelnext/entry ]] || return 1
-  for source in \
-    "${INSTALLER_DIR}/entry/entryctl.sh" \
-    "${INSTALLER_DIR}/entry/controller.sh" \
-    "${INSTALLER_DIR}/entry/v2.sh" \
-    "${INSTALLER_DIR}/entry/adapters/external.sh" \
-    "${INSTALLER_DIR}/entry/adapters/nginx_certbot.sh" \
-    "${INSTALLER_DIR}/entry/adapters/caddy.sh"; do
-    [[ -f "${source}" && ! -L "${source}" ]] || return 1
-  done
-  install -d -m 0755 "${target}" "${target}/adapters" || return 1
-  install -m 0755 "${INSTALLER_DIR}/entry/entryctl.sh" "${target}/entryctl.sh" || return 1
-  install -m 0644 "${INSTALLER_DIR}/entry/controller.sh" "${target}/controller.sh" || return 1
-  install -m 0644 "${INSTALLER_DIR}/entry/v2.sh" "${target}/v2.sh" || return 1
-  install -m 0644 "${INSTALLER_DIR}/entry/adapters/external.sh" "${target}/adapters/external.sh" || return 1
-  install -m 0755 "${INSTALLER_DIR}/entry/adapters/nginx_certbot.sh" "${target}/adapters/nginx_certbot.sh" || return 1
-  install -m 0755 "${INSTALLER_DIR}/entry/adapters/caddy.sh" "${target}/adapters/caddy.sh" || return 1
+retain_verified_release_assets() {
+  [[ "${INSTALLER_ASSET_VERSION}" != development ]] || return 0
+  local allow_create="${1:-1}"
+  local releases="${TP_DATA}/releases" target="${TP_DATA}/releases/${INSTALLER_ASSET_VERSION}"
+  local stage marker source_manifest_sha path
+  source "${INSTALLER_DIR}/release-contract.sh"
+  [[ ! -L "${releases}" && ! -L "${target}" ]] || {
+    echo_content red "Verified Release destination contains a symbolic link"
+    return 1
+  }
+  source_manifest_sha="$(sha256sum "${INSTALLER_DIR}/release-manifest.json" | awk '{print $1}')"
+  marker="${target}/.trojanpanelnext-release"
+  if [[ -e "${target}" ]]; then
+    [[ -d "${target}" && -f "${marker}" && ! -L "${marker}" &&
+      "$(cat "${marker}")" == "${INSTALLER_ASSET_VERSION} ${source_manifest_sha}" ]] &&
+      cmp -s "${INSTALLER_DIR}/SHA256SUMS" "${target}/SHA256SUMS" || {
+      echo_content red "Verified Release destination conflicts with existing contents: ${target}"
+      return 1
+    }
+    "${INSTALLER_DIR}/verify-assets.sh" --assets-dir "${target}" --assets-only || return 1
+  else
+    [[ "${allow_create}" == 1 ]] || {
+      echo_content red "Verified Release is not retained at ${target}"
+      return 1
+    }
+    mkdir -p "${releases}"
+    stage="$(mktemp -d "${releases}/.release.XXXXXXXX")"
+    for path in "${TP_RELEASE_ASSET_PATHS[@]}" release-manifest.json SHA256SUMS; do
+      if ! mkdir -p "${stage}/$(dirname "${path}")" ||
+        ! cp -p -- "${INSTALLER_DIR}/${path}" "${stage}/${path}"; then
+        rm -rf -- "${stage}"
+        return 1
+      fi
+    done
+    if ! "${INSTALLER_DIR}/verify-assets.sh" --assets-dir "${stage}" --assets-only; then
+      rm -rf -- "${stage}"
+      return 1
+    fi
+    printf '%s %s\n' "${INSTALLER_ASSET_VERSION}" "${source_manifest_sha}" >"${stage}/.trojanpanelnext-release"
+    chmod 0600 "${stage}/.trojanpanelnext-release"
+    if ! mv -T -- "${stage}" "${target}"; then
+      rm -rf -- "${stage}"
+      return 1
+    fi
+  fi
+  ENTRYCTL_PATH="${target}/entry/entryctl.sh"
 }
 
 yaml_read_raw() {
@@ -1252,8 +1435,8 @@ combined_entry_reconcile() {
   if [[ "${CADDY_ADAPTER_FAKE:-0}" != 1 && "${image}" != *@sha256:* ]]; then
     image="$(docker image inspect -f '{{index .RepoDigests 0}}' "${image}")" || return 1
   fi
-    ENTRY_SPEC_OWNER_UID="$(stat -c %u "${COMBINED_ENTRY_SPEC}")" CADDY_ADAPTER_INSTALLER_OWNERSHIP=1 CADDY_ADAPTER_IMAGE="${image}" CADDY_ADAPTER_ROOT="${COMBINED_ENTRY_ROOT}" \
-    CADDY_ADAPTER_CONTAINER="${COMBINED_ENTRY_CONTAINER}" CADDY_ADAPTER_WEB_ROOT="${WEB_PATH}" \
+    ENTRY_SPEC_OWNER_UID="$(stat -c %u "${COMBINED_ENTRY_SPEC}")" CADDY_ADAPTER_INSTALLER_OWNERSHIP=1 CADDY_ADAPTER_IMAGE="${image}" CADDY_ADAPTER_ROOT="${COMBINED_ENTRY_ROOT}" CADDY_ADAPTER_ENTRY_STATE_ROOT="${COMBINED_ENTRY_STATE_ROOT}" CADDY_ADAPTER_ENTRYCTL_PATH="${ENTRYCTL_PATH}" \
+    CADDY_ADAPTER_CONTAINER="${COMBINED_ENTRY_CONTAINER}" CADDY_ADAPTER_WEB_ROOT="${WEB_PATH}" CADDY_ADAPTER_HOST_DATA_ROOT="${TP_DATA}" \
     CADDY_ADAPTER_OWNER_TOKEN="${COMBINED_OWNER_TOKEN}" \
     CADDY_ADAPTER_NODE_CONTAINER="${CORE_CONTAINER}" CADDY_ADAPTER_BOOTSTRAP="${bootstrap}" \
     CADDY_ADAPTER_PURGE_RETIRED_ROLES="${COMBINED_PURGE_RETIRED_ROLES:-0}" \
@@ -1268,8 +1451,8 @@ combined_entry_remove() {
   fi
   local -a args=(remove --spec "${COMBINED_ENTRY_SPEC}" --state-root "${COMBINED_ENTRY_STATE_ROOT}")
   [[ "${purge}" != 1 ]] || args+=(--purge)
-  ENTRY_SPEC_OWNER_UID="$(stat -c %u "${COMBINED_ENTRY_SPEC}")" CADDY_ADAPTER_INSTALLER_OWNERSHIP=1 CADDY_ADAPTER_IMAGE="${image}" CADDY_ADAPTER_ROOT="${COMBINED_ENTRY_ROOT}" \
-    CADDY_ADAPTER_CONTAINER="${COMBINED_ENTRY_CONTAINER}" CADDY_ADAPTER_WEB_ROOT="${WEB_PATH}" \
+    ENTRY_SPEC_OWNER_UID="$(stat -c %u "${COMBINED_ENTRY_SPEC}")" CADDY_ADAPTER_INSTALLER_OWNERSHIP=1 CADDY_ADAPTER_IMAGE="${image}" CADDY_ADAPTER_ROOT="${COMBINED_ENTRY_ROOT}" CADDY_ADAPTER_ENTRY_STATE_ROOT="${COMBINED_ENTRY_STATE_ROOT}" CADDY_ADAPTER_ENTRYCTL_PATH="${ENTRYCTL_PATH}" \
+    CADDY_ADAPTER_CONTAINER="${COMBINED_ENTRY_CONTAINER}" CADDY_ADAPTER_WEB_ROOT="${WEB_PATH}" CADDY_ADAPTER_HOST_DATA_ROOT="${TP_DATA}" \
     CADDY_ADAPTER_OWNER_TOKEN="${COMBINED_OWNER_TOKEN}" \
     CADDY_ADAPTER_NODE_CONTAINER="${CORE_CONTAINER}" \
     "${ENTRYCTL_PATH}" "${args[@]}"
@@ -1296,6 +1479,13 @@ validate_config() {
     echo_content red "trojanpanelnext.schema_version must be 1"
     exit 1
   fi
+  local root_override_key
+  for root_override_key in data_root host_data_root tp_data; do
+    if [[ -n "$(yaml_read_raw "${TP_CONFIG_READ_FILE}" "${root_override_key}")" ]]; then
+      echo_content red "Host data root is fixed at /tpdata/trojanpanelnext; ${root_override_key} is not configurable"
+      exit 1
+    fi
+  done
 
   if [[ "${INSTALLER_ASSET_VERSION}" != "development" && "${TP_ASSET_VERSION}" != "${INSTALLER_ASSET_VERSION}" ]]; then
     echo_content red "Configuration asset_version '${TP_ASSET_VERSION:-<missing>}' does not match installer assets '${INSTALLER_ASSET_VERSION}'"
@@ -1436,34 +1626,74 @@ recreate_container_if_env_changed() {
   docker rm -f "${name}" >/dev/null 2>&1
 }
 
-write_web_generated_secrets() {
-  local file="${TP_CONFIG_FILE:-}"
-  if [[ -z "${file}" ]]; then
-    return
-  fi
-  local snapshot="${TP_SECURE_CONFIG_DIR}/config-write.yaml"
+load_web_effective_secrets() {
+  local file="${WEB_EFFECTIVE_CONFIG_FILE}" key input saved domain_key=hostname saved_mode
+  validate_web_effective_config_path || return 1
+  [[ -e "${file}" ]] || return 0
+  WEB_EFFECTIVE_CONFIG_READ_FILE="${TP_SECURE_CONFIG_DIR}/effective-web-read.yaml"
+  WEB_EFFECTIVE_CONFIG_IDENTITY="$("${SECURE_FILE_HELPER}" snapshot \
+    --path "${file}" --output "${WEB_EFFECTIVE_CONFIG_READ_FILE}")" || {
+    echo_content red "Managed effective configuration changed during snapshot"
+    return 1
+  }
+  [[ "${TP_DEPLOYMENT_MODE}" != combined ]] || domain_key=web_hostname
+  saved_mode="$(yaml_read_raw "${WEB_EFFECTIVE_CONFIG_READ_FILE}" deployment_mode)"
+  [[ -n "${saved_mode}" ]] || saved_mode="$(yaml_read_raw "${WEB_EFFECTIVE_CONFIG_READ_FILE}" purpose)"
+  [[ "${saved_mode}" == "${TP_DEPLOYMENT_MODE}" ]] || {
+    echo_content red "Managed effective configuration belongs to another deployment mode"
+    return 1
+  }
+  WEB_EFFECTIVE_DOMAIN="$(yaml_read_raw "${WEB_EFFECTIVE_CONFIG_READ_FILE}" "${domain_key}")"
+  WEB_SAVED_MARIADB_PASSWORD="$(yaml_read_raw "${WEB_EFFECTIVE_CONFIG_READ_FILE}" mariadb_password)"
+  WEB_SAVED_REDIS_PASSWORD="$(yaml_read_raw "${WEB_EFFECTIVE_CONFIG_READ_FILE}" redis_password)"
+  WEB_SAVED_SYSADMIN_PASSWORD="$(yaml_read_raw "${WEB_EFFECTIVE_CONFIG_READ_FILE}" sysadmin_password)"
+  [[ -n "${WEB_SAVED_MARIADB_PASSWORD}" && -n "${WEB_SAVED_REDIS_PASSWORD}" &&
+    -n "${WEB_SAVED_SYSADMIN_PASSWORD}" ]] || {
+    echo_content red "Managed effective configuration lacks committed Web credentials"
+    return 1
+  }
+  for key in MARIADB_PASSWORD REDIS_PASSWORD SYSADMIN_PASSWORD; do
+    input="${!key:-}"
+    saved="WEB_SAVED_${key}"
+    [[ -z "${input}" || "${input}" == "${!saved}" ]] || {
+      echo_content red "Explicit ${key} differs from the committed Web credential; use an explicit migration or rotation"
+      return 1
+    }
+  done
+  MARIADB_PASSWORD="${MARIADB_PASSWORD:-${WEB_SAVED_MARIADB_PASSWORD}}"
+  REDIS_PASSWORD="${REDIS_PASSWORD:-${WEB_SAVED_REDIS_PASSWORD}}"
+  SYSADMIN_PASSWORD="${SYSADMIN_PASSWORD:-${WEB_SAVED_SYSADMIN_PASSWORD}}"
+}
+
+write_web_effective_config() {
+  local file="${WEB_EFFECTIVE_CONFIG_FILE}" snapshot="${TP_SECURE_CONFIG_DIR}/effective-web-write.yaml"
+  validate_web_effective_config_path || return 1
   install -m 0600 "${TP_CONFIG_READ_FILE}" "${snapshot}"
   MARIADB_PASSWORD="${MARIADB_PASSWORD}" REDIS_PASSWORD="${REDIS_PASSWORD}" SYSADMIN_PASSWORD="${SYSADMIN_PASSWORD}" \
     yq -i '.trojanpanelnext.mariadb_password = strenv(MARIADB_PASSWORD) | .trojanpanelnext.redis_password = strenv(REDIS_PASSWORD) | .trojanpanelnext.sysadmin_password = strenv(SYSADMIN_PASSWORD)' "${snapshot}"
+  if [[ -f "${file}" ]] && cmp -s "${snapshot}" "${file}"; then return 0; fi
+  local -a expected=()
+  [[ -z "${WEB_EFFECTIVE_CONFIG_IDENTITY}" ]] || expected=(--expected "${WEB_EFFECTIVE_CONFIG_IDENTITY}")
   "${SECURE_FILE_HELPER}" atomic-write --path "${file}" --input "${snapshot}" \
-    --expected "${TP_CONFIG_IDENTITY}" --mode 0600 || {
-    echo_content red "Sensitive configuration changed during credential persistence"
-    exit 1
+    "${expected[@]}" --mode 0600 || {
+    echo_content red "Managed effective configuration changed during credential persistence"
+    return 1
   }
 }
 
 init_web_secrets() {
   if [[ -z "${MARIADB_PASSWORD:-}" ]]; then
-    MARIADB_PASSWORD="$(container_env_value "${MARIADB_CONTAINER}" MYSQL_ROOT_PASSWORD || true)"
+    MARIADB_PASSWORD="${WEB_SAVED_MARIADB_PASSWORD:-$(container_env_value "${MARIADB_CONTAINER}" MYSQL_ROOT_PASSWORD || true)}"
   fi
   if [[ -z "${REDIS_PASSWORD:-}" ]]; then
-    REDIS_PASSWORD="$(container_env_value "${PANEL_CONTAINER}" redis_pass || true)"
+    REDIS_PASSWORD="${WEB_SAVED_REDIS_PASSWORD:-$(container_env_value "${PANEL_CONTAINER}" redis_pass || true)}"
   fi
+  SYSADMIN_PASSWORD="${SYSADMIN_PASSWORD:-${WEB_SAVED_SYSADMIN_PASSWORD}}"
   MARIADB_PASSWORD="${MARIADB_PASSWORD:-$(random_password)}"
   REDIS_PASSWORD="${REDIS_PASSWORD:-$(random_password)}"
   SYSADMIN_PASSWORD="${SYSADMIN_PASSWORD:-$(random_sysadmin_password)}"
   export MARIADB_PASSWORD REDIS_PASSWORD SYSADMIN_PASSWORD
-  write_web_generated_secrets
+  write_web_effective_config
 }
 
 image_exists() {
@@ -2151,7 +2381,9 @@ verify_combined_identity_record() {
     "${live_digest}" == "${credential_digest}" && "${live_status}" == active &&
     "${live_id}" == "${NODE_IDENTITY_ID}" && "${live_server}" == "${NODE_SERVER_ID}" &&
     "${live_name}" == "${TP_NODE_NAME}" && "${live_domain}" == "${TP_NODE_DOMAIN}" &&
-    "${live_ip}" == "${TP_NODE_PUBLIC_IP}" && "${live_path}" == "${credential_file}" ]] || {
+    "${live_ip}" == "${TP_NODE_PUBLIC_IP}" &&
+    ( "${live_path}" == "$(container_data_path "${credential_file}")" ||
+      ( "${TP_DATA}" != /tpdata/trojanpanelnext && "${live_path}" == "${credential_file}" ) ) ]] || {
     echo_content red "Combined Node credential does not match the active control-plane identity record; manual recovery is required"
     return 1
   }
@@ -2500,9 +2732,9 @@ port=${PANEL_PORT}
 # is present, so external mode relies on an explicit firewall policy.
 host=${BIND_ADDRESS}
 [grpc]
-client_cert_path=${GRPC_CLIENT_CERT_PATH}
-client_key_path=${GRPC_CLIENT_KEY_PATH}
-server_ca_path=${GRPC_SERVER_CA_PATH}
+client_cert_path=$(container_data_path "${GRPC_CLIENT_CERT_PATH}")
+client_key_path=$(container_data_path "${GRPC_CLIENT_KEY_PATH}")
+server_ca_path=$(container_data_path "${GRPC_SERVER_CA_PATH}")
 EOF
   chmod 0600 "${temporary}"
   "${SECURE_FILE_HELPER}" atomic-write \
@@ -2546,8 +2778,8 @@ max_idle=2
 max_active=4
 wait=true
 [cert]
-crt_path=${crt_path}
-key_path=${key_path}
+crt_path=$(container_data_path "${crt_path}")
+key_path=$(container_data_path "${key_path}")
 [log]
 filename=logs/trojan-panel-core.log
 max_size=1
@@ -2557,7 +2789,7 @@ compress=true
 [grpc]
 port=${GRPC_PORT}
 tls_mode=${GRPC_TLS_MODE}
-client_ca_path=${GRPC_CLIENT_CA_PATH}
+client_ca_path=$(container_data_path "${GRPC_CLIENT_CA_PATH}")
 [server]
 port=${CORE_PORT}
 # host is reserved: the core binds every interface even when this key is
@@ -2721,13 +2953,14 @@ start_caddy() {
   ensure_image "${CADDY_IMAGE}"
   local -a ownership_env=()
   [[ -z "${deployment_id}" ]] || ownership_env=(-e "TP_ENTRY_DEPLOYMENT_ID=${deployment_id}")
+  mkdir -p "${config_dir}/config"
   docker run -d --name "${name}" --restart always \
     --network=host \
     "${ownership_env[@]}" \
-    -v "${config_dir}/Caddyfile:/etc/caddy/Caddyfile" \
+    -v "${config_dir}/Caddyfile:/etc/caddy/Caddyfile:ro" \
     -v "${data_dir}:/data" \
-    -v "${config_dir}:/config" \
-    -v "${web_dir}:/srv" \
+    -v "${config_dir}/config:/config" \
+    -v "${web_dir}:/srv:ro" \
     "${CADDY_IMAGE}"
 }
 
@@ -2969,11 +3202,11 @@ deploy_panel_backend() {
   ensure_image "${PANEL_IMAGE}"
   docker run -d --name "${PANEL_CONTAINER}" --restart always "${combined_label[@]}" \
     --network=host \
-    -v "${WEB_PATH}:${TP_DATA}/trojan-panel/webfile/" \
-    -v "${TP_DATA}/trojan-panel/logs/:${TP_DATA}/trojan-panel/logs/" \
-    -v "${TP_DATA}/trojan-panel/config/:${TP_DATA}/trojan-panel/config/" \
-    -v "${TP_DATA}/trojan-panel/pki/:${TP_DATA}/trojan-panel/pki/:ro" \
-    -v /etc/localtime:/etc/localtime \
+    -v "${WEB_PATH}:${TP_CONTAINER_DATA}/trojan-panel/webfile/" \
+    -v "${TP_DATA}/trojan-panel/logs/:${TP_CONTAINER_DATA}/trojan-panel/logs/" \
+    -v "${TP_DATA}/trojan-panel/config/:${TP_CONTAINER_DATA}/trojan-panel/config/" \
+    -v "${TP_DATA}/trojan-panel/pki/:${TP_CONTAINER_DATA}/trojan-panel/pki/:ro" \
+    -v /etc/localtime:/etc/localtime:ro \
     -e GIN_MODE=release \
     -e "mariadb_ip=127.0.0.1" \
     -e "mariadb_port=${MARIADB_PORT}" \
@@ -2983,10 +3216,10 @@ deploy_panel_backend() {
     -e "redis_port=${REDIS_PORT}" \
     -e "redis_pass=${REDIS_PASSWORD}" \
     -e "server_port=${PANEL_PORT}" \
-    -e "GRPC_CLIENT_CERT_PATH=${GRPC_CLIENT_CERT_PATH}" \
-    -e "GRPC_CLIENT_KEY_PATH=${GRPC_CLIENT_KEY_PATH}" \
-    -e "GRPC_SERVER_CA_PATH=${GRPC_SERVER_CA_PATH}" \
-    -e "TP_INITIAL_SYSADMIN_PASSWORD_FILE=${INITIAL_SYSADMIN_PASSWORD_FILE}" \
+    -e "GRPC_CLIENT_CERT_PATH=$(container_data_path "${GRPC_CLIENT_CERT_PATH}")" \
+    -e "GRPC_CLIENT_KEY_PATH=$(container_data_path "${GRPC_CLIENT_KEY_PATH}")" \
+    -e "GRPC_SERVER_CA_PATH=$(container_data_path "${GRPC_SERVER_CA_PATH}")" \
+    -e "TP_INITIAL_SYSADMIN_PASSWORD_FILE=$(container_data_path "${INITIAL_SYSADMIN_PASSWORD_FILE}")" \
     "${PANEL_IMAGE}"
   wait_for_container "${PANEL_CONTAINER}"
 }
@@ -3010,7 +3243,7 @@ deploy_panel_ui() {
   docker run -d --name "${UI_CONTAINER}" --restart always "${combined_label[@]}" \
     --network=host \
     -e "TP_BIND_ADDRESS=${BIND_ADDRESS}" \
-    -v "${TP_DATA}/trojan-panel-ui/nginx/default.conf:/etc/nginx/conf.d/default.conf" \
+    -v "${TP_DATA}/trojan-panel-ui/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro" \
     "${UI_IMAGE}"
   wait_for_container "${UI_CONTAINER}"
 }
@@ -3032,7 +3265,7 @@ prepare_combined_node_identity() {
     --name "${TP_NODE_NAME}" \
     --domain "${TP_NODE_DOMAIN}" \
     --public-ip "${TP_NODE_PUBLIC_IP}" \
-    --credential-file "${credential_file}"; then
+    --credential-file "$(container_data_path "${credential_file}")"; then
     echo_content red "Unable to provision the combined Node identity"
     exit 1
   fi
@@ -3261,6 +3494,7 @@ print_combined_success() {
 
 deploy_core() {
   local -a combined_label=()
+  local -a cert_mounts=()
   [[ "${TP_DEPLOYMENT_MODE}" != combined ]] || combined_label=(--label "io.trojanpanelnext.deployment=${COMBINED_ENTRY_DEPLOYMENT_ID}" --label "io.trojanpanelnext.owner-token=${COMBINED_OWNER_TOKEN}")
   local domain="$1"
   local client_ca_sha256
@@ -3278,6 +3512,7 @@ deploy_core() {
   if [[ "${TLS_MODE}" == "external" ]]; then
     crt_path="${MANAGED_CERT_DIR}/fullchain.pem"
     key_path="${MANAGED_CERT_DIR}/privkey.pem"
+    cert_mounts=(-v "${MANAGED_CERT_DIR}:$(container_data_path "${MANAGED_CERT_DIR}"):ro")
   elif [[ "${TP_DEPLOYMENT_MODE}" == combined ]]; then
     if [[ ! -s "${MANAGED_CERT_DIR}/fullchain.pem" || ! -s "${MANAGED_CERT_DIR}/privkey.pem" ]]; then
       echo_content red "Certificate material is unavailable for Node domain ${domain}"
@@ -3285,6 +3520,10 @@ deploy_core() {
     fi
     crt_path="${MANAGED_CERT_DIR}/fullchain.pem"
     key_path="${MANAGED_CERT_DIR}/privkey.pem"
+    cert_mounts=(-v "${MANAGED_CERT_DIR}:$(container_data_path "${MANAGED_CERT_DIR}"):ro")
+  else
+    local node_cert_dir="${cert_data}/caddy/certificates/acme-v02.api.letsencrypt.org-directory/${domain}"
+    cert_mounts=(-v "${node_cert_dir}:$(container_data_path "${node_cert_dir}"):ro")
   fi
 
   write_core_runtime_config "${crt_path}" "${key_path}"
@@ -3317,20 +3556,18 @@ deploy_core() {
   ensure_image "${CORE_IMAGE}"
   docker run -d --name "${CORE_CONTAINER}" --restart always "${combined_label[@]}" \
     --network=host \
-    -v "${TP_DATA}/trojan-panel-core/bin/xray/config/:${TP_DATA}/trojan-panel-core/bin/xray/config/" \
-    -v "${TP_DATA}/trojan-panel-core/bin/naiveproxy/config/:${TP_DATA}/trojan-panel-core/bin/naiveproxy/config/" \
-    -v "${TP_DATA}/trojan-panel-core/bin/hysteria2/config/:${TP_DATA}/trojan-panel-core/bin/hysteria2/config/" \
-    -v "${TP_DATA}/trojan-panel-core/logs/:${TP_DATA}/trojan-panel-core/logs/" \
-    -v "${TP_DATA}/trojan-panel-core/config/:${TP_DATA}/trojan-panel-core/config/" \
-    -v "${runtime_config}:${runtime_config}:ro" \
-    -v "${TP_DATA}/trojan-panel-core/pki/:${TP_DATA}/trojan-panel-core/pki/:ro" \
-    -v "${KERNEL_RUNTIME_PATH}:${TP_DATA}/trojan-panel-core/runtime/" \
-    -v "${cert_data}:${cert_data}:ro" \
-    -v "${MANAGED_CERT_DIR}:${MANAGED_CERT_DIR}:ro" \
-    -v "${EXTERNAL_MANAGED_DIR}:${EXTERNAL_MANAGED_DIR}" \
-    -v "${EXTERNAL_ROUTES_DIR}:${EXTERNAL_ROUTES_DIR}" \
-    -v "${WEB_PATH}:${WEB_PATH}" \
-    -v /etc/localtime:/etc/localtime \
+    -v "${TP_DATA}/trojan-panel-core/bin/xray/config/:${TP_CONTAINER_DATA}/trojan-panel-core/bin/xray/config/" \
+    -v "${TP_DATA}/trojan-panel-core/bin/naiveproxy/config/:${TP_CONTAINER_DATA}/trojan-panel-core/bin/naiveproxy/config/" \
+    -v "${TP_DATA}/trojan-panel-core/bin/hysteria2/config/:${TP_CONTAINER_DATA}/trojan-panel-core/bin/hysteria2/config/" \
+    -v "${TP_DATA}/trojan-panel-core/logs/:${TP_CONTAINER_DATA}/trojan-panel-core/logs/" \
+    -v "${TP_DATA}/trojan-panel-core/config/:${TP_CONTAINER_DATA}/trojan-panel-core/config/" \
+    -v "${runtime_config}:${TP_CONTAINER_DATA}/trojan-panel-core/config/config.ini:ro" \
+    -v "${TP_DATA}/trojan-panel-core/pki/:${TP_CONTAINER_DATA}/trojan-panel-core/pki/:ro" \
+    -v "${KERNEL_RUNTIME_PATH}:${TP_CONTAINER_DATA}/trojan-panel-core/runtime/" \
+    "${cert_mounts[@]}" \
+    -v "${EXTERNAL_ROUTES_DIR}:${TP_CONTAINER_DATA}/trojan-panel-core/external" \
+    -v "${WEB_PATH}:${TP_CONTAINER_DATA}/web:ro" \
+    -v /etc/localtime:/etc/localtime:ro \
     -e GIN_MODE=release \
     -e "mariadb_ip=${MARIADB_HOST}" \
     -e "mariadb_port=${MARIADB_PORT}" \
@@ -3341,16 +3578,16 @@ deploy_core() {
     -e "redis_port=${REDIS_PORT}" \
     -e "REDIS_USERNAME=${REDIS_USERNAME}" \
     -e "REDIS_AUTH_USERNAME=${REDIS_AUTH_USERNAME}" \
-    -e "crt_path=${crt_path}" \
-    -e "key_path=${key_path}" \
+    -e "crt_path=$(container_data_path "${crt_path}")" \
+    -e "key_path=$(container_data_path "${key_path}")" \
     -e "grpc_port=${GRPC_PORT}" \
     -e "NODE_SERVER_ID=${NODE_SERVER_ID}" \
     -e "grpc_tls_mode=${GRPC_TLS_MODE}" \
-    -e "grpc_client_ca_path=${GRPC_CLIENT_CA_PATH}" \
+    -e "grpc_client_ca_path=$(container_data_path "${GRPC_CLIENT_CA_PATH}")" \
     -e "TP_CLIENT_CA_SHA256=${client_ca_sha256}" \
     -e "TP_NODE_CONFIG_SHA256=${node_config_sha256}" \
-    -e "TP_KERNEL_RUNTIME=${TP_DATA}/trojan-panel-core/runtime" \
-    -e "TP_EXTERNAL_DIR=${EXTERNAL_ROUTES_DIR}" \
+    -e "TP_KERNEL_RUNTIME=${TP_CONTAINER_DATA}/trojan-panel-core/runtime" \
+    -e "TP_EXTERNAL_DIR=${TP_CONTAINER_DATA}/trojan-panel-core/external" \
     -e "TP_TLS_MODE=${TLS_MODE}" \
     -e "server_port=${CORE_PORT}" \
     -e "TP_NODE_DOMAIN=${domain}" \
@@ -3790,6 +4027,7 @@ main() {
   fi
   verify_release_assets_before_host_change "${TP_CONFIG_READ_FILE}"
   load_config "${mode}" "${TP_CONFIG_READ_FILE}"
+  translate_test_data_paths
   if [[ "${TP_NODE_BUNDLE_ACTIVE}" == 1 ]]; then
     TP_PKI_BUNDLE_DIR="${TP_NODE_BUNDLE_DIR}/pki"
   fi
@@ -3801,7 +4039,11 @@ main() {
     validation_mode=combined
   fi
   validate_config "${validation_mode}"
+  validate_host_data_root
   validate_entry_spec_binding "${mode}"
+  if [[ "${command}" == install && ( "${mode}" == web || "${mode}" == combined ) ]]; then
+    load_web_effective_secrets
+  fi
 
   if [[ "${command}" == install ]]; then
     if [[ "${mode}" == combined ]]; then
@@ -3810,18 +4052,19 @@ main() {
     check_same_version_replay_preconditions "${mode}"
   fi
 
-  if [[ "${command}" == install && -n "${ENTRY_SPEC_FILE}" && "${INSTALLER_ASSET_VERSION}" != development ]]; then
-    install_entry_runtime_assets || {
-      echo_content red "Could not persist verified EntryController runtime assets"
-      exit 1
-    }
-  fi
-  if [[ "${command}" != validate && -x "${ENTRY_RUNTIME_DIR}/entryctl.sh" && ! -L "${ENTRY_RUNTIME_DIR}/entryctl.sh" ]]; then
-    ENTRYCTL_PATH="${ENTRY_RUNTIME_DIR}/entryctl.sh"
-  fi
-
   if [[ "${command}:${mode}" == install:combined ]]; then
     check_combined_host_preconditions
+  fi
+  if [[ "${command}" == install && -n "${WEB_EFFECTIVE_CONFIG_READ_FILE}" &&
+    "${WEB_EFFECTIVE_DOMAIN}" != "${TP_WEB_DOMAIN}" ]]; then
+    echo_content red "Managed effective configuration belongs to another Web deployment"
+    exit 1
+  fi
+  if [[ "${command}" == install ]]; then
+    mark_host_data_root
+    retain_verified_release_assets
+  elif [[ "${command}" != validate ]]; then
+    retain_verified_release_assets 0
   fi
 
   if [[ "${command}:${mode}" == install:node || "${command}:${mode}" == install:combined ]]; then

@@ -41,6 +41,7 @@ work="$(mktemp -d)"
 trap '[[ "${TP_TEST_KEEP_WORK:-0}" == 1 ]] || rm -rf -- "${work}"' EXIT
 config="${work}/combined.yaml"
 data="${work}/data"
+export TP_TEST_DATA_ROOT=1
 containers="${work}/containers"
 trace="${work}/docker.trace"
 curl_trace="${work}/curl.trace"
@@ -49,8 +50,8 @@ mkdir -p "${containers}"
 printf 'ID=debian\nVERSION_ID="12"\n' >"${os_release}"
 cp "$(dirname "${INSTALLER}")/examples/combined.yaml" "${config}"
 sed -i \
-  -e "s#/tpdata/trojan-panel/config/node-identities/combined-node.json#${data}/trojan-panel/config/node-identities/combined-node.json#" \
-  -e "s#/tpdata/trojanpanelnext-pki#${data}/trojanpanelnext-pki#" \
+  -e "s#/tpdata/trojanpanelnext/trojan-panel/config/node-identities/combined-node.json#${data}/trojan-panel/config/node-identities/combined-node.json#" \
+  -e "s#/tpdata/trojanpanelnext/trojanpanelnext-pki#${data}/trojanpanelnext-pki#" \
   "${config}"
 
 id() {
@@ -219,6 +220,7 @@ docker() {
         previous="${argument}"
       done
       [[ -n "${credential}" ]] || return 2
+      credential="${TP_TEST_DATA}${credential#/tpdata}"
       if [[ ! -e "${credential}" ]]; then
         mkdir -p "$(dirname "${credential}")"
         cat >"${credential}" <<'EOF'
@@ -321,7 +323,7 @@ printf 'foreign-data\n' >"${data}/mariadb/foreign.txt"
 if run_installer install --mode combined >"${work}/foreign-data.out" 2>&1; then
   fail 'combined installation adopted an unmarked data directory'
 fi
-grep -Fq 'Combined data path has no valid ownership marker' "${work}/foreign-data.out" || fail 'foreign data rejection omitted diagnostic'
+grep -Eq 'Combined data path has no valid ownership marker|Host data root has unowned contents' "${work}/foreign-data.out" || fail 'foreign data rejection omitted diagnostic'
 ! grep -q '^docker run ' "${trace}" || fail 'foreign data rejection happened after container mutation'
 rm -rf "${data}/mariadb"
 
@@ -405,7 +407,14 @@ test -f "${data}/custom/web-caddy/.active" || fail 'shared Entry was not activat
 test ! -e "${containers}/trojan-panel-node-caddy" || fail 'a second Entry container competes for 80/443'
 grep -Fxq 'deployment=trojanpanelnext-combined-entry' "${data}/custom/web-caddy/.trojanpanelnext-owner" || fail 'shared Entry ownership identity is missing'
 test "$(jq -r '.phase' "${data}/trojanpanelnext-entry/state/trojanpanelnext-combined-entry.json")" = stable || fail 'v2 Entry journal did not commit'
-grep -Fq "${data}/trojan-panel-core/cert:${data}/trojan-panel-core/cert:ro" "${trace}" || fail 'Core does not consume managed certificates read-only'
+grep -Fq "${data}/trojan-panel-core/cert:/tpdata/trojan-panel-core/cert:ro" "${trace}" || fail 'Core does not consume managed certificates read-only'
+core_run="$(grep '^docker run -d --name trojan-panel-core ' "${trace}" | head -n 1)"
+[[ -n "${core_run}" ]] || fail 'combined Core run was not recorded'
+[[ "${core_run}" != *"${data}/trojan-panel/pki"* &&
+  "${core_run}" != *"${data}/trojanpanelnext-pki"* &&
+  "${core_run}" != *"${data}/mariadb"* &&
+  "${core_run}" != *"${data}/custom/web-caddy/data"* &&
+  "${core_run}" != *"${data}:/tpdata"* ]] || fail 'combined Core can see Web or database private material'
 grep -Fxq 'mariadb_user=tpn_combined' "${containers}/trojan-panel-core.env" || fail 'Core omitted its dedicated MariaDB identity'
 grep -Fxq 'REDIS_USERNAME=tpn-cache-combined' "${containers}/trojan-panel-core.env" || fail 'Core omitted its dedicated Redis identity'
 ! grep -Fq 'root-secret' "${containers}/trojan-panel-core.env" || fail 'Core received the Web MariaDB root credential'
@@ -432,7 +441,10 @@ assert_rejected_without_host_change() {
   if run_installer install --mode combined >"${work}/${case_name}.out" 2>&1; then
     fail "combined replay accepted ${case_name}"
   fi
-  grep -Fq "${diagnostic}" "${work}/${case_name}.out" || fail "${case_name} omitted its diagnostic"
+  grep -Fq "${diagnostic}" "${work}/${case_name}.out" || {
+    sed -n '1,80p' "${work}/${case_name}.out" >&2
+    fail "${case_name} omitted its diagnostic"
+  }
   after="$(snapshot_host)"
   [[ "${before}" == "${after}" ]] || fail "${case_name} changed managed files or containers"
   [[ "${trace_before}" == "$(sed '/^docker read-only node-identity record$/d' "${trace}" | sha256sum)" ]] ||
