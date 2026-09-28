@@ -2,6 +2,8 @@
 
 简体中文 | [English](README_EN.md)
 
+新版本的统一 `hosts`/`nodes[]` CLI 发布入口见[本地初始化说明](client/README.md)：固定 Release 归档和 SHA256，校验后运行归档内的 `client/tpnext.sh`。下文是既有 `v0.1.0-rc.3` 手工 Web/Node 验收流程；该版本尚未包含统一 CLI。
+
 ## 非 combined：分别部署 Web 和 Node
 
 两台 VPS 均使用 Linux x86_64，至少 1 GiB 内存。安装包不限 Debian 版本或发行版，但会检查运行所需软件并列出缺失项。把 WEB_IP、NODE_IP、panel.example.com 和 node.example.com 换成实际值，域名提前解析到相应 VPS。以下以 root SSH 登录为例；若只能以普通用户登录，传输后运行 sudo -i，并把 VPS 命令中的 cd ~/tpnext-upload 改为该用户上传目录的绝对路径。
