@@ -2121,6 +2121,42 @@ installer_state_value() {
   sed -n "s/^${key}=//p" "${file}" | head -n 1
 }
 
+verify_combined_identity_record() {
+  local credential_file="${NODE_IDENTITY_CREDENTIAL_FILE}"
+  local registered_identity credential_digest live_generation live_digest live_status
+  local live_id live_server live_name live_domain live_ip live_path
+  [[ -n "${MARIADB_PASSWORD}" ]] || {
+    echo_content red "Combined Node identity cannot be verified without the committed database credential"
+    return 1
+  }
+  # The credential file alone cannot attest a replay or rotation. Compare it
+  # to the control plane's committed identity record without a DB mutation.
+  if ! registered_identity="$(printf '%s\n' "${MARIADB_PASSWORD}" | \
+    docker exec -i "${MARIADB_CONTAINER}" sh -c '
+      IFS= read -r password || exit 1
+      export MYSQL_PWD="$password"
+      if command -v mariadb >/dev/null 2>&1; then
+        mariadb --batch --skip-column-names --raw -uroot --database="$2" -e "$1"
+      else
+        mysql --batch --skip-column-names --raw -uroot --database="$2" -e "$1"
+      fi
+    ' sh "SELECT generation,credential_sha256,status,identity_id,node_server_id,name,domain,public_ip,credential_path FROM node_identity WHERE identity_id='${NODE_IDENTITY_ID}'" \
+      "${MARIADB_DATABASE}" 2>/dev/null)"; then
+    echo_content red "Combined Node identity control-plane record is unavailable; manual recovery is required"
+    return 1
+  fi
+  IFS=$'\t' read -r live_generation live_digest live_status live_id live_server live_name live_domain live_ip live_path <<<"${registered_identity}"
+  credential_digest="$(sha256sum "${credential_file}" | awk '{print $1}')"
+  [[ "${registered_identity}" != *$'\n'* && "${live_generation}" == "${NODE_IDENTITY_GENERATION}" &&
+    "${live_digest}" == "${credential_digest}" && "${live_status}" == active &&
+    "${live_id}" == "${NODE_IDENTITY_ID}" && "${live_server}" == "${NODE_SERVER_ID}" &&
+    "${live_name}" == "${TP_NODE_NAME}" && "${live_domain}" == "${TP_NODE_DOMAIN}" &&
+    "${live_ip}" == "${TP_NODE_PUBLIC_IP}" && "${live_path}" == "${credential_file}" ]] || {
+    echo_content red "Combined Node credential does not match the active control-plane identity record; manual recovery is required"
+    return 1
+  }
+}
+
 check_same_version_replay_preconditions() {
   local mode="$1" state expected actual key credential_file
   state="$(installer_state_path_for "${mode}")"
@@ -2152,7 +2188,12 @@ check_same_version_replay_preconditions() {
       return 1
     fi
   fi
-  [[ ! -e "${state}" && ! -L "${state}" ]] && return 0
+  if [[ ! -e "${state}" && ! -L "${state}" ]]; then
+    if [[ "${mode}" == combined && ( -e "${credential_file}" || -L "${credential_file}" ) ]]; then
+      verify_combined_identity_record
+    fi
+    return
+  fi
   [[ -f "${state}" && ! -L "${state}" ]] || {
     echo_content red "Installer state is not a safe regular file: ${state}"
     return 1
@@ -2237,6 +2278,7 @@ check_same_version_replay_preconditions() {
   fi
   local path_key path_expected
   for path_key in web_path pki_bundle_dir managed_cert_dir external_routes_dir kernel_runtime_path node_identity_credential_file; do
+    [[ "${mode}" != combined || "${path_key}" != node_identity_credential_file ]] || continue
     case "${path_key}" in
     web_path) path_expected="${WEB_PATH}" ;;
     pki_bundle_dir) path_expected="$(installer_state_pki_path)" ;;
@@ -2276,39 +2318,25 @@ check_same_version_replay_preconditions() {
       echo_content red "Same-version Node identity generation rollback requires explicit migration"
       return 1
     fi
-    if [[ "${mode}" == combined ]] && (( NODE_IDENTITY_GENERATION > stored_generation )); then
-      local registered_identity credential_digest live_generation live_digest live_status
-      local live_id live_server live_name live_domain live_ip
-      [[ -n "${MARIADB_PASSWORD}" ]] || {
-        echo_content red "Combined Node identity rotation cannot be verified without the committed database credential"
+    if [[ "${mode}" == combined ]]; then
+      local stored_credential_path
+      stored_credential_path="$(installer_state_value node_identity_credential_file "${state}")"
+      [[ -n "${stored_credential_path}" ]] || {
+        echo_content red "Installer state lacks the committed combined Node credential path; manual recovery is required"
         return 1
       }
-      # The credential file alone cannot attest a rotation: only the Web
-      # control plane's committed identity record can bind its generation and
-      # exact file digest. This query does not create files or alter the DB.
-      if ! registered_identity="$(printf '%s\n' "${MARIADB_PASSWORD}" | \
-        docker exec -i "${MARIADB_CONTAINER}" sh -c '
-          IFS= read -r password || exit 1
-          export MYSQL_PWD="$password"
-          if command -v mariadb >/dev/null 2>&1; then
-            mariadb --batch --skip-column-names --raw -uroot -e "$1"
-          else
-            mysql --batch --skip-column-names --raw -uroot -e "$1"
-          fi
-        ' sh "SELECT generation,credential_sha256,status,identity_id,node_server_id,name,domain,public_ip FROM trojan_panel_db.node_identity WHERE identity_id='${NODE_IDENTITY_ID}'" 2>/dev/null)"; then
-        echo_content red "Combined Node identity generation advanced without a verifiable control-plane rotation; manual recovery is required"
-        return 1
+      if (( NODE_IDENTITY_GENERATION == stored_generation )); then
+        [[ "${NODE_IDENTITY_CREDENTIAL_FILE}" == "${stored_credential_path}" ]] || {
+          echo_content red "Same-version combined Node credential path changes require an explicit rotation"
+          return 1
+        }
+      else
+        [[ "${NODE_IDENTITY_CREDENTIAL_FILE}" != "${stored_credential_path}" ]] || {
+          echo_content red "Combined Node rotation requires its new committed credential file path"
+          return 1
+        }
       fi
-      IFS=$'\t' read -r live_generation live_digest live_status live_id live_server live_name live_domain live_ip <<<"${registered_identity}"
-      credential_digest="$(sha256sum "${credential_file}" | awk '{print $1}')"
-      [[ "${registered_identity}" != *$'\n'* && "${live_generation}" == "${NODE_IDENTITY_GENERATION}" &&
-        "${live_digest}" == "${credential_digest}" && "${live_status}" == active &&
-        "${live_id}" == "${NODE_IDENTITY_ID}" && "${live_server}" == "${NODE_SERVER_ID}" &&
-        "${live_name}" == "${TP_NODE_NAME}" && "${live_domain}" == "${TP_NODE_DOMAIN}" &&
-        "${live_ip}" == "${TP_NODE_PUBLIC_IP}" ]] || {
-        echo_content red "Combined Node identity generation advanced without a matching control-plane rotation; manual recovery is required"
-        return 1
-      }
+      verify_combined_identity_record || return 1
     fi
   fi
 }
