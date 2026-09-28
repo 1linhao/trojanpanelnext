@@ -25,6 +25,7 @@ MANAGED_CERT_DIR="${MANAGED_CERT_DIR:-${TP_DATA}/trojan-panel-core/cert}"
 NETWORK_PLAN_DIR="${NETWORK_PLAN_DIR:-${TP_DATA}/trojanpanelnext-network}"
 INSTALLER_STATE_DIR="${INSTALLER_STATE_DIR:-${TP_DATA}/trojanpanelnext-installer}"
 INSTALLER_STATE_FILE=""
+WEB_EFFECTIVE_CONFIG_FILE="${TP_DATA}/effective-web.yaml"
 
 MARIADB_CONTAINER="${MARIADB_CONTAINER:-trojan-panel-mariadb}"
 REDIS_CONTAINER="${REDIS_CONTAINER:-trojan-panel-redis}"
@@ -101,6 +102,11 @@ TP_CONFIG_ROOT="${TP_CONFIG_ROOT:-}"
 TP_CONFIG_FILE=""
 TP_CONFIG_READ_FILE=""
 TP_CONFIG_IDENTITY=""
+WEB_EFFECTIVE_CONFIG_IDENTITY=""
+WEB_EFFECTIVE_CONFIG_READ_FILE=""
+WEB_SAVED_MARIADB_PASSWORD=""
+WEB_SAVED_REDIS_PASSWORD=""
+WEB_SAVED_SYSADMIN_PASSWORD=""
 TP_REQUEST_COMMAND=""
 TP_REQUEST_MODE=""
 INSTALLER_ASSET_VERSION="development"
@@ -160,7 +166,7 @@ container_data_path() {
 }
 
 validate_host_data_root() {
-  local path marker
+  local path marker ancestor owner mode
   [[ "${TP_DATA}" == /tpdata/trojanpanelnext || "${TP_TEST_DATA_ROOT:-0}" == 1 ]] || {
     echo_content red "Host data root is fixed at /tpdata/trojanpanelnext"
     return 1
@@ -171,12 +177,39 @@ validate_host_data_root() {
     echo_content red "Host data root is non-canonical or contains a symbolic link: ${TP_DATA}"
     return 1
   }
+  ancestor="$(dirname -- "${TP_DATA}")"
+  while :; do
+    if [[ -e "${ancestor}" || -L "${ancestor}" ]]; then
+      [[ -d "${ancestor}" && ! -L "${ancestor}" ]] || {
+        echo_content red "Host data root parent is not a safe directory: ${ancestor}"
+        return 1
+      }
+      owner="$(stat -c %u -- "${ancestor}")"
+      mode="$(stat -c %a -- "${ancestor}")"
+      if [[ "${TP_TEST_DATA_ROOT:-0}" == 1 && "${ancestor}" == /tmp &&
+        "${owner}" == 0 && "${mode}" == 1777 ]]; then
+        : # Isolated test roots live below a private mktemp directory.
+      elif [[ "${owner}" != "${EUID}" && "${owner}" != 0 ]] ||
+        (( (8#${mode} & 0022) != 0 )); then
+        echo_content red "Host data root parent has unsafe ownership or permissions: ${ancestor}"
+        return 1
+      fi
+    fi
+    [[ "${ancestor}" != / ]] || break
+    ancestor="$(dirname -- "${ancestor}")"
+  done
   marker="${TP_DATA}/.trojanpanelnext-data-root"
   if [[ -e "${TP_DATA}" || -L "${TP_DATA}" ]]; then
     [[ -d "${TP_DATA}" && ! -L "${TP_DATA}" ]] || {
       echo_content red "Host data root is not a safe directory: ${TP_DATA}"
       return 1
     }
+    owner="$(stat -c %u -- "${TP_DATA}")"
+    mode="$(stat -c %a -- "${TP_DATA}")"
+    if [[ "${owner}" != "${EUID}" ]] || (( (8#${mode} & 0022) != 0 )); then
+      echo_content red "Host data root has unsafe ownership or permissions: ${TP_DATA}"
+      return 1
+    fi
     if [[ ! -f "${marker}" || -L "${marker}" ]]; then
       [[ -z "$(find "${TP_DATA}" -mindepth 1 -maxdepth 1 -print -quit)" ]] || {
         echo_content red "Host data root has unowned contents: ${TP_DATA}"
@@ -211,6 +244,28 @@ validate_host_data_root() {
       return 1
     }
   done
+}
+
+validate_web_effective_config_path() {
+  local parent="${TP_DATA}" file="${WEB_EFFECTIVE_CONFIG_FILE}" mode
+  if [[ -e "${parent}" || -L "${parent}" ]]; then
+    [[ -d "${parent}" && ! -L "${parent}" && "$(stat -c %u -- "${parent}")" == "${EUID}" ]] || {
+      echo_content red "Managed effective configuration directory has unsafe ownership: ${parent}"
+      return 1
+    }
+    mode="$(stat -c %a -- "${parent}")"
+    (( (8#${mode} & 0022) == 0 )) || {
+      echo_content red "Managed effective configuration directory is writable by others: ${parent}"
+      return 1
+    }
+  fi
+  if [[ -e "${file}" || -L "${file}" ]]; then
+    [[ -f "${file}" && ! -L "${file}" && "$(stat -c %u -- "${file}")" == "${EUID}" &&
+      "$(stat -c %a -- "${file}")" == 600 ]] || {
+      echo_content red "Managed effective configuration is not a safe owned 0600 file: ${file}"
+      return 1
+    }
+  fi
 }
 
 translate_test_data_paths() {
@@ -1566,34 +1621,68 @@ recreate_container_if_env_changed() {
   docker rm -f "${name}" >/dev/null 2>&1
 }
 
-write_web_generated_secrets() {
-  local file="${TP_CONFIG_FILE:-}"
-  if [[ -z "${file}" ]]; then
-    return
-  fi
-  local snapshot="${TP_SECURE_CONFIG_DIR}/config-write.yaml"
+load_web_effective_secrets() {
+  local file="${WEB_EFFECTIVE_CONFIG_FILE}" key input saved
+  validate_web_effective_config_path || return 1
+  [[ -e "${file}" ]] || return 0
+  WEB_EFFECTIVE_CONFIG_READ_FILE="${TP_SECURE_CONFIG_DIR}/effective-web-read.yaml"
+  WEB_EFFECTIVE_CONFIG_IDENTITY="$("${SECURE_FILE_HELPER}" snapshot \
+    --path "${file}" --output "${WEB_EFFECTIVE_CONFIG_READ_FILE}")" || {
+    echo_content red "Managed effective configuration changed during snapshot"
+    return 1
+  }
+  [[ "$(yaml_read_raw "${WEB_EFFECTIVE_CONFIG_READ_FILE}" deployment_mode)" == "${TP_DEPLOYMENT_MODE}" &&
+    "$(yaml_read_raw "${WEB_EFFECTIVE_CONFIG_READ_FILE}" web_hostname)" == "${TP_WEB_DOMAIN}" ]] || {
+    echo_content red "Managed effective configuration belongs to another Web deployment"
+    return 1
+  }
+  WEB_SAVED_MARIADB_PASSWORD="$(yaml_read_raw "${WEB_EFFECTIVE_CONFIG_READ_FILE}" mariadb_password)"
+  WEB_SAVED_REDIS_PASSWORD="$(yaml_read_raw "${WEB_EFFECTIVE_CONFIG_READ_FILE}" redis_password)"
+  WEB_SAVED_SYSADMIN_PASSWORD="$(yaml_read_raw "${WEB_EFFECTIVE_CONFIG_READ_FILE}" sysadmin_password)"
+  [[ -n "${WEB_SAVED_MARIADB_PASSWORD}" && -n "${WEB_SAVED_REDIS_PASSWORD}" &&
+    -n "${WEB_SAVED_SYSADMIN_PASSWORD}" ]] || {
+    echo_content red "Managed effective configuration lacks committed Web credentials"
+    return 1
+  }
+  for key in MARIADB_PASSWORD REDIS_PASSWORD SYSADMIN_PASSWORD; do
+    input="${!key:-}"
+    saved="WEB_SAVED_${key}"
+    [[ -z "${input}" || "${input}" == "${!saved}" ]] || {
+      echo_content red "Explicit ${key} differs from the committed Web credential; use an explicit migration or rotation"
+      return 1
+    }
+  done
+}
+
+write_web_effective_config() {
+  local file="${WEB_EFFECTIVE_CONFIG_FILE}" snapshot="${TP_SECURE_CONFIG_DIR}/effective-web-write.yaml"
+  validate_web_effective_config_path || return 1
   install -m 0600 "${TP_CONFIG_READ_FILE}" "${snapshot}"
   MARIADB_PASSWORD="${MARIADB_PASSWORD}" REDIS_PASSWORD="${REDIS_PASSWORD}" SYSADMIN_PASSWORD="${SYSADMIN_PASSWORD}" \
     yq -i '.trojanpanelnext.mariadb_password = strenv(MARIADB_PASSWORD) | .trojanpanelnext.redis_password = strenv(REDIS_PASSWORD) | .trojanpanelnext.sysadmin_password = strenv(SYSADMIN_PASSWORD)' "${snapshot}"
+  if [[ -f "${file}" ]] && cmp -s "${snapshot}" "${file}"; then return 0; fi
+  local -a expected=()
+  [[ -z "${WEB_EFFECTIVE_CONFIG_IDENTITY}" ]] || expected=(--expected "${WEB_EFFECTIVE_CONFIG_IDENTITY}")
   "${SECURE_FILE_HELPER}" atomic-write --path "${file}" --input "${snapshot}" \
-    --expected "${TP_CONFIG_IDENTITY}" --mode 0600 || {
-    echo_content red "Sensitive configuration changed during credential persistence"
-    exit 1
+    "${expected[@]}" --mode 0600 || {
+    echo_content red "Managed effective configuration changed during credential persistence"
+    return 1
   }
 }
 
 init_web_secrets() {
   if [[ -z "${MARIADB_PASSWORD:-}" ]]; then
-    MARIADB_PASSWORD="$(container_env_value "${MARIADB_CONTAINER}" MYSQL_ROOT_PASSWORD || true)"
+    MARIADB_PASSWORD="${WEB_SAVED_MARIADB_PASSWORD:-$(container_env_value "${MARIADB_CONTAINER}" MYSQL_ROOT_PASSWORD || true)}"
   fi
   if [[ -z "${REDIS_PASSWORD:-}" ]]; then
-    REDIS_PASSWORD="$(container_env_value "${PANEL_CONTAINER}" redis_pass || true)"
+    REDIS_PASSWORD="${WEB_SAVED_REDIS_PASSWORD:-$(container_env_value "${PANEL_CONTAINER}" redis_pass || true)}"
   fi
+  SYSADMIN_PASSWORD="${SYSADMIN_PASSWORD:-${WEB_SAVED_SYSADMIN_PASSWORD}}"
   MARIADB_PASSWORD="${MARIADB_PASSWORD:-$(random_password)}"
   REDIS_PASSWORD="${REDIS_PASSWORD:-$(random_password)}"
   SYSADMIN_PASSWORD="${SYSADMIN_PASSWORD:-$(random_sysadmin_password)}"
   export MARIADB_PASSWORD REDIS_PASSWORD SYSADMIN_PASSWORD
-  write_web_generated_secrets
+  write_web_effective_config
 }
 
 image_exists() {
@@ -3951,6 +4040,9 @@ main() {
 
   if [[ "${command}:${mode}" == install:combined ]]; then
     check_combined_host_preconditions
+  fi
+  if [[ "${command}" == install && ( "${mode}" == web || "${mode}" == combined ) ]]; then
+    load_web_effective_secrets
   fi
 
   if [[ "${command}" == install ]]; then
