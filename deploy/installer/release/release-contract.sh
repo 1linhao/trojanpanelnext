@@ -13,6 +13,13 @@ TP_RELEASE_ASSET_PATHS=(
   config-web.yaml
   config-node.yaml
   config-combined.yaml
+  client/tpnext.sh
+  client/topology.sh
+  client/verify-release.sh
+  client/download-assets.sh
+  client/upload-assets.sh
+  client/templates/unified-ssh.yaml
+  client/templates/unified-local.yaml
   entry/entryctl.sh
   entry/controller.sh
   entry/v2.sh

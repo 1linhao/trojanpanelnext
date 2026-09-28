@@ -46,6 +46,9 @@ tar -xzf "${archive}" -C "${assets}" >/dev/null 2>&1 || fail 'archive extraction
 expected_paths=(
   bootstrap.sh release-contract.sh verify-assets.sh install.sh secure-file node-bundle
   config-web.yaml config-node.yaml config-combined.yaml
+  client/tpnext.sh client/topology.sh client/verify-release.sh
+  client/download-assets.sh client/upload-assets.sh
+  client/templates/unified-ssh.yaml client/templates/unified-local.yaml
   entry/entryctl.sh entry/controller.sh entry/v2.sh
   entry/adapters/external.sh entry/adapters/nginx_certbot.sh entry/adapters/caddy.sh
   release-manifest.json
@@ -73,10 +76,10 @@ manifest="${assets}/release-manifest.json"
 yq_json() { yq -p=json -r "$1" "${manifest}" 2>/dev/null; }
 [[ "$(yq_json 'keys | length')" == 6 && "$(yq_json '.images | keys | length')" == 6 ]] || fail 'manifest structure mismatch'
 [[ "$(yq_json '.schema_version')" == 1 && "$(yq_json '.release_version')" == "${tag#v}" ]] || fail 'manifest version mismatch'
-[[ "$(yq_json '.assets | length')" == 15 ]] || fail 'manifest asset set mismatch'
+[[ "$(yq_json '.assets | length')" == "$((${#expected_paths[@]} - 1))" ]] || fail 'manifest asset set mismatch'
 [[ "$(yq_json '.source_commit')" =~ ^[0-9a-f]{40}$ ]] || fail 'invalid manifest source commit'
 manifest_paths='|'
-for ((i = 0; i < 15; i++)); do
+for ((i = 0; i < ${#expected_paths[@]} - 1; i++)); do
   path="$(yq_json ".assets[${i}].path")"
   sha="$(yq_json ".assets[${i}].sha256")"
   name="$(yq_json ".assets[${i}].name")"

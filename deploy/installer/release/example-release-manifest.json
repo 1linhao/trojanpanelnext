@@ -11,12 +11,12 @@
     {
       "name": "release-contract",
       "path": "release-contract.sh",
-      "sha256": "a4bc10033ea819fad4698e29a305828a1cc9e6e0b5cfe008cc4bf2e5aeac0613"
+      "sha256": "7ab9c1e9ef977b0810d4f898027dd292e1a636a6fd9a280951e773cd85bd9e90"
     },
     {
       "name": "verify-assets",
       "path": "verify-assets.sh",
-      "sha256": "297dedf4573e2417213542ddaec5c4881a70b279dfaf4d28f5228389c0938407"
+      "sha256": "61968f5bd46e44e6563eca7d92628250384d70621d71b19ccb64ff8065c73b48"
     },
     {
       "name": "install",
@@ -47,6 +47,41 @@
       "name": "config-combined",
       "path": "config-combined.yaml",
       "sha256": "c74a34654fecbd53a3739f97ca1b6f45f4fa157c83589d998cbf7522b057ea37"
+    },
+    {
+      "name": "client/tpnext",
+      "path": "client/tpnext.sh",
+      "sha256": "926b9527310a0faf64503f9834d808ad4384680d3fa044540f2c7bb2d639369a"
+    },
+    {
+      "name": "client/topology",
+      "path": "client/topology.sh",
+      "sha256": "3f0ff2b55412b91a96f1f19276a74ea40633f6ac410be81c6750e52d52b8b325"
+    },
+    {
+      "name": "client/verify-release",
+      "path": "client/verify-release.sh",
+      "sha256": "f134921f5b16c0e65928f3a78feee86e539bebf6189e3575b98b128bcebe4bca"
+    },
+    {
+      "name": "client/download-assets",
+      "path": "client/download-assets.sh",
+      "sha256": "868225c225b0abc38bd15d119b4544f01a8f32e9b5174f058772f5136ad13ec3"
+    },
+    {
+      "name": "client/upload-assets",
+      "path": "client/upload-assets.sh",
+      "sha256": "5165f31464aba32cfd033035699c3d6381500b6b5414ebe5b1db654c66aad055"
+    },
+    {
+      "name": "client/templates/unified-ssh",
+      "path": "client/templates/unified-ssh.yaml",
+      "sha256": "a9329bdb3d0e76c3b42ca3273056c7cdda1e5f27d40cd3633b596c7122c3c832"
+    },
+    {
+      "name": "client/templates/unified-local",
+      "path": "client/templates/unified-local.yaml",
+      "sha256": "96a6f2db96eee7e5de7197caeede648cb7f73f1d7e68b021f0fa2ca77a342850"
     },
     {
       "name": "entry/entryctl",

@@ -59,7 +59,7 @@ for image in "${api_image}" "${web_image}" "${node_agent_image}" "${caddy_image}
   [[ "${image}" =~ ${image_pattern} ]] || fail "image must be pinned by digest: ${image:-<missing>}"
 done
 
-mkdir -p "${output}/entry/adapters"
+mkdir -p "${output}/entry/adapters" "${output}/client/templates"
 install -m 0755 "${SCRIPT_DIR}/bootstrap.sh" "${output}/bootstrap.sh"
 install -m 0644 "${SCRIPT_DIR}/release-contract.sh" "${output}/release-contract.sh"
 install -m 0755 "${SCRIPT_DIR}/verify-assets.sh" "${output}/verify-assets.sh"
@@ -76,6 +76,12 @@ install -m 0644 "${INSTALLER_DIR}/entry/v2.sh" "${output}/entry/v2.sh"
 install -m 0644 "${INSTALLER_DIR}/entry/adapters/external.sh" "${output}/entry/adapters/external.sh"
 install -m 0755 "${INSTALLER_DIR}/entry/adapters/nginx_certbot.sh" "${output}/entry/adapters/nginx_certbot.sh"
 install -m 0755 "${INSTALLER_DIR}/entry/adapters/caddy.sh" "${output}/entry/adapters/caddy.sh"
+for client_script in tpnext.sh topology.sh verify-release.sh download-assets.sh upload-assets.sh; do
+  install -m 0755 "${INSTALLER_DIR}/client/${client_script}" "${output}/client/${client_script}"
+done
+for client_template in unified-ssh.yaml unified-local.yaml; do
+  install -m 0644 "${INSTALLER_DIR}/client/templates/${client_template}" "${output}/client/templates/${client_template}"
+done
 sed -i "s|^INSTALLER_ASSET_VERSION=\"development\"$|INSTALLER_ASSET_VERSION=\"${version}\"|" "${output}/install.sh"
 [[ "$(grep -Fxc "INSTALLER_ASSET_VERSION=\"${version}\"" "${output}/install.sh")" == 1 ]] ||
   fail 'installer asset version replacement failed'
