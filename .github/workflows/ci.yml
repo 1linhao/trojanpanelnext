@@ -191,6 +191,10 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         shell: bash
         run: bash deploy/installer/tests/local_release_bundle_test.sh
+      - name: Test Node catalog against isolated MariaDB and Redis
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: bash deploy/installer/tests/local_node_catalog_test.sh
 
   docs:
     name: documentation site

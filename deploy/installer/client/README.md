@@ -26,4 +26,6 @@ macOS 将两处 `sha256sum` 换成 `shasum -a 256`。`init` 再次校验固定�
 
 `hosts` 只描述执行连接；`web.domain`、`web.public_ip` 与每个 Node 的 `domain`、`public_ip` 描述服务地址。SSH 可用 root key 登录，或普通用户 key 登录并在后续部署阶段使用 `sudo -n`。`node_key` 是后续 Node 状态路径的稳定键；追加或重排数组不会改变已有路径。删除或改名并不授权卸载、撤销或轮换。`plan` 仅做 YAML/拓扑校验并打印无秘密的逐宿主计划；本票不提供 `check` 或 `deploy`。
 
+Web `node-identity catalog reconcile` 按 Node 服务 IP 与 gRPC 端口核对端点冲突；在统一部署登记期间，不要并行使用裸 `node-identity register` 手工登记同一端点。裸 `register` 维持原有手工登记契约，不提供 catalog 的 `node_key` 绑定。
+
 配置文件权限为 0600，验证资产工作目录为 0700。请使用 `*.local.yaml` 配置名；在 Git 工作树内，CLI 只接受已被 Git ignore 的配置和工作目录。已有配置和工作目录不会被覆盖。不要把 Web 高权限统一 YAML 拷到 Node VPS。

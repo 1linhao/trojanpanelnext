@@ -76,7 +76,7 @@ install -m 0644 "${INSTALLER_DIR}/entry/v2.sh" "${output}/entry/v2.sh"
 install -m 0644 "${INSTALLER_DIR}/entry/adapters/external.sh" "${output}/entry/adapters/external.sh"
 install -m 0755 "${INSTALLER_DIR}/entry/adapters/nginx_certbot.sh" "${output}/entry/adapters/nginx_certbot.sh"
 install -m 0755 "${INSTALLER_DIR}/entry/adapters/caddy.sh" "${output}/entry/adapters/caddy.sh"
-for client_script in tpnext.sh topology.sh verify-release.sh download-assets.sh upload-assets.sh; do
+for client_script in tpnext.sh topology.sh node-catalog.sh verify-release.sh download-assets.sh upload-assets.sh; do
   install -m 0755 "${INSTALLER_DIR}/client/${client_script}" "${output}/client/${client_script}"
 done
 for client_template in unified-ssh.yaml unified-local.yaml; do

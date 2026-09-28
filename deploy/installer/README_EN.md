@@ -414,7 +414,7 @@ mutation boundary. The verifier only depends on Bash, awk, grep, and coreutils; 
 a preinstalled `jq`. It checks `SHA256SUMS` against its fixed asset
 set, rejects symlink components in bundle paths, and accepts only the generator's printable ASCII +
 LF manifest bytes before sourcing or executing any other bundled program. Both entrypoints verify all
-22 assets, including `secure-file`, `node-bundle`, and the client CLI, before a helper can first execute, then verify the configuration
+23 assets, including `secure-file`, `node-bundle`, the client CLI and the Node catalog helper, before a helper can first execute, then verify the configuration
 contract again from the descriptor-safe snapshot before crossing the host mutation boundary.
 
 The publishing workflow retains an SBOM and maximum provenance for every product image, and creates
