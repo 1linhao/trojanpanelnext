@@ -105,6 +105,15 @@ openssl() {
 }
 
 docker() {
+  if [[ "${1:-}" == exec && " $* " == *'credential_sha256'* ]]; then
+    printf 'docker read-only node-identity record\n' >>"${TP_TEST_TRACE}"
+    local ignored_password
+    IFS= read -r ignored_password || return 1
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "${TP_TEST_STATUS_GENERATION:-1}" "${TP_TEST_STATUS_DIGEST}" "${TP_TEST_STATUS_LIFECYCLE:-active}" \
+      '11111111-2222-4333-8444-555555555555' 42 combined-node node.example.com 203.0.113.10
+    return
+  fi
   printf 'docker' >>"${TP_TEST_TRACE}"
   local argument
   for argument in "$@"; do
@@ -415,17 +424,20 @@ snapshot_host() {
   } | sha256sum | cut -d ' ' -f 1
 }
 assert_rejected_without_host_change() {
-  local case_name="$1" diagnostic="$2" before after trace_before
+  local case_name="$1" diagnostic="$2" before after trace_before identity_before
   before="$(snapshot_host)"
-  trace_before="$(sha256sum "${trace}" "${work}/identity.trace" 2>/dev/null || true)"
+  trace_before="$(sed '/^docker read-only node-identity record$/d' "${trace}" | sha256sum)"
+  identity_before="$(sha256sum "${work}/identity.trace" 2>/dev/null || true)"
   if run_installer install --mode combined >"${work}/${case_name}.out" 2>&1; then
     fail "combined replay accepted ${case_name}"
   fi
   grep -Fq "${diagnostic}" "${work}/${case_name}.out" || fail "${case_name} omitted its diagnostic"
   after="$(snapshot_host)"
   [[ "${before}" == "${after}" ]] || fail "${case_name} changed managed files or containers"
-  [[ "${trace_before}" == "$(sha256sum "${trace}" "${work}/identity.trace" 2>/dev/null || true)" ]] ||
+  [[ "${trace_before}" == "$(sed '/^docker read-only node-identity record$/d' "${trace}" | sha256sum)" ]] ||
     fail "${case_name} called Docker or changed the Node identity"
+  [[ "${identity_before}" == "$(sha256sum "${work}/identity.trace" 2>/dev/null || true)" ]] ||
+    fail "${case_name} changed the Node identity lifecycle"
 }
 cp "${config}" "${work}/committed-combined.yaml"
 for drift in name ip mixed; do
@@ -449,6 +461,7 @@ cp "${work}/committed-combined.state" "${state}"
 
 credential="${data}/trojan-panel/config/node-identities/combined-node.json"
 cp "${credential}" "${work}/committed-combined-credential.json"
+export TP_TEST_STATUS_DIGEST="$(sha256sum "${credential}" | cut -d ' ' -f 1)"
 for drift in name ip domain identity server; do
   case "${drift}" in
   name) change='.node_name = "changed-node"' ;;
@@ -462,6 +475,24 @@ for drift in name ip domain identity server; do
   assert_rejected_without_host_change "credential-${drift}-drift" 'explicit revoke and registration'
 done
 cp "${work}/committed-combined-credential.json" "${credential}"
+
+jq '.generation = 2' "${work}/committed-combined-credential.json" >"${credential}"
+chmod 0600 "${credential}"
+assert_rejected_without_host_change unrotated-generation-advance 'generation advanced without a matching control-plane rotation'
+export TP_TEST_STATUS_GENERATION=2
+assert_rejected_without_host_change uncommitted-credential-digest 'generation advanced without a matching control-plane rotation'
+TP_TEST_STATUS_DIGEST="$(sha256sum "${credential}" | cut -d ' ' -f 1)"
+export TP_TEST_STATUS_LIFECYCLE=rotating
+assert_rejected_without_host_change unfinished-generation-advance 'generation advanced without a matching control-plane rotation'
+TP_TEST_STATUS_LIFECYCLE=active
+run_installer install --mode combined >"${work}/rotated-replay.out" 2>&1 || {
+  sed -n '1,120p' "${work}/rotated-replay.out" >&2
+  fail 'combined replay rejected a committed control-plane rotation'
+}
+grep -Fxq 'node_identity_generation=2' "${state}" || fail 'combined replay did not commit the verified rotation generation'
+cp "${credential}" "${work}/committed-combined-credential.json"
+cp "${state}" "${work}/committed-combined.state"
+core_runs_after_rotation="$(grep -c '^docker run .*--name trojan-panel-core ' "${trace}")"
 
 # A crash after registering the Node identity but before committing installer
 # state can be retried with the same identity. A changed request cannot adopt
@@ -487,7 +518,7 @@ run_installer install --mode combined >"${work}/replay.out" 2>&1 || {
   sed -n '1,260p' "${work}/replay.out" >&2
   fail 'combined replay failed'
 }
-test "$(grep -c '^docker run .*--name trojan-panel-core ' "${trace}")" = 1 || fail 'combined replay recreated Core'
+test "$(grep -c '^docker run .*--name trojan-panel-core ' "${trace}")" = "${core_runs_after_rotation}" || fail 'unchanged combined replay recreated Core'
 test "$(grep -c '^docker restart trojan-panel-core$' "${trace}" || true)" = 0 || fail 'unchanged replay restarted the Node certificate consumer'
 
 # A rotated identity may advance generation, but an old bootstrap credential
@@ -500,7 +531,7 @@ if run_installer install --mode combined >"${work}/generation-rollback.out" 2>&1
   fail 'combined replay accepted a stale Node identity generation'
 fi
 grep -Fq 'identity generation' "${work}/generation-rollback.out" || fail 'generation rollback omission diagnostic'
-jq '.generation = 1' "${data}/trojan-panel/config/node-identities/combined-node.json" >"${work}/current-identity.json"
+jq '.generation = 2' "${data}/trojan-panel/config/node-identities/combined-node.json" >"${work}/current-identity.json"
 mv "${work}/current-identity.json" "${data}/trojan-panel/config/node-identities/combined-node.json"
 chmod 600 "${data}/trojan-panel/config/node-identities/combined-node.json"
 

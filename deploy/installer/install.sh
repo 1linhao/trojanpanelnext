@@ -2276,6 +2276,40 @@ check_same_version_replay_preconditions() {
       echo_content red "Same-version Node identity generation rollback requires explicit migration"
       return 1
     fi
+    if [[ "${mode}" == combined ]] && (( NODE_IDENTITY_GENERATION > stored_generation )); then
+      local registered_identity credential_digest live_generation live_digest live_status
+      local live_id live_server live_name live_domain live_ip
+      [[ -n "${MARIADB_PASSWORD}" ]] || {
+        echo_content red "Combined Node identity rotation cannot be verified without the committed database credential"
+        return 1
+      }
+      # The credential file alone cannot attest a rotation: only the Web
+      # control plane's committed identity record can bind its generation and
+      # exact file digest. This query does not create files or alter the DB.
+      if ! registered_identity="$(printf '%s\n' "${MARIADB_PASSWORD}" | \
+        docker exec -i "${MARIADB_CONTAINER}" sh -c '
+          IFS= read -r password || exit 1
+          export MYSQL_PWD="$password"
+          if command -v mariadb >/dev/null 2>&1; then
+            mariadb --batch --skip-column-names --raw -uroot -e "$1"
+          else
+            mysql --batch --skip-column-names --raw -uroot -e "$1"
+          fi
+        ' sh "SELECT generation,credential_sha256,status,identity_id,node_server_id,name,domain,public_ip FROM trojan_panel_db.node_identity WHERE identity_id='${NODE_IDENTITY_ID}'" 2>/dev/null)"; then
+        echo_content red "Combined Node identity generation advanced without a verifiable control-plane rotation; manual recovery is required"
+        return 1
+      fi
+      IFS=$'\t' read -r live_generation live_digest live_status live_id live_server live_name live_domain live_ip <<<"${registered_identity}"
+      credential_digest="$(sha256sum "${credential_file}" | awk '{print $1}')"
+      [[ "${registered_identity}" != *$'\n'* && "${live_generation}" == "${NODE_IDENTITY_GENERATION}" &&
+        "${live_digest}" == "${credential_digest}" && "${live_status}" == active &&
+        "${live_id}" == "${NODE_IDENTITY_ID}" && "${live_server}" == "${NODE_SERVER_ID}" &&
+        "${live_name}" == "${TP_NODE_NAME}" && "${live_domain}" == "${TP_NODE_DOMAIN}" &&
+        "${live_ip}" == "${TP_NODE_PUBLIC_IP}" ]] || {
+        echo_content red "Combined Node identity generation advanced without a matching control-plane rotation; manual recovery is required"
+        return 1
+      }
+    fi
   fi
 }
 
@@ -3727,11 +3761,7 @@ main() {
     prepare_secure_config "${config_file}"
   fi
   verify_release_assets_before_host_change "${TP_CONFIG_READ_FILE}"
-  if [[ "${command}" == validate ]]; then
-    load_config "${mode}" "${TP_CONFIG_READ_FILE}"
-  else
-    load_config "${mode}" "${TP_CONFIG_READ_FILE}"
-  fi
+  load_config "${mode}" "${TP_CONFIG_READ_FILE}"
   if [[ "${TP_NODE_BUNDLE_ACTIVE}" == 1 ]]; then
     TP_PKI_BUNDLE_DIR="${TP_NODE_BUNDLE_DIR}/pki"
   fi
