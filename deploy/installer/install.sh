@@ -2121,11 +2121,79 @@ installer_state_value() {
   sed -n "s/^${key}=//p" "${file}" | head -n 1
 }
 
+verify_combined_identity_record() {
+  local credential_file="${NODE_IDENTITY_CREDENTIAL_FILE}"
+  local registered_identity credential_digest live_generation live_digest live_status
+  local live_id live_server live_name live_domain live_ip live_path
+  [[ -n "${MARIADB_PASSWORD}" ]] || {
+    echo_content red "Combined Node identity cannot be verified without the committed database credential"
+    return 1
+  }
+  # The credential file alone cannot attest a replay or rotation. Compare it
+  # to the control plane's committed identity record without a DB mutation.
+  if ! registered_identity="$(printf '%s\n' "${MARIADB_PASSWORD}" | \
+    docker exec -i "${MARIADB_CONTAINER}" sh -c '
+      IFS= read -r password || exit 1
+      export MYSQL_PWD="$password"
+      if command -v mariadb >/dev/null 2>&1; then
+        mariadb --batch --skip-column-names --raw -uroot --database="$2" -e "$1"
+      else
+        mysql --batch --skip-column-names --raw -uroot --database="$2" -e "$1"
+      fi
+    ' sh "SELECT generation,credential_sha256,status,identity_id,node_server_id,name,domain,public_ip,credential_path FROM node_identity WHERE identity_id='${NODE_IDENTITY_ID}'" \
+      "${MARIADB_DATABASE}" 2>/dev/null)"; then
+    echo_content red "Combined Node identity control-plane record is unavailable; manual recovery is required"
+    return 1
+  fi
+  IFS=$'\t' read -r live_generation live_digest live_status live_id live_server live_name live_domain live_ip live_path <<<"${registered_identity}"
+  credential_digest="$(sha256sum "${credential_file}" | awk '{print $1}')"
+  [[ "${registered_identity}" != *$'\n'* && "${live_generation}" == "${NODE_IDENTITY_GENERATION}" &&
+    "${live_digest}" == "${credential_digest}" && "${live_status}" == active &&
+    "${live_id}" == "${NODE_IDENTITY_ID}" && "${live_server}" == "${NODE_SERVER_ID}" &&
+    "${live_name}" == "${TP_NODE_NAME}" && "${live_domain}" == "${TP_NODE_DOMAIN}" &&
+    "${live_ip}" == "${TP_NODE_PUBLIC_IP}" && "${live_path}" == "${credential_file}" ]] || {
+    echo_content red "Combined Node credential does not match the active control-plane identity record; manual recovery is required"
+    return 1
+  }
+}
+
 check_same_version_replay_preconditions() {
-  local mode="$1" state expected actual key
+  local mode="$1" state expected actual key credential_file
   state="$(installer_state_path_for "${mode}")"
   INSTALLER_STATE_FILE="${state}"
-  [[ ! -e "${state}" && ! -L "${state}" ]] && return 0
+  if [[ "${mode}" == combined ]]; then
+    credential_file="${NODE_IDENTITY_CREDENTIAL_FILE}"
+    if [[ -e "${credential_file}" || -L "${credential_file}" ]]; then
+      [[ "${NODE_IDENTITY_GENERATION}" =~ ^[1-9][0-9]*$ ]] || {
+        echo_content red "Combined Node credential identity generation is invalid; manual recovery is required"
+        return 1
+      }
+      [[ -f "${credential_file}" && ! -L "${credential_file}" &&
+        "${NODE_IDENTITY_ID}" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ &&
+        "${NODE_SERVER_ID}" =~ ^[1-9][0-9]*$ ]] || {
+        echo_content red "Combined Node credential metadata is incomplete or unsafe; manual recovery is required"
+        return 1
+      }
+      jq -e --arg name "${TP_NODE_NAME}" --arg ip "${TP_NODE_PUBLIC_IP}" \
+        --arg domain "${TP_NODE_DOMAIN}" --arg id "${NODE_IDENTITY_ID}" \
+        --arg server "${NODE_SERVER_ID}" --arg generation "${NODE_IDENTITY_GENERATION}" \
+        '.node_name == $name and .public_ip == $ip and .node_domain == $domain and
+         .node_identity_id == $id and (.node_server_id | tostring) == $server and
+         (.generation | tostring) == $generation' "${credential_file}" >/dev/null 2>&1 || {
+        echo_content red "Combined Node credential identity metadata differs from the requested deployment; explicit revoke and registration is required"
+        return 1
+      }
+    elif [[ -e "${state}" || -L "${state}" ]]; then
+      echo_content red "Committed combined Node credential is missing; manual recovery is required"
+      return 1
+    fi
+  fi
+  if [[ ! -e "${state}" && ! -L "${state}" ]]; then
+    if [[ "${mode}" == combined && ( -e "${credential_file}" || -L "${credential_file}" ) ]]; then
+      verify_combined_identity_record
+    fi
+    return
+  fi
   [[ -f "${state}" && ! -L "${state}" ]] || {
     echo_content red "Installer state is not a safe regular file: ${state}"
     return 1
@@ -2181,6 +2249,21 @@ check_same_version_replay_preconditions() {
     }
   fi
   if [[ "${mode}" == combined ]]; then
+    for key in node_name node_public_ip; do
+      case "$key" in
+      node_name) expected="$TP_NODE_NAME" ;;
+      node_public_ip) expected="$TP_NODE_PUBLIC_IP" ;;
+      esac
+      actual="$(installer_state_value "${key}" "${state}")"
+      [[ -n "${actual}" ]] || {
+        echo_content red "Installer state lacks committed combined Node identity metadata; manual recovery is required"
+        return 1
+      }
+      [[ "${actual}" == "${expected}" ]] || {
+        echo_content red "Same-version combined Node identity metadata changes require explicit revoke and registration"
+        return 1
+      }
+    done
     for key in node_identity_id node_server_id; do
       case "$key" in
       node_identity_id) expected="$NODE_IDENTITY_ID" ;;
@@ -2195,6 +2278,7 @@ check_same_version_replay_preconditions() {
   fi
   local path_key path_expected
   for path_key in web_path pki_bundle_dir managed_cert_dir external_routes_dir kernel_runtime_path node_identity_credential_file; do
+    [[ "${mode}" != combined || "${path_key}" != node_identity_credential_file ]] || continue
     case "${path_key}" in
     web_path) path_expected="${WEB_PATH}" ;;
     pki_bundle_dir) path_expected="$(installer_state_pki_path)" ;;
@@ -2234,6 +2318,26 @@ check_same_version_replay_preconditions() {
       echo_content red "Same-version Node identity generation rollback requires explicit migration"
       return 1
     fi
+    if [[ "${mode}" == combined ]]; then
+      local stored_credential_path
+      stored_credential_path="$(installer_state_value node_identity_credential_file "${state}")"
+      [[ -n "${stored_credential_path}" ]] || {
+        echo_content red "Installer state lacks the committed combined Node credential path; manual recovery is required"
+        return 1
+      }
+      if (( NODE_IDENTITY_GENERATION == stored_generation )); then
+        [[ "${NODE_IDENTITY_CREDENTIAL_FILE}" == "${stored_credential_path}" ]] || {
+          echo_content red "Same-version combined Node credential path changes require an explicit rotation"
+          return 1
+        }
+      else
+        [[ "${NODE_IDENTITY_CREDENTIAL_FILE}" != "${stored_credential_path}" ]] || {
+          echo_content red "Combined Node rotation requires its new committed credential file path"
+          return 1
+        }
+      fi
+      verify_combined_identity_record || return 1
+    fi
   fi
 }
 
@@ -2266,7 +2370,7 @@ write_installer_state() {
     case "${mode}" in
     web) printf 'domain=%s\n' "${TP_WEB_DOMAIN}" ;;
     node) printf 'domain=%s\nnode_identity_id=%s\nnode_server_id=%s\nnode_identity_generation=%s\n' "${TP_NODE_DOMAIN}" "${NODE_IDENTITY_ID}" "${NODE_SERVER_ID}" "${NODE_IDENTITY_GENERATION}" ;;
-    combined) printf 'web_domain=%s\nnode_domain=%s\nnode_identity_id=%s\nnode_server_id=%s\nnode_identity_generation=%s\n' "${TP_WEB_DOMAIN}" "${TP_NODE_DOMAIN}" "${NODE_IDENTITY_ID}" "${NODE_SERVER_ID}" "${NODE_IDENTITY_GENERATION}" ;;
+    combined) printf 'web_domain=%s\nnode_domain=%s\nnode_name=%s\nnode_public_ip=%s\nnode_identity_id=%s\nnode_server_id=%s\nnode_identity_generation=%s\n' "${TP_WEB_DOMAIN}" "${TP_NODE_DOMAIN}" "${TP_NODE_NAME}" "${TP_NODE_PUBLIC_IP}" "${NODE_IDENTITY_ID}" "${NODE_SERVER_ID}" "${NODE_IDENTITY_GENERATION}" ;;
     esac
   } >"${temporary}"
   mv -f -- "${temporary}" "${state}"
@@ -3685,22 +3789,7 @@ main() {
     prepare_secure_config "${config_file}"
   fi
   verify_release_assets_before_host_change "${TP_CONFIG_READ_FILE}"
-  if [[ "${command}" == validate ]]; then
-    load_config "${mode}" "${TP_CONFIG_READ_FILE}"
-  else
-    if [[ "${command}" == install ]]; then
-      if [[ -n "${ENTRY_SPEC_FILE}" && "${INSTALLER_ASSET_VERSION}" != development ]]; then
-        install_entry_runtime_assets || {
-          echo_content red "Could not persist verified EntryController runtime assets"
-          exit 1
-        }
-      fi
-    fi
-    if [[ "${command}" != validate && -x "${ENTRY_RUNTIME_DIR}/entryctl.sh" && ! -L "${ENTRY_RUNTIME_DIR}/entryctl.sh" ]]; then
-      ENTRYCTL_PATH="${ENTRY_RUNTIME_DIR}/entryctl.sh"
-    fi
-    load_config "${mode}" "${TP_CONFIG_READ_FILE}"
-  fi
+  load_config "${mode}" "${TP_CONFIG_READ_FILE}"
   if [[ "${TP_NODE_BUNDLE_ACTIVE}" == 1 ]]; then
     TP_PKI_BUNDLE_DIR="${TP_NODE_BUNDLE_DIR}/pki"
   fi
@@ -3719,6 +3808,16 @@ main() {
       load_combined_identity_metadata
     fi
     check_same_version_replay_preconditions "${mode}"
+  fi
+
+  if [[ "${command}" == install && -n "${ENTRY_SPEC_FILE}" && "${INSTALLER_ASSET_VERSION}" != development ]]; then
+    install_entry_runtime_assets || {
+      echo_content red "Could not persist verified EntryController runtime assets"
+      exit 1
+    }
+  fi
+  if [[ "${command}" != validate && -x "${ENTRY_RUNTIME_DIR}/entryctl.sh" && ! -L "${ENTRY_RUNTIME_DIR}/entryctl.sh" ]]; then
+    ENTRYCTL_PATH="${ENTRY_RUNTIME_DIR}/entryctl.sh"
   fi
 
   if [[ "${command}:${mode}" == install:combined ]]; then
