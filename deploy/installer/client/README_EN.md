@@ -2,15 +2,25 @@
 
 [简体中文](README.md) | English
 
-On Linux, macOS, or Windows WSL, provide Bash, curl, tar, OpenSSH, `sha256sum` or `shasum`, and a user-installed [mikefarah yq v4](https://github.com/mikefarah/yq#install). `init` installs no dependencies and does not contact a VPS. Confirm the fixed tag and archive SHA256 from the matching GitHub Release. The SHA below belongs only to rc.3.
+On Linux, macOS, or Windows WSL, provide Bash, curl, tar, OpenSSH, `sha256sum` or `shasum`, and a user-installed [mikefarah yq v4](https://github.com/mikefarah/yq#install). The official entrypoint is the archive from one fixed GitHub Release: check its tag, archive SHA256, and release attestations on the Release page; download it; verify its SHA256; then run its bundled CLI. `v0.1.0-rc.3` does not contain the unified CLI. Replace the placeholders below with values from the same newer Release.
 
 ```bash
-bash deploy/installer/client/tpnext.sh init \
+TAG='v<version>'
+SHA256='<release-archive-sha256>'
+ARCHIVE="trojanpanelnext-installer-${TAG#v}.tar.gz"
+curl -fL "https://github.com/1linhao/trojanpanelnext/releases/download/${TAG}/${ARCHIVE}" -o "$ARCHIVE"
+printf '%s  %s\n' "$SHA256" "$ARCHIVE" | sha256sum -c -
+mkdir -m 700 .tpnext-release
+tar -xzf "$ARCHIVE" -C .tpnext-release
+(cd .tpnext-release && sha256sum -c SHA256SUMS)
+bash .tpnext-release/client/tpnext.sh init \
   --config "$PWD/deployment.local.yaml" \
-  --tag v0.1.0-rc.3 \
-  --sha256 fe4e2b297756bf3a58db31f69636dd1ca8034196ef14e1184db14c4f8362d668
-bash deploy/installer/client/tpnext.sh plan --config "$PWD/deployment.local.yaml"
+  --tag "$TAG" --sha256 "$SHA256" --archive "$PWD/$ARCHIVE" \
+  --work-dir "$PWD/deployment.local"
+bash .tpnext-release/client/tpnext.sh plan --config "$PWD/deployment.local.yaml"
 ```
+
+On macOS, replace both `sha256sum` commands with `shasum -a 256`. `init` verifies the fixed archive SHA, every internal SHA/manifest entry, version, and image digests again before running other bundled code. It creates local configuration and work directories without contacting a VPS. Operators invoke only `client/tpnext.sh`; its topology parser, verifier, and templates are internal assets from the same bundle. The archive also supplies `config-web.yaml`, `config-node.yaml`, and `config-combined.yaml` for #38 to compile one host configuration per unique host rather than passing the unified YAML to the remote installer. Later tickets provide `check` and `deploy`.
 
 The default template describes an external computer reaching separate Web and Node VPS hosts by SSH. If the operator runs on the Web VPS, pass `--web-transport local`; that example maps one Node to the same `web-host` and plans a `combined` installation. You may edit the YAML to move that Node to another SSH host or append independent Nodes. For a remote `combined` host, map the Node to the Web host and set `node_caddy_https_port` to 443; the shared Entry uses 80/443. At most one Node may share the Web host, and their domains must differ. Only the same explicit host id means the same machine; IPs and SSH aliases do not establish co-location.
 

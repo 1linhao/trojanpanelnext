@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 CLIENT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 usage() {
-  printf 'Usage:\n  %s init --config FILE --tag RELEASE_TAG --sha256 ARCHIVE_SHA256 [--web-transport ssh|local] [--work-dir DIR]\n  %s plan --config FILE\n' "$0" "$0"
+  printf 'Usage:\n  %s init --config FILE --tag RELEASE_TAG --sha256 ARCHIVE_SHA256 [--archive FILE] [--web-transport ssh|local] [--work-dir DIR]\n  %s plan --config FILE\n' "$0" "$0"
 }
 fail() { printf 'tpnext: %s\n' "$1" >&2; exit "${2:-1}"; }
 [[ $# -ge 1 ]] || { usage >&2; exit 2; }
@@ -13,12 +13,13 @@ if [[ "${command}" == plan ]]; then
 fi
 [[ "${command}" == init ]] || { usage >&2; exit 2; }
 
-config=""; tag=""; sha=""; work_dir=""; web_transport=ssh
+config=""; tag=""; sha=""; work_dir=""; source_archive=""; web_transport=ssh
 while (($#)); do
   case "$1" in
   --config) [[ $# -ge 2 && -z "${config}" ]] || fail 'one --config FILE is required' 2; config="$2"; shift 2 ;;
   --tag) [[ $# -ge 2 && -z "${tag}" ]] || fail 'one --tag is required' 2; tag="$2"; shift 2 ;;
   --sha256) [[ $# -ge 2 && -z "${sha}" ]] || fail 'one --sha256 is required' 2; sha="$2"; shift 2 ;;
+  --archive) [[ $# -ge 2 && -z "${source_archive}" ]] || fail 'one --archive FILE is required' 2; source_archive="$2"; shift 2 ;;
   --web-transport) [[ $# -ge 2 ]] || fail '--web-transport requires a value' 2; web_transport="$2"; shift 2 ;;
   --work-dir) [[ $# -ge 2 && -z "${work_dir}" ]] || fail 'one --work-dir DIR is required' 2; work_dir="$2"; shift 2 ;;
   -h | --help) usage; exit 0 ;;
@@ -30,7 +31,7 @@ done
 [[ "${sha}" =~ ^[0-9a-f]{64}$ ]] || fail 'a 64-character lowercase archive SHA-256 is required' 2
 case "${web_transport}" in ssh | local) ;; *) fail '--web-transport must be ssh or local' 2 ;; esac
 missing=()
-for dependency in curl tar mktemp mkdir chmod mv ln sed find awk ssh scp; do
+for dependency in curl tar mktemp mkdir chmod mv ln sed find awk ssh scp cp; do
   command -v "${dependency}" >/dev/null 2>&1 || missing+=("${dependency}")
 done
 if ((${#missing[@]})); then fail "missing local commands: ${missing[*]}"; fi
@@ -95,7 +96,13 @@ stage="$(mktemp -d "${work_dir}.tmp.XXXXXXXX")"
 chmod 700 "${stage}"
 archive_name="trojanpanelnext-installer-${tag#v}.tar.gz"
 archive="${stage}/${archive_name}"
-curl -fLsS --retry 3 "https://github.com/1linhao/trojanpanelnext/releases/download/${tag}/${archive_name}" -o "${archive}" || fail 'Release download failed; retry init'
+if [[ -n "${source_archive}" ]]; then
+  [[ -f "${source_archive}" && ! -L "${source_archive}" ]] || fail 'local Release archive is missing or unsafe'
+  [[ "${source_archive}" == /* ]] || source_archive="./${source_archive}"
+  cp "${source_archive}" "${archive}" || fail 'local Release archive could not be copied'
+else
+  curl -fLsS --retry 3 "https://github.com/1linhao/trojanpanelnext/releases/download/${tag}/${archive_name}" -o "${archive}" || fail 'Release download failed; retry init'
+fi
 bash "${CLIENT_DIR}/verify-release.sh" --archive "${archive}" --tag "${tag}" --sha256 "${sha}" --assets-dir "${stage}/assets"
 template="${CLIENT_DIR}/templates/unified-${web_transport}.yaml"
 temp_config="$(mktemp "${config}.tmp.XXXXXXXX")"
