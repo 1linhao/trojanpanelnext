@@ -15,6 +15,7 @@ TP_RELEASE_ASSET_PATHS=(
   config-combined.yaml
   client/tpnext.sh
   client/topology.sh
+  client/node-catalog.sh
   client/verify-release.sh
   client/download-assets.sh
   client/upload-assets.sh

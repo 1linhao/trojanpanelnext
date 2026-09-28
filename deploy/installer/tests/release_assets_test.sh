@@ -218,7 +218,7 @@ for config in "${bundle}"/config-*.yaml; do
   grep -q '^  node_agent_image:' "${config}"
   ! grep -Eq '^  (purpose|panel_image|ui_image|core_image):' "${config}"
 done
-jq -e '.release_version == "1.2.3" and (.assets | length == 22)' \
+jq -e '.release_version == "1.2.3" and (.assets | length == 23)' \
   "${bundle}/release-manifest.json" >/dev/null
 installer_sha="$(sha256sum "${bundle}/install.sh" | awk '{print $1}')"
 source_sha="$(sha256sum "${INSTALLER_DIR}/install.sh" | awk '{print $1}')"
@@ -238,6 +238,7 @@ EXPECTED_RELEASE_ASSET_PATHS=(
   config-combined.yaml
   client/tpnext.sh
   client/topology.sh
+  client/node-catalog.sh
   client/verify-release.sh
   client/download-assets.sh
   client/upload-assets.sh

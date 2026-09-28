@@ -232,8 +232,8 @@ func validateCatalogDirectory(directory, bindingPath string) error {
 // A missing row is valid only before first registration. Any partial or
 // conflicting join fails before register can touch credentials or ACLs.
 func (manager *lifecycle) catalogIdentity(ctx context.Context, expected catalogBinding) (*identity, error) {
-	rows, err := manager.db.QueryContext(ctx, identitySelect+` WHERE name=? OR domain=? OR public_ip=? OR credential_path=?`,
-		expected.Name, expected.Domain, expected.PublicIP, expected.CredentialPath)
+	rows, err := manager.db.QueryContext(ctx, identitySelect+` WHERE name=? OR domain=? OR credential_path=?`,
+		expected.Name, expected.Domain, expected.CredentialPath)
 	if err != nil {
 		return nil, err
 	}
@@ -254,8 +254,8 @@ func (manager *lifecycle) catalogIdentity(ctx context.Context, expected catalogB
 	}
 	if len(matches) == 0 {
 		var serverCount uint
-		if err = manager.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM node_server WHERE name=? OR grpc_tls_server_name=? OR ip=?`,
-			expected.Name, expected.Domain, expected.PublicIP).Scan(&serverCount); err != nil {
+		if err = manager.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM node_server WHERE name=? OR grpc_tls_server_name=? OR (ip=? AND grpc_port=?)`,
+			expected.Name, expected.Domain, expected.PublicIP, expected.GRPCPort).Scan(&serverCount); err != nil {
 			return nil, err
 		}
 		if serverCount != 0 {
@@ -273,13 +273,9 @@ func (manager *lifecycle) catalogIdentity(ctx context.Context, expected catalogB
 		return nil, errors.New("identity ACL usernames differ from the committed identity ID")
 	}
 	if item.Name != expected.Name || item.Domain != expected.Domain || item.PublicIP != expected.PublicIP ||
-		item.CredentialPath != expected.CredentialPath || item.Generation != expected.Generation || item.Status != statusActive {
-		// Provisioning is a safe replay only when it has the same commitment.
-		if item.Status != statusProvisioning || item.Generation != expected.Generation ||
-			item.Name != expected.Name || item.Domain != expected.Domain || item.PublicIP != expected.PublicIP ||
-			item.CredentialPath != expected.CredentialPath {
-			return nil, errors.New("identity fields or lifecycle state differ")
-		}
+		item.CredentialPath != expected.CredentialPath || item.Generation != expected.Generation ||
+		(item.Status != statusActive && item.Status != statusProvisioning) {
+		return nil, errors.New("identity fields or lifecycle state differ")
 	}
 	var serverID uint64
 	var serverName, serverIP, tlsMode, tlsName string
@@ -304,8 +300,8 @@ func (manager *lifecycle) catalogIdentity(ctx context.Context, expected catalogB
 		return nil, errors.New("data-layer ACL identity is shared with another Node")
 	}
 	var conflictingServers uint
-	if err = manager.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM node_server WHERE id<>? AND (name=? OR grpc_tls_server_name=? OR ip=?)`,
-		item.NodeServerID, expected.Name, expected.Domain, expected.PublicIP).Scan(&conflictingServers); err != nil || conflictingServers != 0 {
+	if err = manager.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM node_server WHERE id<>? AND (name=? OR grpc_tls_server_name=? OR (ip=? AND grpc_port=?))`,
+		item.NodeServerID, expected.Name, expected.Domain, expected.PublicIP, expected.GRPCPort).Scan(&conflictingServers); err != nil || conflictingServers != 0 {
 		return nil, errors.New("another node_server conflicts with the requested Node")
 	}
 	return &item, nil

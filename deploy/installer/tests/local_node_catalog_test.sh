@@ -37,7 +37,7 @@ jq -e '.node_key=="node-one" and .host_id=="node-host" and .name=="node-one" and
   <<<"${first_plan}" >/dev/null || fail 'first YAML catalog mapping is wrong'
 yq -i '.hosts."second-host" = {"transport":"ssh","ssh":{"user":"root","hostname":"203.0.113.30","port":22,"identity_file":"","config_file":""}} |
   .nodes += [(.nodes[0] | .node_key = "node-two" | .host = "second-host" | .name = "node-two" |
-    .domain = "node-two.example.com" | .public_ip = "203.0.113.30" | .settings.grpc_port = 8200)]' "${work}/unified.yaml"
+    .domain = "node-two.example.com" | .public_ip = "203.0.113.20" | .settings.grpc_port = 8200)]' "${work}/unified.yaml"
 second_plan="$(bash "${client_dir}/node-catalog.sh" --config "${work}/unified.yaml" --node-key node-two)"
 jq -e '.node_key=="node-two" and .host_id=="second-host" and .grpc_port==8200' \
   <<<"${second_plan}" >/dev/null || fail 'appended YAML catalog mapping is wrong'
@@ -114,7 +114,7 @@ catalog() {
   (cd "${work}/runtime" && "${work}/trojan-panel" node-identity catalog "$@" --credential-dir "${work}/credentials")
 }
 node_one=(--node-key node-one --host-id node-host --name node-one --domain node-one.example.com --public-ip 203.0.113.20 --grpc-port 8100)
-node_two=(--node-key node-two --host-id second-host --name node-two --domain node-two.example.com --public-ip 203.0.113.30 --grpc-port 8200)
+node_two=(--node-key node-two --host-id second-host --name node-two --domain node-two.example.com --public-ip 203.0.113.20 --grpc-port 8200)
 
 catalog reconcile "${node_one[@]}" >"${work}/one.json"
 one_id="$(jq -r '.node_identity_id' "${work}/one.json")"
@@ -138,6 +138,8 @@ test "${one_id}" != "${two_id}" && test "${one_server}" != "${two_server}" || fa
 test "$(db_scalar 'SELECT COUNT(*) FROM node_identity')" = 2 || fail 'append did not create exactly one identity'
 test "$(db_scalar 'SELECT COUNT(*) FROM node_server')" = 2 || fail 'append did not create exactly one server'
 test "$(db_scalar "SELECT grpc_port FROM node_server WHERE id=${two_server}")" = 8200 || fail 'configured gRPC port was not committed'
+test "$(db_scalar "SELECT COUNT(*) FROM node_server WHERE ip='203.0.113.20' AND grpc_port IN (8100,8200)")" = 2 ||
+  fail 'distinct Nodes did not share the declared public IP with separate endpoints'
 test "$(db_scalar "SELECT COUNT(*) FROM mysql.user WHERE User=(SELECT mariadb_username FROM node_identity WHERE identity_id='${one_id}')")" = 1 || fail 'first MariaDB ACL user missing'
 test "$(db_scalar "SELECT COUNT(*) FROM mysql.user WHERE User=(SELECT mariadb_username FROM node_identity WHERE identity_id='${two_id}')")" = 1 || fail 'second MariaDB ACL user missing'
 test "$(docker exec -e "REDISCLI_AUTH=${redis_password}" "${redis_container}" redis-cli --raw ACL USERS | grep -c '^tpn-')" = 4 || fail 'independent Redis ACL users missing'
@@ -164,7 +166,14 @@ reject 'domain drift' catalog reconcile --node-key node-one --host-id node-host 
 reject 'IP drift' catalog reconcile --node-key node-one --host-id node-host --name node-one --domain node-one.example.com --public-ip 203.0.113.21 --grpc-port 8100
 reject 'port drift' catalog reconcile --node-key node-one --host-id node-host --name node-one --domain node-one.example.com --public-ip 203.0.113.20 --grpc-port 8101
 reject 'name collision' catalog reconcile --node-key node-three --host-id third-host --name node-one --domain node-three.example.com --public-ip 203.0.113.40 --grpc-port 8100
-reject 'IP collision' catalog reconcile --node-key node-three --host-id third-host --name node-three --domain node-three.example.com --public-ip 203.0.113.20 --grpc-port 8100
+reject 'endpoint collision' catalog reconcile --node-key node-three --host-id third-host --name node-three --domain node-three.example.com --public-ip 203.0.113.20 --grpc-port 8100
+test ! -e "${work}/credentials/node-three.binding.json" || fail 'endpoint conflict committed a third node_key binding'
+test "$(db_scalar 'SELECT COUNT(*) FROM node_identity')" = 2 || fail 'endpoint conflict inserted an identity'
+test "$(db_scalar 'SELECT COUNT(*) FROM node_server')" = 2 || fail 'endpoint conflict inserted a server'
+test "$(docker exec -e "REDISCLI_AUTH=${redis_password}" "${redis_container}" redis-cli --raw ACL USERS | grep -c '^tpn-')" = 4 || fail 'endpoint conflict provisioned Redis ACL users'
+db_exec "INSERT INTO node_server (ip,name,grpc_port,grpc_tls_mode,grpc_tls_server_name) VALUES ('203.0.113.20','unmanaged-node',8100,'mtls','unmanaged.example.com')"
+reject 'replay with another server on the same endpoint' catalog lookup "${node_one[@]}"
+db_exec "DELETE FROM node_server WHERE name='unmanaged-node'"
 db_exec "UPDATE node_identity SET credential_path='/tmp/wrong-credential.json' WHERE identity_id='${one_id}'"
 reject 'credential path drift' catalog reconcile "${node_one[@]}"
 db_exec "UPDATE node_identity SET credential_path='${work}/credentials/node-one.g1.json' WHERE identity_id='${one_id}'"

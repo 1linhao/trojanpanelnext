@@ -17,7 +17,7 @@ generate_args=(
 archive="${work}/trojanpanelnext-installer-1.2.3.tar.gz"
 "${root}/deploy/installer/release/package-assets.sh" --assets-dir "${work}/generated" --output "${archive}" >/dev/null
 
-for path in client/tpnext.sh client/topology.sh client/verify-release.sh \
+for path in client/tpnext.sh client/topology.sh client/node-catalog.sh client/verify-release.sh \
   client/templates/unified-ssh.yaml client/templates/unified-local.yaml \
   config-web.yaml config-node.yaml config-combined.yaml; do
   [[ -f "${work}/generated/${path}" ]] || fail "missing ${path}"
@@ -43,6 +43,11 @@ for transport in ssh local; do
   [[ "$(stat -c %a "${config}" 2>/dev/null || stat -f %Lp "${config}")" == 600 ]] || fail 'configuration permissions'
   [[ "$(stat -c %a "${work}/${transport}.local" 2>/dev/null || stat -f %Lp "${work}/${transport}.local")" == 700 ]] || fail 'work directory permissions'
   plan="$(bash "${cli}" plan --config "${config}")"
+  catalog="$(bash "${work}/clean/client/node-catalog.sh" --config "${config}" --node-key node-one)"
+  expected_host=node-host
+  [[ "${transport}" != local ]] || expected_host=web-host
+  jq -e --arg host "${expected_host}" '.node_key == "node-one" and .host_id == $host and .grpc_port == 8100' \
+    <<<"${catalog}" >/dev/null || fail 'archived Node catalog helper produced an invalid mapping'
   if [[ "${transport}" == ssh ]]; then
     [[ "${plan}" == *$'web-host\tssh\tweb\t'* && "${plan}" == *$'node-host\tssh\tnode\tnode-one\t'* ]] || fail 'separate SSH plan'
   else
@@ -75,6 +80,14 @@ cp -a "${work}/clean" "${work}/tampered"
 printf '\n# tampered\n' >>"${work}/tampered/client/topology.sh"
 if "${work}/tampered/verify-assets.sh" --assets-dir "${work}/tampered" --assets-only >"${work}/invalid.out" 2>&1; then fail 'accepted tampered CLI'; fi
 printf 'TRACE rejected=tampered-cli\n'
+cp -a "${work}/clean" "${work}/tampered-catalog"
+printf '\n# tampered\n' >>"${work}/tampered-catalog/client/node-catalog.sh"
+if "${work}/tampered-catalog/verify-assets.sh" --assets-dir "${work}/tampered-catalog" --assets-only >"${work}/invalid.out" 2>&1; then fail 'accepted tampered Node catalog helper'; fi
+printf 'TRACE rejected=tampered-node-catalog\n'
+cp -a "${work}/clean" "${work}/missing-catalog"
+rm "${work}/missing-catalog/client/node-catalog.sh"
+if "${work}/missing-catalog/verify-assets.sh" --assets-dir "${work}/missing-catalog" --assets-only >"${work}/invalid.out" 2>&1; then fail 'accepted missing Node catalog helper'; fi
+printf 'TRACE rejected=missing-node-catalog\n'
 cp -a "${work}/clean" "${work}/tampered-template"
 printf '\n# tampered\n' >>"${work}/tampered-template/client/templates/unified-ssh.yaml"
 if "${work}/tampered-template/verify-assets.sh" --assets-dir "${work}/tampered-template" --assets-only >"${work}/invalid.out" 2>&1; then fail 'accepted tampered template'; fi

@@ -46,7 +46,7 @@ tar -xzf "${archive}" -C "${assets}" >/dev/null 2>&1 || fail 'archive extraction
 expected_paths=(
   bootstrap.sh release-contract.sh verify-assets.sh install.sh secure-file node-bundle
   config-web.yaml config-node.yaml config-combined.yaml
-  client/tpnext.sh client/topology.sh client/verify-release.sh
+  client/tpnext.sh client/topology.sh client/node-catalog.sh client/verify-release.sh
   client/download-assets.sh client/upload-assets.sh
   client/templates/unified-ssh.yaml client/templates/unified-local.yaml
   entry/entryctl.sh entry/controller.sh entry/v2.sh
