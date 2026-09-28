@@ -10,6 +10,7 @@ if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1
   printf 'FAIL: sha256sum or shasum is required\n' >&2; exit 1
 fi
 work="$(mktemp -d)"
+work="$(cd "${work}" && pwd -P)"
 trap 'rm -r -- "${work}"' EXIT
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
 reject() {
