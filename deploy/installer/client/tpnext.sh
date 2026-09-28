@@ -77,9 +77,15 @@ fi
 
 lock="${work_dir}.init-lock"
 mkdir -m 700 "${lock}" 2>/dev/null || fail 'another init may be active for this work directory'
-stage=""; temp_config=""
+stage=""; temp_config=""; published_config=""
 cleanup() {
   [[ -z "${stage}" || ! -d "${stage}" ]] || rm -r "${stage}"
+  # The config is a hard link to our private temp file until publication ends.
+  # Never recurse into a published path: another process may have added files.
+  if [[ -n "${published_config}" && -f "${config}" && ! -L "${config}" &&
+        -f "${temp_config}" && "${config}" -ef "${temp_config}" ]]; then
+    rm "${config}"
+  fi
   [[ -z "${temp_config}" || ! -f "${temp_config}" ]] || rm "${temp_config}"
   rmdir "${lock}" 2>/dev/null || true
 }
@@ -98,10 +104,18 @@ chmod 600 "${temp_config}"
 bash "${CLIENT_DIR}/topology.sh" --config "${temp_config}" >/dev/null
 [[ ! -e "${work_dir}" && ! -e "${config}" ]] || fail 'configuration or work directory appeared during init'
 stage_name="$(basename "${stage}")"
-mv -n "${stage}" "${work_dir}" || fail 'cannot publish verified work directory'
-[[ ! -e "${stage}" && ! -e "${work_dir}/${stage_name}" && -d "${work_dir}/assets" ]] || fail 'work directory appeared during publish'
+owner_marker=".init-owner-${stage_name}"
+: >"${stage}/${owner_marker}"
+ln "${temp_config}" "${config}" || fail 'configuration could not be published; retry init'
+published_config=1
+# A move can report failure after the rename. The private marker lets us
+# recognize that completed state without deleting anything at the target.
+mv -n "${stage}" "${work_dir}" || {
+  [[ ! -e "${stage}" && -f "${work_dir}/${owner_marker}" ]] || fail 'cannot publish verified work directory; retry init'
+}
+[[ ! -e "${stage}" && -f "${work_dir}/${owner_marker}" && ! -L "${work_dir}/${owner_marker}" && -d "${work_dir}/assets" ]] || fail 'work directory appeared during publish'
 stage=""
-ln "${temp_config}" "${config}" || fail 'configuration appeared during init; verified assets remain in the work directory'
+published_config=""
 rm "${temp_config}"
 temp_config=""
 printf 'Initialized %s with verified assets in %s\n' "${config}" "${work_dir}"

@@ -6,6 +6,9 @@ client="${root}/deploy/installer/client/tpnext.sh"
 command -v yq >/dev/null 2>&1 || { printf 'SKIP: install mikefarah yq v4 to run local_init_test.sh\n' >&2; exit 1; }
 [[ "$(yq --version)" == *'version v4.'* ]] || { printf 'FAIL: mikefarah yq v4 required\n' >&2; exit 1; }
 command -v jq >/dev/null 2>&1 || { printf 'FAIL: jq is required for fixture generation\n' >&2; exit 1; }
+if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
+  printf 'FAIL: sha256sum or shasum is required\n' >&2; exit 1
+fi
 work="$(mktemp -d)"
 trap 'rm -r -- "${work}"' EXIT
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
@@ -15,7 +18,14 @@ reject() {
   printf 'TRACE rejected=%s\n' "${label}"
 }
 digest() { printf 'sha256:%064d' "$1"; }
-sha_file() { sha256sum "$1" | awk '{print $1}'; }
+sha_files() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$@"
+  else shasum -a 256 "$@"; fi
+}
+sha_file() { sha_files "$1" | awk '{print $1}'; }
+file_mode() {
+  stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1"
+}
 
 source_dir="${work}/source"
 mkdir -p "${source_dir}/entry/adapters"
@@ -38,7 +48,7 @@ jq -n --argjson assets "${asset_json}" \
    images:{api:image("example/api";$api;"product"),web:image("example/web";$web;"product"),node_agent:image("example/node";$node;"product"),
      caddy:image("caddy";$caddy;"runtime"),mariadb:image("mariadb";$mariadb;"runtime"),redis:image("redis";$redis;"runtime")},
    attestations:[{subject:"example/api",digest:$api},{subject:"example/web",digest:$web},{subject:"example/node",digest:$node}]}' >"${source_dir}/release-manifest.json"
-(cd "${source_dir}" && sha256sum "${paths[@]}" release-manifest.json >SHA256SUMS)
+(cd "${source_dir}" && sha_files "${paths[@]}" release-manifest.json >SHA256SUMS)
 tar -C "${source_dir}" -czf "${work}/fixture.tar.gz" .
 TP_TEST_ARCHIVE="${work}/fixture.tar.gz"; export TP_TEST_ARCHIVE
 curl() {
@@ -49,11 +59,37 @@ curl() {
   cp "${TP_TEST_ARCHIVE}" "${destination}"
 }
 export -f curl
+ln() {
+  if [[ "${TP_TEST_LINK_MODE:-}" != "" && "${2:-}" == "${TP_TEST_LINK_CONFIG:-}" ]]; then
+    return 1
+  fi
+  command ln "$@"
+}
+export -f ln
+mv() {
+  if [[ -n "${TP_TEST_MOVE_MODE:-}" && "${3:-}" == "${TP_TEST_MOVE_WORK_DIR:-}" ]]; then
+    case "${TP_TEST_MOVE_MODE}" in
+    fail) return 1 ;;
+    foreign)
+      mkdir "${TP_TEST_MOVE_WORK_DIR}"
+      printf 'foreign directory\n' >"${TP_TEST_MOVE_WORK_DIR}/foreign-sentinel"
+      return 1
+      ;;
+    after)
+      command mv "$@" || return
+      printf 'foreign file\n' >"${TP_TEST_MOVE_WORK_DIR}/foreign-sentinel"
+      return 1
+      ;;
+    esac
+  fi
+  command mv "$@"
+}
+export -f mv
 sha="$(sha_file "${TP_TEST_ARCHIVE}")"
 
 config="${work}/deployment.local.yaml"
 PATH="${PATH}" bash "${client}" init --config "${config}" --tag v1.2.3 --sha256 "${sha}" --work-dir "${work}/assets.local" >"${work}/init.out"
-[[ "$(stat -c %a "${config}")" == 600 && "$(stat -c %a "${work}/assets.local")" == 700 ]] || fail 'config/work directory permissions'
+[[ "$(file_mode "${config}")" == 600 && "$(file_mode "${work}/assets.local")" == 700 ]] || fail 'config/work directory permissions'
 [[ -f "${work}/assets.local/assets/release-manifest.json" ]] || fail 'verified assets missing'
 plan="$(bash "${client}" plan --config "${config}")"
 [[ "${plan}" == *$'web-host\tssh\tweb\t'* && "${plan}" == *$'node-host\tssh\tnode\tnode-one\tnodes/node-one.json'* ]] || fail 'separate SSH topology plan'
@@ -69,11 +105,25 @@ reject 'partial download' bash "${client}" init --config "${work}/retry.local.ya
 [[ ! -e "${work}/retry.local.yaml" && ! -e "${work}/retry-assets.local" ]] || fail 'partial download left published files'
 unset TP_TEST_CURL_FAIL
 bash "${client}" init --config "${work}/retry.local.yaml" --tag v1.2.3 --sha256 "${sha}" --work-dir "${work}/retry-assets.local" >/dev/null
+TP_TEST_LINK_MODE=fail TP_TEST_LINK_CONFIG="${work}/link-fail.local.yaml" \
+  reject 'final config link failure' bash "${client}" init --config "${work}/link-fail.local.yaml" --tag v1.2.3 --sha256 "${sha}" --work-dir "${work}/link-fail-assets.local"
+[[ ! -e "${work}/link-fail.local.yaml" && ! -e "${work}/link-fail-assets.local" ]] || fail 'failed final config link left a published path'
+bash "${client}" init --config "${work}/link-fail.local.yaml" --tag v1.2.3 --sha256 "${sha}" --work-dir "${work}/link-fail-assets.local" >/dev/null
+TP_TEST_MOVE_MODE=fail TP_TEST_MOVE_WORK_DIR="${work}/move-fail-assets.local" \
+  reject 'final asset publish failure' bash "${client}" init --config "${work}/move-fail.local.yaml" --tag v1.2.3 --sha256 "${sha}" --work-dir "${work}/move-fail-assets.local"
+[[ ! -e "${work}/move-fail.local.yaml" && ! -e "${work}/move-fail-assets.local" ]] || fail 'failed final asset publish left a published path'
+bash "${client}" init --config "${work}/move-fail.local.yaml" --tag v1.2.3 --sha256 "${sha}" --work-dir "${work}/move-fail-assets.local" >/dev/null
+TP_TEST_MOVE_MODE=foreign TP_TEST_MOVE_WORK_DIR="${work}/foreign-assets.local" \
+  reject 'foreign directory replacement' bash "${client}" init --config "${work}/foreign.local.yaml" --tag v1.2.3 --sha256 "${sha}" --work-dir "${work}/foreign-assets.local"
+[[ ! -e "${work}/foreign.local.yaml" && -f "${work}/foreign-assets.local/foreign-sentinel" ]] || fail 'rollback deleted or changed a foreign work directory'
+TP_TEST_MOVE_MODE=after TP_TEST_MOVE_WORK_DIR="${work}/foreign-file-assets.local" \
+  bash "${client}" init --config "${work}/foreign-file.local.yaml" --tag v1.2.3 --sha256 "${sha}" --work-dir "${work}/foreign-file-assets.local" >/dev/null
+[[ -f "${work}/foreign-file.local.yaml" && -f "${work}/foreign-file-assets.local/foreign-sentinel" ]] || fail 'publish deleted a foreign file'
 
 # A digest-correct archive with an internally mismatched version still fails.
 cp -R "${source_dir}" "${work}/wrong-version"
 jq '.release_version = "1.2.4"' "${source_dir}/release-manifest.json" >"${work}/wrong-version/release-manifest.json"
-(cd "${work}/wrong-version" && sha256sum "${paths[@]}" release-manifest.json >SHA256SUMS)
+(cd "${work}/wrong-version" && sha_files "${paths[@]}" release-manifest.json >SHA256SUMS)
 tar -C "${work}/wrong-version" -czf "${work}/wrong-version.tar.gz" .
 TP_TEST_ARCHIVE="${work}/wrong-version.tar.gz"; export TP_TEST_ARCHIVE
 reject 'manifest version mismatch' bash "${client}" init --config "${work}/version.local.yaml" --tag v1.2.3 --sha256 "$(sha_file "${TP_TEST_ARCHIVE}")" --work-dir "${work}/version-assets.local"
@@ -89,7 +139,7 @@ reject 'internal asset SHA' bash "${client}" init --config "${work}/digest.local
 
 cp -R "${source_dir}" "${work}/bad-image"
 jq '.images.api.reference = "example/api:latest"' "${source_dir}/release-manifest.json" >"${work}/bad-image/release-manifest.json"
-(cd "${work}/bad-image" && sha256sum "${paths[@]}" release-manifest.json >SHA256SUMS)
+(cd "${work}/bad-image" && sha_files "${paths[@]}" release-manifest.json >SHA256SUMS)
 tar -C "${work}/bad-image" -czf "${work}/bad-image.tar.gz" .
 TP_TEST_ARCHIVE="${work}/bad-image.tar.gz"; export TP_TEST_ARCHIVE
 reject 'tag-only manifest image' bash "${client}" init --config "${work}/image.local.yaml" --tag v1.2.3 --sha256 "$(sha_file "${TP_TEST_ARCHIVE}")" --work-dir "${work}/image-assets.local"
@@ -100,7 +150,11 @@ tar -C "${work}/link-source" -czf "${work}/link.tar.gz" .
 reject 'archive symlink' bash "${root}/deploy/installer/client/verify-release.sh" \
   --archive "${work}/link.tar.gz" --tag v1.2.3 --sha256 "$(sha_file "${work}/link.tar.gz")" --assets-dir "${work}/link-assets"
 [[ ! -e "${work}/link-assets" ]] || fail 'symlink archive was extracted'
-tar -C "${source_dir}" --transform='s|^./bootstrap.sh$|../escape|' -czf "${work}/traversal.tar.gz" .
+if [[ "$(tar --version 2>/dev/null)" == *'GNU tar'* ]]; then
+  tar -C "${source_dir}" --transform='s|^./bootstrap.sh$|../escape|' -czf "${work}/traversal.tar.gz" .
+else
+  tar -C "${source_dir}" -s ',^\./bootstrap\.sh$,../escape,' -czf "${work}/traversal.tar.gz" .
+fi
 reject 'archive traversal' bash "${root}/deploy/installer/client/verify-release.sh" \
   --archive "${work}/traversal.tar.gz" --tag v1.2.3 --sha256 "$(sha_file "${work}/traversal.tar.gz")" --assets-dir "${work}/traversal-assets"
 [[ ! -e "${work}/traversal-assets" && ! -e "${work}/escape" ]] || fail 'traversal archive was extracted'
@@ -147,6 +201,20 @@ yq -i '.hosts."other-host".transport = "ssh" | .hosts."other-host".ssh = .hosts.
 reject 'two host ids same SSH endpoint' bash "${client}" plan --config "${work}/invalid.local.yaml"
 yq -i '.hosts."other-host".ssh.hostname = "203.0.113.30" | .nodes[0].host = "web-host" | .nodes[0].settings.grpc_port = .web.settings.panel_port' "${work}/invalid.local.yaml"
 reject 'combined port conflict' bash "${client}" plan --config "${work}/invalid.local.yaml"
+
+for bad_ip in ':' ':::' '2001::db8::1' '12345::1' '1:2:3:4:5:6:7:8:9' '999.1.1.1'; do
+  cp "${config}" "${work}/invalid-address.local.yaml"
+  yq -i ".web.public_ip = \"${bad_ip}\"" "${work}/invalid-address.local.yaml"
+  reject "invalid public IP ${bad_ip}" bash "${client}" plan --config "${work}/invalid-address.local.yaml"
+done
+for bad_domain in 'panel..example.com' 'panel-.example.com' 'panel.example..com' 'panel.example.com.' 'panel.12'; do
+  cp "${config}" "${work}/invalid-address.local.yaml"
+  yq -i ".web.domain = \"${bad_domain}\"" "${work}/invalid-address.local.yaml"
+  reject "invalid domain ${bad_domain}" bash "${client}" plan --config "${work}/invalid-address.local.yaml"
+done
+cp "${config}" "${work}/valid-ipv6.local.yaml"
+yq -i '.web.public_ip = "2001:db8::10" | .nodes[0].public_ip = "2001:db8:0:0:0:0:0:20"' "${work}/valid-ipv6.local.yaml"
+bash "${client}" plan --config "${work}/valid-ipv6.local.yaml" >/dev/null
 
 yq -i '.web.passwords.sysadmin = "TEST_SECRET_MUST_NOT_APPEAR"' "${config}"
 [[ "$(bash "${client}" plan --config "${config}")" != *TEST_SECRET_MUST_NOT_APPEAR* ]] || fail 'plan logged a secret'

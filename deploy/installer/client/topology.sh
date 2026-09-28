@@ -27,16 +27,55 @@ scalar() {
   printf '%s' "${value}"
 }
 identifier() { [[ "$1" =~ ^[a-z][a-z0-9-]{0,62}$ ]] || fail "invalid $2"; }
-domain() { [[ "$1" =~ ^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}$ ]] || fail "invalid $2"; }
-ssh_hostname() { [[ "$1" =~ ^[A-Za-z0-9:.\-]+$ ]] || fail "invalid $2"; }
+domain() {
+  local name="$1" label last
+  local -a labels=()
+  [[ "${name}" == *.* && "${name}" != .* && "${name}" != *. && ${#name} -le 253 && "${name}" =~ ^[a-z0-9.-]+$ ]] || fail "invalid $2"
+  IFS=. read -r -a labels <<<"${name}"
+  for label in "${labels[@]}"; do
+    [[ ${#label} -le 63 && "${label}" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]] || fail "invalid $2"
+  done
+  last="${labels[${#labels[@]}-1]}"
+  [[ "${last}" =~ ^[a-z]{2,}$ ]] || fail "invalid $2"
+}
+ssh_hostname() {
+  local name="$1" label
+  local -a labels=()
+  if [[ "${name}" == *:* || "${name}" =~ ^[0-9.]+$ ]]; then public_ip "${name}" "$2"; return; fi
+  [[ -n "${name}" && "${name}" != .* && "${name}" != *. && ${#name} -le 253 && "${name}" =~ ^[A-Za-z0-9.-]+$ ]] || fail "invalid $2"
+  IFS=. read -r -a labels <<<"${name}"
+  for label in "${labels[@]}"; do
+    [[ ${#label} -le 63 && "${label}" =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$ ]] || fail "invalid $2"
+  done
+}
 public_ip() {
-  local ip="$1" octet
+  local ip="$1" octet part left right group_count=0
   local -a octets=()
   if [[ "${ip}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     IFS=. read -r -a octets <<<"${ip}"
-    for octet in "${octets[@]}"; do ((10#${octet} <= 255)) || fail "invalid $2"; done
-  elif [[ "${ip}" != *:* || ! "${ip}" =~ ^[0-9A-Fa-f:]+$ ]]; then
-    fail "invalid $2"
+    for octet in "${octets[@]}"; do
+      [[ ${#octet} -eq 1 || "${octet}" != 0* ]] || fail "invalid $2"
+      ((10#${octet} <= 255)) || fail "invalid $2"
+    done
+    return
+  fi
+  [[ "${ip}" == *:* && "${ip}" =~ ^[0-9A-Fa-f:]+$ && "${ip}" != :::* && "${ip}" != *:::* && "${ip}" != *::: ]] || fail "invalid $2"
+  if [[ "${ip}" == *::* ]]; then
+    [[ "${ip}" != :: && "${ip#*::}" != *::* ]] || fail "invalid $2"
+    left="${ip%%::*}"; right="${ip#*::}"
+    [[ "${left}" != :* && "${left}" != *: && "${right}" != :* && "${right}" != *: ]] || fail "invalid $2"
+    for part in "${left}" "${right}"; do
+      [[ -z "${part}" ]] && continue
+      IFS=: read -r -a octets <<<"${part}"
+      for octet in "${octets[@]}"; do [[ "${octet}" =~ ^[0-9A-Fa-f]{1,4}$ ]] || fail "invalid $2"; done
+      group_count=$((group_count + ${#octets[@]}))
+    done
+    ((group_count < 8)) || fail "invalid $2"
+  else
+    [[ "${ip}" != :* && "${ip}" != *: ]] || fail "invalid $2"
+    IFS=: read -r -a octets <<<"${ip}"
+    [[ ${#octets[@]} -eq 8 ]] || fail "invalid $2"
+    for octet in "${octets[@]}"; do [[ "${octet}" =~ ^[0-9A-Fa-f]{1,4}$ ]] || fail "invalid $2"; done
   fi
 }
 port() { [[ "$1" =~ ^[0-9]+$ ]] && ((10#$1 >= 1 && 10#$1 <= 65535)) || fail "invalid $2"; }
