@@ -4,7 +4,7 @@
 set -euo pipefail
 
 usage() {
-  printf 'Usage: ledger.sh check|begin|commit --plan <verified-plan.json|->\n' >&2
+  printf 'Usage: ledger.sh check|begin|checkpoint|commit|prepare-replace --plan <verified-plan.json|-> [--replace <container>]\n' >&2
 }
 
 finding() {
@@ -42,6 +42,7 @@ secure_file() {
 
 valid_plan() {
   jq -e '
+    (keys == ["containers","deployment_id","images","mode","roles","root","schema_version"]) and
     .schema_version == 1 and
     (.deployment_id | type == "string" and test("^[a-z][a-z0-9-]{0,62}$")) and
     (.root | type == "string" and startswith("/")) and
@@ -49,19 +50,23 @@ valid_plan() {
     (.roles | type == "array" and length > 0 and (unique | length) == length and all(.[]; . == "web" or . == "node")) and
     (if .mode == "combined" then true else .roles == [.mode] end) and
     (.images | type == "object" and length > 0 and all(.[];
-      .reference | type == "string" and test("^[^@[:space:]]+@sha256:[a-f0-9]{64}$"))) and
+      (keys == ["reference"]) and
+      (.reference | type == "string" and test("^[^@[:space:]]+@sha256:[a-f0-9]{64}$")))) and
     (.containers | type == "array" and length > 0 and
       ([.[].name] | unique | length) == length and all(.[];
+        (keys == ["image","mounts","name","ports","role"]) and
         (.name | type == "string" and test("^[a-zA-Z0-9][a-zA-Z0-9_.-]*$")) and
         (.role == "web" or .role == "node" or .role == "shared") and
         (.image | type == "string") and
         (.mounts | type == "array" and all(.[];
+          (keys == ["read_only","source","target"]) and
           (.source | type == "string" and startswith("/")) and
           (.target | type == "string" and startswith("/")) and
           (.read_only | type == "boolean"))) and
         all(.mounts[]; .source != $root.root) and
         ([.mounts[].target] | unique | length) == (.mounts | length) and
         (.ports | type == "array" and all(.[];
+          (keys == ["port","protocol"]) and
           (.protocol == "tcp" or .protocol == "udp") and
           (.port | type == "number" and . >= 1 and . <= 65535))))) and
     all(.containers[]; .image as $key | . as $container |
@@ -74,10 +79,26 @@ valid_ledger() {
   jq -e --arg id "$DEPLOYMENT_ID" --arg root "$ROOT" --arg mode "$MODE" \
     --argjson plan "$PLAN_JSON" '
     .schema_version == 1 and .deployment_id == $id and .root == $root and
-    .mode == $mode and (.phase == "preparing" or .phase == "committed") and
+    .mode == $mode and
+    (.phase == "preparing" or .phase == "committed" or .phase == "replacing") and
     (.owner_sha256 | type == "string" and test("^[a-f0-9]{64}$")) and
     (.roles | type == "array") and (.containers | type == "array") and
     (.images | type == "array") and
+    ([.containers[].name] | unique | length) == (.containers | length) and
+    all(.containers[];
+      (.name as $name | $plan.containers | any(.[]; .name == $name)) and
+      (.id | type == "string" and test("^[a-f0-9]{64}$")) and
+      (.image_id | type == "string" and test("^sha256:[a-f0-9]{64}$"))) and
+    ([.images[].reference] | unique | length) == (.images | length) and
+    all(.images[];
+      (.reference as $ref | $plan.images | any(.[]; .reference == $ref)) and
+      (.id | type == "string" and test("^sha256:[a-f0-9]{64}$"))) and
+    (.plan == $plan or (.phase == "replacing" and .plan == $plan)) and
+    (if .phase == "replacing" then
+      (.target_plan == $plan) and
+      (.replace_names | type == "array" and length > 0 and
+        (unique | length) == length and all(.[]; . as $name | $plan.containers | any(.[]; .name == $name)))
+     else true end) and
     (if .phase == "committed" then
       ([.containers[].name] | sort) == ([$plan.containers[].name] | sort) and
       ([.images[].reference] | sort) == ([$plan.images[].reference] | sort) and
@@ -89,7 +110,7 @@ valid_ledger() {
 }
 
 inspect_containers() {
-  local ids id data name expected owner role digest recorded_id image_id image_ref mounts expected_mounts
+  local ids id data name expected owner role digest recorded_id image_id image_ref mounts expected_mounts resolved_image
   if ! ids="$(docker ps -a --no-trunc --format '{{.ID}}' 2>/dev/null)"; then
     finding docker_enumeration_unavailable containers
     return
@@ -117,7 +138,12 @@ inspect_containers() {
       continue
     fi
     recorded_id="$(jq -r --arg name "$name" '.containers[] | select(.name == $name) | .id' "$LEDGER")"
-    [[ "$recorded_id" == "$id" ]] || finding container_id_mismatch "$name"
+    if [[ -n "$recorded_id" && "$recorded_id" != "$id" ]]; then
+      if [[ "$LEDGER_PHASE" != replacing ]] ||
+        ! jq -e --arg name "$name" '.replace_names | index($name) != null' "$LEDGER" >/dev/null; then
+        finding container_id_mismatch "$name"
+      fi
+    fi
     owner="$(jq -r '.[0].Config.Labels["io.trojanpanelnext.deployment"] // ""' <<<"$data")"
     digest="$(jq -r '.[0].Config.Labels["io.trojanpanelnext.owner-sha256"] // ""' <<<"$data")"
     role="$(jq -r '.[0].Config.Labels["io.trojanpanelnext.role"] // ""' <<<"$data")"
@@ -125,11 +151,20 @@ inspect_containers() {
       "$role" == "$(jq -r '.role' <<<"$expected")" ]] || finding container_label_mismatch "$name"
     image_id="$(jq -r '.[0].Image // ""' <<<"$data")"
     image_ref="$(jq -r '.[0].Config.Image // ""' <<<"$data")"
-    [[ "$image_id" == "$(jq -r --arg name "$name" '.containers[] | select(.name == $name) | .image_id' "$LEDGER")" &&
-      "$image_ref" == "$(jq -r --arg key "$(jq -r '.image' <<<"$expected")" '.images[$key].reference' <<<"$PLAN_JSON")" ]] ||
+    [[ "$image_ref" == "$(jq -r --arg key "$(jq -r '.image' <<<"$expected")" '.images[$key].reference' <<<"$PLAN_JSON")" ]] ||
       finding container_image_mismatch "$name"
-    [[ "$image_id" == "$(jq -r --arg ref "$image_ref" '.images[] | select(.reference == $ref) | .id' "$LEDGER")" ]] ||
-      finding container_image_id_unlinked "$name"
+    if ! resolved_image="$(docker image inspect "$image_ref" 2>/dev/null)" ||
+      ! jq -e 'type == "array" and length == 1 and .[0].Id != null' <<<"$resolved_image" >/dev/null ||
+      [[ "$image_id" != "$(jq -r '.[0].Id' <<<"$resolved_image")" ]]; then
+      finding container_image_id_unobservable "$name"
+    fi
+    if [[ -n "$recorded_id" && "$recorded_id" == "$id" ]]; then
+      [[ "$image_id" == "$(jq -r --arg name "$name" '.containers[] | select(.name == $name) | .image_id' "$LEDGER")" ]] ||
+        finding container_image_mismatch "$name"
+    fi
+    local recorded_image_id
+    recorded_image_id="$(jq -r --arg ref "$image_ref" '.images[] | select(.reference == $ref) | .id' "$LEDGER")"
+    [[ -z "$recorded_image_id" || "$image_id" == "$recorded_image_id" ]] || finding container_image_id_unlinked "$name"
     mounts="$(jq -c '.[0].Mounts | map({source:.Source,target:.Destination,read_only:(.RW | not)}) | sort_by(.source,.target)' <<<"$data")"
     expected_mounts="$(jq -c '.mounts | sort_by(.source,.target)' <<<"$expected")"
     [[ "$mounts" == "$expected_mounts" ]] || finding container_mount_mismatch "$name"
@@ -138,6 +173,10 @@ inspect_containers() {
   if [[ "$LEDGER_PRESENT" == 1 ]]; then
     while IFS= read -r name; do
       [[ -n "$name" ]] || continue
+      if [[ "$LEDGER_PHASE" == replacing ]] &&
+        jq -e --arg name "$name" '.replace_names | index($name) != null' "$LEDGER" >/dev/null; then
+        continue
+      fi
       if ! jq -e --arg name "$name" --argjson ids "$(printf '%s\n' "$ids" | jq -Rsc 'split("\n")')" \
         '.containers[] | select(.name == $name and (.id | IN($ids[])))' "$LEDGER" >/dev/null; then
         finding recorded_container_missing "$name"
@@ -187,7 +226,7 @@ inspect_images() {
     refs="$(jq -r '.[0].RepoDigests[]' <<<"$data")"
     tags="$(jq -r '.[0].RepoTags[]?' <<<"$data")"
     [[ "$refs" == "$ref" && -z "$tags" ]] || finding image_reference_drift "$ref"
-    if [[ "$LEDGER_PRESENT" == 1 ]]; then
+  if [[ "$LEDGER_PRESENT" == 1 ]]; then
       recorded="$(jq -r --arg ref "$ref" '.images[] | select(.reference == $ref) | .id' "$LEDGER")"
       [[ -z "$recorded" || "$recorded" == "$id" ]] || finding image_id_mismatch "$ref"
     fi
@@ -254,16 +293,18 @@ check() {
   safe_path "$MARKER" file || finding unsafe_marker "$MARKER"
   safe_path "$LEDGER" file || finding unsafe_ledger "$LEDGER"
   LEDGER_PRESENT=0
+  LEDGER_PHASE=none
   if [[ -e "$LEDGER" || -L "$LEDGER" || -e "$MARKER" || -L "$MARKER" ]]; then
     LEDGER_PRESENT=1
     if ! secure_file "$LEDGER" || ! secure_file "$MARKER" || ! valid_ledger; then
       finding invalid_ownership_record "$LEDGER"
       OWNER_SHA256=""
+      LEDGER_PRESENT=0
     else
+      LEDGER_PHASE="$(jq -r '.phase' "$LEDGER")"
       OWNER_SHA256="$(sha256sum "$MARKER" | awk '{print $1}')"
       [[ "$OWNER_SHA256" == "$(jq -r '.owner_sha256' "$LEDGER")" ]] || finding owner_marker_mismatch "$MARKER"
       [[ "$(jq -c '.roles | sort' "$LEDGER")" == "$(jq -c '.roles | sort' <<<"$PLAN_JSON")" ]] || finding role_mismatch "$LEDGER"
-      [[ "$(jq -r '.phase' "$LEDGER")" == committed ]] || finding interrupted_phase "$LEDGER"
     fi
   else
     OWNER_SHA256=""
@@ -276,17 +317,22 @@ check() {
   inspect_ports
   inspect_legacy_layout
   local status findings_json
-  status=ready
+  case "$LEDGER_PHASE" in
+  none) status=ready_new ;;
+  committed) status=ready ;;
+  preparing | replacing) status=ready_resume ;;
+  esac
   ((${#FINDINGS[@]} == 0)) || status=blocked
   findings_json="$(printf '%s\n' "${FINDINGS[@]}" | jq -sc 'map(select(type == "object"))')"
   jq -cn --arg status "$status" --arg root "$ROOT" --argjson findings "$findings_json" \
     '{schema_version:1,status:$status,root:$root,findings:$findings}'
-  [[ "$status" == ready ]]
+  case "$status" in ready | ready_new) return 0 ;; ready_resume) return 3 ;; *) return 1 ;; esac
 }
 
 begin() {
-  local report token temporary
-  report="$(check)" || { printf '%s\n' "$report"; return 1; }
+  local report token temporary status=0 parent staging ledger_parent
+  report="$(check)" || status=$?
+  [[ "$status" == 0 || "$status" == 3 ]] || { printf '%s\n' "$report"; return 1; }
   ROOT="$(jq -r '.root' <<<"$PLAN_JSON")"
   DEPLOYMENT_ID="$(jq -r '.deployment_id' <<<"$PLAN_JSON")"
   MODE="$(jq -r '.mode' <<<"$PLAN_JSON")"
@@ -294,30 +340,42 @@ begin() {
   LEDGER="$ROOT/trojanpanelnext-installer/ownership.json"
   LEDGER_PRESENT=0
   [[ -e "$LEDGER" ]] && LEDGER_PRESENT=1
-  if [[ "$LEDGER_PRESENT" == 1 ]]; then
+  if [[ "$(jq -r '.status' <<<"$report")" != ready_new ]]; then
     printf '%s\n' "$report"
     return 0
   fi
-  # No writes occur until the complete read-only preflight has succeeded.
-  install -d -m 0700 -- "$ROOT" "$ROOT/trojanpanelnext-installer"
+  # Stage the marker and ledger before exposing a new root. A crash before the
+  # atomic rename leaves no ambiguous partially owned root to adopt on replay.
+  parent="$(dirname -- "$ROOT")"
+  if [[ ! -d "$parent" ]]; then
+    install -d -m 0700 -- "$parent"
+  fi
+  safe_path "$ROOT" directory || return 1
+  [[ ! -e "$ROOT" && ! -L "$ROOT" ]] || return 1
+  staging="$(mktemp -d "$parent/.trojanpanelnext-staging.XXXXXX")"
+  chmod 0700 "$staging"
+  ledger_parent="$staging/trojanpanelnext-installer"
+  install -d -m 0700 -- "$ledger_parent"
   token="$(openssl rand -hex 32)"
-  temporary="$(mktemp "$ROOT/.owner-token.XXXXXX")"
+  temporary="$staging/.trojanpanelnext-owner-token"
+  : >"$temporary"
   chmod 0600 "$temporary"
   printf '%s' "$token" >"$temporary"
-  mv -T -- "$temporary" "$MARKER"
-  temporary="$(mktemp "$ROOT/trojanpanelnext-installer/.ownership.XXXXXX")"
+  temporary="$ledger_parent/ownership.json"
+  : >"$temporary"
   chmod 0600 "$temporary"
   jq -cn --arg id "$DEPLOYMENT_ID" --arg root "$ROOT" --arg mode "$MODE" \
-    --arg sha "$(sha256sum "$MARKER" | awk '{print $1}')" \
-    --argjson roles "$(jq -c '.roles' <<<"$PLAN_JSON")" \
+    --arg sha "$(sha256sum "$staging/.trojanpanelnext-owner-token" | awk '{print $1}')" \
+    --argjson roles "$(jq -c '.roles' <<<"$PLAN_JSON")" --argjson plan "$PLAN_JSON" \
     '{schema_version:1,deployment_id:$id,root:$root,mode:$mode,roles:$roles,
-      owner_sha256:$sha,phase:"preparing",containers:[],images:[]}' >"$temporary"
-  mv -T -- "$temporary" "$LEDGER"
+      owner_sha256:$sha,phase:"preparing",plan:$plan,containers:[],images:[]}' >"$temporary"
+  [[ ! -e "$ROOT" && ! -L "$ROOT" ]] || return 1
+  mv -T -- "$staging" "$ROOT"
   jq -cn --arg status preparing --arg root "$ROOT" '{schema_version:1,status:$status,root:$root,findings:[]}'
 }
 
 commit() {
-  local marker ledger candidate original_sha name ref data id image_id container_records image_records report
+  local marker ledger candidate original_sha name ref data id image_id container_records image_records report check_status=0
   ROOT="$(jq -r '.root' <<<"$PLAN_JSON")"
   DEPLOYMENT_ID="$(jq -r '.deployment_id' <<<"$PLAN_JSON")"
   MODE="$(jq -r '.mode' <<<"$PLAN_JSON")"
@@ -330,7 +388,9 @@ commit() {
   fi
   LEDGER="$ledger"
   valid_ledger || return 1
-  [[ "$(jq -r '.phase' "$ledger")" == preparing ]] || return 1
+  [[ "$(jq -r '.phase' "$ledger")" == preparing || "$(jq -r '.phase' "$ledger")" == replacing ]] || return 1
+  report="$(check)" || check_status=$?
+  [[ "$check_status" == 3 ]] || { printf '%s\n' "$report"; return 1; }
   original_sha="$(sha256sum "$ledger" | awk '{print $1}')"
   [[ "$(sha256sum "$marker" | awk '{print $1}')" == "$(jq -r '.owner_sha256' "$ledger")" ]] || return 1
   container_records=""
@@ -354,7 +414,8 @@ commit() {
   chmod 0600 "$candidate"
   jq --argjson containers "$(jq -sc . <<<"$container_records")" \
     --argjson images "$(jq -sc . <<<"$image_records")" \
-    '.phase="committed" | .containers=$containers | .images=$images' "$ledger" >"$candidate"
+    '.phase="committed" | .containers=$containers | .images=$images |
+     del(.target_plan,.replace_names)' "$ledger" >"$candidate"
   LEDGER_OVERRIDE="$candidate"
   if ! report="$(check)"; then
     unset LEDGER_OVERRIDE
@@ -371,14 +432,78 @@ commit() {
   jq -cn --arg root "$ROOT" '{schema_version:1,status:"committed",root:$root,findings:[]}'
 }
 
+prepare_replace() {
+  local report status=0 ledger candidate original_sha name
+  report="$(check)" || status=$?
+  [[ "$status" == 0 && "$(jq -r '.status' <<<"$report")" == ready ]] || {
+    printf '%s\n' "$report"
+    return 1
+  }
+  [[ "${#REPLACE_NAMES[@]}" -gt 0 ]] || return 2
+  for name in "${REPLACE_NAMES[@]}"; do
+    jq -e --arg name "$name" '.containers | any(.[]; .name == $name)' <<<"$PLAN_JSON" >/dev/null || return 2
+  done
+  ledger="$(jq -r '.root' <<<"$PLAN_JSON")/trojanpanelnext-installer/ownership.json"
+  original_sha="$(sha256sum "$ledger" | awk '{print $1}')"
+  candidate="$(mktemp "${ledger%/*}/.ownership.XXXXXX")" || return 1
+  chmod 0600 "$candidate"
+  jq --argjson plan "$PLAN_JSON" --argjson names "$(printf '%s\n' "${REPLACE_NAMES[@]}" | jq -Rsc 'split("\n") | map(select(length > 0)) | unique')" \
+    '.phase="replacing" | .target_plan=$plan | .replace_names=$names' "$ledger" >"$candidate"
+  [[ "$(sha256sum "$ledger" | awk '{print $1}')" == "$original_sha" ]] || {
+    rm -f -- "$candidate"; return 1;
+  }
+  mv -T -- "$candidate" "$ledger"
+  jq -cn '{schema_version:1,status:"ready_resume",findings:[]}'
+}
+
+checkpoint() {
+  local report status=0 ledger candidate original_sha phase name data id image_id records ids
+  report="$(check)" || status=$?
+  [[ "$status" == 3 ]] || { printf '%s\n' "$report"; return 1; }
+  ledger="$(jq -r '.root' <<<"$PLAN_JSON")/trojanpanelnext-installer/ownership.json"
+  phase="$(jq -r '.phase' "$ledger")"
+  [[ "$phase" == preparing ]] || {
+    # Replacement keeps the old exact IDs until the final verified commit.
+    printf '%s\n' "$report"; return 0;
+  }
+  original_sha="$(sha256sum "$ledger" | awk '{print $1}')"
+  ids="$(docker ps -a --no-trunc --format '{{.ID}}' 2>/dev/null)" || return 1
+  records=""
+  while IFS= read -r id; do
+    [[ -n "$id" ]] || continue
+    data="$(docker inspect --type container "$id" 2>/dev/null)" || return 1
+    jq -e 'type == "array" and length == 1' <<<"$data" >/dev/null || return 1
+    name="$(jq -r '.[0].Name | ltrimstr("/")' <<<"$data")"
+    jq -e --arg name "$name" '.containers | any(.[]; .name == $name)' <<<"$PLAN_JSON" >/dev/null || continue
+    image_id="$(jq -r '.[0].Image' <<<"$data")"
+    records+="$(jq -cn --arg name "$name" --arg id "$id" --arg image_id "$image_id" \
+      '{name:$name,id:$id,image_id:$image_id}')"$'\n'
+  done <<<"$ids"
+  candidate="$(mktemp "${ledger%/*}/.ownership.XXXXXX")" || return 1
+  chmod 0600 "$candidate"
+  jq --argjson containers "$(jq -sc 'map(select(type == "object"))' <<<"$records")" \
+    '.containers=$containers' "$ledger" >"$candidate"
+  LEDGER_OVERRIDE="$candidate"
+  status=0
+  report="$(check)" || status=$?
+  [[ "$status" == 3 ]] || { unset LEDGER_OVERRIDE; rm -f -- "$candidate"; printf '%s\n' "$report"; return 1; }
+  unset LEDGER_OVERRIDE
+  [[ "$(sha256sum "$ledger" | awk '{print $1}')" == "$original_sha" ]] || { rm -f -- "$candidate"; return 1; }
+  mv -T -- "$candidate" "$ledger"
+  printf '%s\n' "$report"
+}
+
 main() {
   local command="${1:-}"; shift || true
+  local lock_fd root parent
   PLAN=""
-  case "$command" in check | begin | commit) ;; *) usage; return 2 ;; esac
+  REPLACE_NAMES=()
+  case "$command" in check | begin | checkpoint | commit | prepare-replace) ;; *) usage; return 2 ;; esac
   unset LEDGER_OVERRIDE || true
   while (($#)); do
     case "$1" in
     --plan) [[ $# -ge 2 ]] || { usage; return 2; }; PLAN="$2"; shift 2 ;;
+    --replace) [[ "$command" == prepare-replace && $# -ge 2 ]] || { usage; return 2; }; REPLACE_NAMES+=("$2"); shift 2 ;;
     *) usage; return 2 ;;
     esac
   done
@@ -393,7 +518,16 @@ main() {
     printf '{"schema_version":1,"status":"blocked","findings":[{"code":"invalid_plan","resource":"plan"}]}\n'; return 2;
   }
   valid_plan || { printf '{"schema_version":1,"status":"blocked","findings":[{"code":"invalid_plan","resource":"plan"}]}\n'; return 2; }
-  "$command"
+  if [[ "$command" != check ]]; then
+    # The fixed existing inode serializes even when the data root does not yet
+    # exist. No lock file or directory is created by read-only check.
+    exec {lock_fd}</
+    flock -x "$lock_fd"
+  fi
+  case "$command" in
+  prepare-replace) prepare_replace ;;
+  *) "$command" ;;
+  esac
 }
 
 main "$@"

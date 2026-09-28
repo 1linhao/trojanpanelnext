@@ -56,11 +56,15 @@ check() {
   [[ "$(jq -r '.status' <<<"$output")" == "$expected" ]] || {
     printf 'Unexpected status: %s\n' "$output" >&2; exit 1;
   }
-  if [[ "$expected" == ready ]]; then [[ "$status" == 0 ]]; else [[ "$status" != 0 ]]; fi
+  case "$expected" in
+  ready | ready_new) [[ "$status" == 0 ]] ;;
+  ready_resume) [[ "$status" == 3 ]] ;;
+  blocked) [[ "$status" == 1 ]] ;;
+  esac
   printf '%s\n' "$output"
 }
 
-check ready >/dev/null
+check ready_new >/dev/null
 ! grep -q forbidden "$TP_TEST_TRACE"
 ! grep -Eq 'docker (pull|run|start|rm)|entryctl|node-identity' "$TP_TEST_TRACE"
 [[ ! -e "$root" ]]
@@ -76,7 +80,7 @@ jq --arg root "$fixture/combined-root" \
                 {name:"tp-db",role:"shared",image:"api",mounts:[],ports:[]}]' \
   "$plan" >"$fixture/combined-plan.json"
 output="$(bash "$installer_dir/ownership/ledger.sh" check --plan - <"$fixture/combined-plan.json")"
-[[ "$(jq -r .status <<<"$output")" == ready ]]
+[[ "$(jq -r .status <<<"$output")" == ready_new ]]
 
 TP_TEST_PS_FAIL=1
 export TP_TEST_PS_FAIL
@@ -109,6 +113,20 @@ output="$(bash "$installer_dir/ownership/ledger.sh" begin --plan - <"$plan")" ||
 
 # The mutating command starts only after the identical read-only preflight.
 unset -f mkdir mktemp chmod install
+jq --arg root "$fixture/race-root" '.root=$root | .containers[0].mounts[0].source=($root + "/data")' \
+  "$plan" >"$fixture/race-plan.json"
+bash "$installer_dir/ownership/ledger.sh" begin --plan - <"$fixture/race-plan.json" >"$fixture/race-1.json" &
+race_pid_1=$!
+bash "$installer_dir/ownership/ledger.sh" begin --plan - <"$fixture/race-plan.json" >"$fixture/race-2.json" &
+race_pid_2=$!
+wait "$race_pid_1"
+wait "$race_pid_2"
+jq -e -s '[.[].status] | sort == ["preparing","ready_resume"]' \
+  "$fixture/race-1.json" "$fixture/race-2.json" >/dev/null
+[[ "$(sha256sum "$fixture/race-root/.trojanpanelnext-owner-token" | awk '{print $1}')" == \
+   "$(jq -r .owner_sha256 "$fixture/race-root/trojanpanelnext-installer/ownership.json")" ]]
+mkdir -m 700 "$fixture/.trojanpanelnext-staging.orphan"
+check ready_new >/dev/null
 output="$(bash "$installer_dir/ownership/ledger.sh" begin --plan - <"$plan")"
 [[ "$(jq -r .status <<<"$output")" == preparing ]]
 marker="$root/.trojanpanelnext-owner-token"
@@ -116,7 +134,10 @@ ledger="$root/trojanpanelnext-installer/ownership.json"
 [[ "$(stat -c %a "$marker")" == 600 && "$(stat -c %a "$ledger")" == 600 ]]
 [[ "$(wc -c <"$marker")" == 64 ]]
 ! grep -q "$(cat "$marker")" "$ledger"
-check blocked | jq -e '.findings | any(.[]; .code == "interrupted_phase")' >/dev/null
+check ready_resume >/dev/null
+output="$(bash "$installer_dir/ownership/ledger.sh" begin --plan - <"$plan")"
+[[ "$(jq -r .status <<<"$output")" == ready_resume ]]
+[[ "$(jq -r '.containers | length' "$ledger")" == 0 ]]
 
 # Model completed deployment resources, then commit only after exact inspection.
 printf '%s\n' "$container_id" >"$TP_TEST_CONTAINERS"
@@ -129,6 +150,10 @@ jq -cn --arg id "$container_id" --arg image "$image_id" --arg ref "$reference" \
     Mounts:[{Source:($root + "/data"),Destination:"/tpdata/data",RW:true}]}]' >"$TP_TEST_CONTAINER_JSON"
 jq -cn --arg id "$image_id" --arg ref "$reference" \
   '[{Id:$id,RepoDigests:[$ref],RepoTags:[]}]' >"$TP_TEST_IMAGE_JSON"
+check ready_resume >/dev/null
+[[ "$(jq -r '.containers | length' "$ledger")" == 0 ]]
+output="$(bash "$installer_dir/ownership/ledger.sh" checkpoint --plan - <"$plan")" || status=$?
+[[ "$(jq -r .status <<<"$output")" == ready_resume && "$(jq -r '.containers[0].id' "$ledger")" == "$container_id" ]]
 cp "$TP_TEST_CONTAINER_JSON" "$fixture/good-container.json"
 jq '.[0].Mounts[0].Source="/foreign/data"' "$TP_TEST_CONTAINER_JSON" >"$fixture/mismatch.json"
 cp "$fixture/mismatch.json" "$TP_TEST_CONTAINER_JSON"
@@ -139,6 +164,25 @@ output="$(bash "$installer_dir/ownership/ledger.sh" commit --plan - <"$plan")" |
 cp "$fixture/good-container.json" "$TP_TEST_CONTAINER_JSON"
 output="$(bash "$installer_dir/ownership/ledger.sh" commit --plan - <"$plan")"
 [[ "$(jq -r .status <<<"$output")" == committed ]]
+check ready >/dev/null
+
+replacement_id="$(printf 'd%.0s' {1..64})"
+jq --arg id "$replacement_id" '.[0].Id=$id' "$TP_TEST_CONTAINER_JSON" >"$fixture/replacement.json"
+cp "$fixture/replacement.json" "$TP_TEST_CONTAINER_JSON"
+printf '%s\n' "$replacement_id" >"$TP_TEST_CONTAINERS"
+check blocked | jq -e '.findings | any(.[]; .code == "container_id_mismatch")' >/dev/null
+cp "$fixture/good-container.json" "$TP_TEST_CONTAINER_JSON"
+printf '%s\n' "$container_id" >"$TP_TEST_CONTAINERS"
+output="$(bash "$installer_dir/ownership/ledger.sh" prepare-replace --plan - --replace tp-api <"$plan")"
+[[ "$(jq -r .status <<<"$output")" == ready_resume ]]
+[[ "$(jq -r '.phase' "$ledger")" == replacing ]]
+cp "$fixture/replacement.json" "$TP_TEST_CONTAINER_JSON"
+printf '%s\n' "$replacement_id" >"$TP_TEST_CONTAINERS"
+check ready_resume >/dev/null
+[[ "$(jq -r '.containers[0].id' "$ledger")" == "$container_id" ]]
+output="$(bash "$installer_dir/ownership/ledger.sh" commit --plan - <"$plan")"
+[[ "$(jq -r .status <<<"$output")" == committed ]]
+[[ "$(jq -r '.containers[0].id' "$ledger")" == "$replacement_id" ]]
 check ready >/dev/null
 
 : >"$TP_TEST_CONTAINERS"
