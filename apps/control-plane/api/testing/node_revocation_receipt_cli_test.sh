@@ -52,6 +52,7 @@ redis_admin ping 2>/dev/null | grep -Fxq PONG || fail 'Redis did not become read
 
 db 'CREATE TABLE account (id bigint unsigned NOT NULL AUTO_INCREMENT PRIMARY KEY, username varchar(64) NOT NULL, download bigint unsigned NOT NULL DEFAULT 0, upload bigint unsigned NOT NULL DEFAULT 0); INSERT INTO account (username) VALUES ("integration-user");'
 db 'CREATE TABLE node_server (id bigint unsigned NOT NULL AUTO_INCREMENT PRIMARY KEY, ip varchar(64) NOT NULL DEFAULT "", name varchar(64) NOT NULL DEFAULT "", grpc_port int unsigned NOT NULL DEFAULT 8100, grpc_tls_mode varchar(16) NOT NULL DEFAULT "mtls", grpc_tls_server_name varchar(253) NOT NULL DEFAULT "", traffic_period varchar(8) NOT NULL DEFAULT "none", traffic_limit_mode varchar(8) NOT NULL DEFAULT "combined", traffic_total_limit bigint unsigned NOT NULL DEFAULT 0, traffic_upload_limit bigint unsigned NOT NULL DEFAULT 0, traffic_download_limit bigint unsigned NOT NULL DEFAULT 0, create_time datetime NOT NULL DEFAULT CURRENT_TIMESTAMP, update_time datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP);'
+db 'CREATE TABLE node (id bigint unsigned NOT NULL AUTO_INCREMENT PRIMARY KEY, node_server_id bigint unsigned NOT NULL);'
 db 'CREATE TABLE account_traffic_total (account_id bigint unsigned NOT NULL PRIMARY KEY, upload bigint unsigned NOT NULL DEFAULT 0, download bigint unsigned NOT NULL DEFAULT 0);'
 db 'CREATE TABLE account_traffic_daily (traffic_date date NOT NULL, account_id bigint unsigned NOT NULL, upload bigint unsigned NOT NULL DEFAULT 0, download bigint unsigned NOT NULL DEFAULT 0, PRIMARY KEY (traffic_date, account_id));'
 db 'CREATE TABLE account_server_traffic_daily (traffic_date date NOT NULL, account_id bigint unsigned NOT NULL, node_server_id bigint unsigned NOT NULL, upload bigint unsigned NOT NULL DEFAULT 0, download bigint unsigned NOT NULL DEFAULT 0, PRIMARY KEY (traffic_date, account_id, node_server_id));'
@@ -151,6 +152,19 @@ assert_audit() {
   test "$(db "SELECT COUNT(*) FROM node_identity_event WHERE identity_id='${id}' AND action='${action}' AND result='succeeded'")" -ge "${minimum}" ||
     fail "${name} successful ${action} audit missing"
 }
+assert_control_targets() {
+  local expected="" name server
+  for name in "$@"; do
+    server="$(jq -r .node_server_id "${work}/runtime/config/${name}.json")"
+    expected+="${expected:+,}${server}"
+  done
+  (cd "${api_dir}" && TP_NODE_CONTROL_TEST_DSN="root:${admin_db_password}@tcp(127.0.0.1:${mariadb_port})/trojan_panel_db?parseTime=true" \
+    TP_NODE_CONTROL_TEST_EXPECT="${expected}" \
+    go test ./dao -run '^TestNodeControlTargetsRespectIdentityStatus$' -count=1) || {
+    db 'SELECT ns.id,ns.name,COALESCE(ni.status,"unmanaged") FROM node_server ns LEFT JOIN node_identity ni ON ni.node_server_id=ns.id ORDER BY ns.id' >&2
+    fail "control target query included a revoked identity or excluded a live Node"
+  }
+}
 
 run_cli key-init revocation-key-init || fail 'revocation-key-init failed'
 public_key="${work}/runtime/config/revocation/public-key.txt"
@@ -166,6 +180,17 @@ register_node node-a
 register_node node-b
 register_node node-c
 register_node node-d
+for name in node-a node-b node-c node-d; do
+  db "INSERT INTO node (node_server_id) VALUES ($(jq -r .node_server_id "${work}/runtime/config/${name}.json"))" >/dev/null
+done
+assert_control_targets node-a node-b node-c node-d
+# A registered but not yet active identity must also be excluded from both
+# list and by-ID control; this status transition is only a DAO fixture.
+node_d_id="$(jq -r .node_identity_id "${work}/runtime/config/node-d.json")"
+db "UPDATE node_identity SET status='provisioning' WHERE identity_id='${node_d_id}'" >/dev/null
+assert_control_targets node-a node-b node-c
+db "UPDATE node_identity SET status='active' WHERE identity_id='${node_d_id}'" >/dev/null
+assert_control_targets node-a node-b node-c node-d
 assert_live node-a
 assert_live node-b
 assert_live node-c
@@ -189,6 +214,7 @@ run_cli revoke-a revoke --id "${node_a_id}" --receipt-file "${node_a_receipt}" |
 test "$(stat -c %a "${node_a_receipt}")" = 600 || fail 'Node A receipt mode is unsafe'
 assert_revoked node-a
 assert_state node-a revoked 1
+assert_control_targets node-b node-c node-d
 assert_audit node-a revoke 1
 verify_receipt node-a "${node_a_receipt}" revoked
 "${work}/node-bundle" verify-receipt --receipt-file "${node_a_receipt}" \
@@ -226,6 +252,7 @@ run_cli evict-b force-evict --id "${node_b_id}" --receipt-file "${work}/receipts
   fail 'offline Node B force-evict failed'
 assert_revoked node-b
 assert_state node-b evicted 0
+assert_control_targets node-c node-d
 assert_audit node-b force-evict 1
 verify_receipt node-b "${work}/receipts/node-b.json" evicted
 run_cli evict-b-retry force-evict --id "${node_b_id}" --receipt-file "${work}/receipts/node-b-retry.json" ||
@@ -237,6 +264,31 @@ assert_state node-c active 1
 assert_live node-d
 assert_state node-d active 1
 
+# A bounded interruption while Redis is unavailable leaves the Web result
+# uncertain. It must not leave a signed success proof that could unlock local
+# Node removal. The installer trace below uses this exact absent output path.
+register_node node-e
+db "INSERT INTO node (node_server_id) VALUES ($(jq -r .node_server_id "${work}/runtime/config/node-e.json"))" >/dev/null
+assert_control_targets node-c node-d node-e
+node_e_id="$(jq -r .node_identity_id "${work}/runtime/config/node-e.json")"
+node_e_receipt="${work}/receipts/node-e-uncertain.json"
+docker pause "${redis_container}" >/dev/null
+uncertain_status=0
+(cd "${work}/runtime" && timeout 2s "${work}/trojan-panel" node-identity revoke \
+  --id "${node_e_id}" --receipt-file "${node_e_receipt}" \
+  >"${work}/uncertain.out" 2>"${work}/uncertain.err") || uncertain_status=$?
+docker unpause "${redis_container}" >/dev/null
+test "${uncertain_status}" != 0 || fail 'Web revoke succeeded while Redis was unreachable'
+test ! -e "${node_e_receipt}" || fail 'uncertain Web revoke emitted a success receipt'
+TP_NODE_REVOCATION_TIMEOUT_RECEIPT="${node_e_receipt}" \
+  bash "${api_dir}/../../../deploy/installer/tests/node_revocation_remove_test.sh" ||
+  fail 'Node remove crossed its local side-effect boundary after uncertain Web revoke'
+assert_live node-d
+run_cli uncertain-retry revoke --id "${node_e_id}" --receipt-file "${work}/receipts/node-e-retry.json" ||
+  fail 'Web revoke did not recover after uncertain result'
+verify_receipt node-e "${work}/receipts/node-e-retry.json" revoked
+assert_control_targets node-c node-d
+
 node_c_id="$(jq -r .node_identity_id "${work}/runtime/config/node-c.json")"
 node_c_receipt="${work}/receipts/node-c.json"
 # At this point the only writer is Node C's revoke. A single-statement trigger
@@ -246,6 +298,7 @@ reject_cli audit-failure revoke --id "${node_c_id}" --receipt-file "${node_c_rec
 test ! -e "${node_c_receipt}" || fail 'audit failure created a success receipt'
 assert_revoked node-c
 assert_state node-c revoked 1
+assert_control_targets node-d
 test "$(db "SELECT COUNT(*) FROM node_identity_event WHERE identity_id='${node_c_id}' AND action='revoke' AND result='succeeded'")" = 0 ||
   fail 'failed audit unexpectedly committed success'
 db 'DROP TRIGGER reject_node_c_revoke_audit' >/dev/null
@@ -260,7 +313,7 @@ assert_state node-d active 1
 for secret in "${admin_db_password}" "${admin_redis_password}"; do
   ! grep -Fq -- "${secret}" "${work}"/*.out "${work}"/*.err || fail 'CLI output leaked admin credentials'
 done
-for name in node-a node-b node-c node-d; do
+for name in node-a node-b node-c node-d node-e; do
   credential="${work}/runtime/config/${name}.json"
   for field in .mariadb.password .redis.password .redis_auth.password; do
     secret="$(jq -r "${field}" "${credential}")"

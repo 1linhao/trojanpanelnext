@@ -75,6 +75,10 @@ func SelectNodeServerPage(queryName *string, queryIp *string, pageNum *uint, pag
 		for i := range nodeServerVos {
 			indexI := i
 			go func() {
+				if _, err := dao.SelectNodeServerForControl(nodeServerVos[indexI].Id); err != nil {
+					wg.Done()
+					return
+				}
 				var ip = nodeServerVos[indexI].Ip
 				var grpcPort = nodeServerVos[indexI].GrpcPort
 				nodeMapValue, ok := nodeMap.Load(ip)
@@ -218,7 +222,7 @@ func SelectNodeServerList(dto *dto.NodeServerDto) ([]vo.NodeServerListVo, error)
 }
 
 func GetNodeServerInfo(token string, nodeServerId *uint) (*core.NodeServerInfoVo, error) {
-	nodeServer, err := dao.SelectNodeServer(map[string]interface{}{"id": *nodeServerId})
+	nodeServer, err := dao.SelectNodeServerForControl(*nodeServerId)
 	if err != nil {
 		return nil, err
 	}

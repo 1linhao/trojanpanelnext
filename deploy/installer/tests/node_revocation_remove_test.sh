@@ -91,6 +91,9 @@ rm -- "${data}/trojanpanelnext-installer/combined.state"
 reject_before_effects forged-combined "${work}/forged-combined.yaml" NONE
 reject_before_effects forged-combined-valid-proof "${work}/forged-combined.yaml" "${work}/valid.receipt"
 reject_before_effects missing-file "${work}/node.yaml" "${work}/absent.receipt"
+if [[ -n "${TP_NODE_REVOCATION_TIMEOUT_RECEIPT:-}" ]]; then
+  reject_before_effects uncertain-web-result "${work}/node.yaml" "${TP_NODE_REVOCATION_TIMEOUT_RECEIPT}"
+fi
 for label in other-identity other-server old-generation other-issuer tampered; do
   reject_before_effects "${label}" "${work}/node.yaml" "${work}/${label}.receipt"
 done

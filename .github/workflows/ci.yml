@@ -139,6 +139,7 @@ jobs:
           bash deploy/installer/tests/installer_cli_test.sh
           bash deploy/installer/tests/node_bundle_cli_test.sh
           bash deploy/installer/tests/node_revocation_remove_test.sh
+          bash deploy/installer/tests/combined_revocation_order_test.sh
           bash deploy/installer/tests/node_runtime_container_test.sh
           bash deploy/installer/tests/entry_controller_test.sh
           bash deploy/installer/tests/entry_combined_v2_test.sh

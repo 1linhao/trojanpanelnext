@@ -107,6 +107,7 @@ mkdir -p "${work}/installed/trojan-panel-core/pki" "${work}/installed/trojanpane
 TP_DATA="${work}/installed" bash -c '
   set -Eeuo pipefail
   source "$1"
+  trap - EXIT
   TP_NODE_BUNDLE_ACTIVE=1
   TP_NODE_BUNDLE_DIR="$2"
   pin_node_revocation_key
@@ -118,6 +119,41 @@ TP_DATA="${work}/installed" bash -c '
     exit 1
   fi
 ' pin-test "${INSTALLER_DIR}/install.sh" "${work}/plain" || fail 'legacy installed Node without pin was accepted'
+
+rm -- "${work}/installed/trojanpanelnext-installer/node.state"
+cp -a "${work}/plain" "${work}/plain-other"
+openssl genpkey -algorithm ED25519 -out "${work}/other-revocation-private.pem" >/dev/null 2>&1
+printf 'TPNEXT-REVOCATION-ED25519-V1:%s\n' "$(openssl pkey -in "${work}/other-revocation-private.pem" -pubout -outform DER | tail -c 32 | base64 -w0 | tr '+/' '-_' | tr -d '=')" >"${work}/plain-other/pki/revocation-public-key.txt"
+chmod 0600 "${work}/plain-other/pki/revocation-public-key.txt"
+pin_from_bundle() {
+  TP_DATA="${work}/installed" bash -c '
+    set -Eeuo pipefail
+    source "$1"
+    trap - EXIT
+    TP_NODE_BUNDLE_ACTIVE=1
+    TP_NODE_BUNDLE_DIR="$2"
+    pin_node_revocation_key
+  ' pin-race "${INSTALLER_DIR}/install.sh" "$1"
+}
+for _ in $(seq 1 8); do
+  rm -f -- "${work}/installed/trojan-panel-core/pki/revocation-public-key.txt"
+  pin_from_bundle "${work}/plain" >"${work}/pin-first.out" 2>&1 &
+  first_pin_pid=$!
+  pin_from_bundle "${work}/plain-other" >"${work}/pin-second.out" 2>&1 &
+  second_pin_pid=$!
+  first_pin_status=0
+  second_pin_status=0
+  wait "${first_pin_pid}" || first_pin_status=$?
+  wait "${second_pin_pid}" || second_pin_status=$?
+  [[ "${first_pin_status}:${second_pin_status}" == 0:1 || "${first_pin_status}:${second_pin_status}" == 1:0 ]] ||
+    fail 'two different keys were both accepted or neither was published'
+  winner="${work}/plain"
+  [[ "${second_pin_status}" != 0 ]] || winner="${work}/plain-other"
+  cmp -s "${winner}/pki/revocation-public-key.txt" "${work}/installed/trojan-panel-core/pki/revocation-public-key.txt" ||
+    fail 'later competing bundle overwrote the first pinned trust key'
+  test -z "$(find "${work}/installed/trojan-panel-core/pki" -name '*.pending.*' -print -quit)" ||
+    fail 'key pinning left a pending file'
+done
 
 test -z "$(find "${bundle_tmpfs_root}" -mindepth 1 -maxdepth 1 -print -quit)"
 yq() { "${TP_TEST_FAKE_YQ_READER}" "$@"; }

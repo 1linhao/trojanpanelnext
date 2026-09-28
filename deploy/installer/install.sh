@@ -724,11 +724,25 @@ check_installed_node_revocation_key() {
 }
 
 pin_node_revocation_key() {
-  local bundled="${TP_NODE_BUNDLE_DIR}/pki/revocation-public-key.txt" installed="${NODE_REVOCATION_PUBLIC_KEY}"
+  local bundled="${TP_NODE_BUNDLE_DIR}/pki/revocation-public-key.txt" installed="${NODE_REVOCATION_PUBLIC_KEY}" temporary
   check_installed_node_revocation_key || return 1
   [[ -e "${installed}" ]] && return 0
   [[ -d "$(dirname "${installed}")" && ! -L "$(dirname "${installed}")" ]] || return 1
-  install -m 0600 "${bundled}" "${installed}"
+  temporary="$(mktemp "${installed}.pending.XXXXXXXX")" || return 1
+  if ! install -m 0600 "${bundled}" "${temporary}"; then
+    rm -f -- "${temporary}"
+    return 1
+  fi
+  # Hard-link publication is atomic and fails if another installation pinned
+  # this path after our precheck. A rename or install to the final path could
+  # silently replace the original trust root.
+  if ! ln -- "${temporary}" "${installed}" 2>/dev/null; then
+    rm -f -- "${temporary}"
+    check_installed_node_revocation_key
+    return $?
+  fi
+  rm -f -- "${temporary}"
+  check_installed_node_revocation_key
 }
 
 verify_independent_node_removal() {
@@ -3960,6 +3974,9 @@ remove_combined_role() {
     # Reclaim the control-plane identity before changing the local Node role.
     # A failed revocation leaves every local resource untouched.
     revoke_combined_node_identity
+    if [[ -n "${ENTRY_SPEC_FILE}" ]]; then
+      entry_controller remove
+    fi
     if [[ "${roles}" == node,web ]]; then
       COMBINED_ENTRY_REVISION="$(jq -r '.desired_revision' "${state}")"
       COMBINED_ENTRY_REVISION=$((COMBINED_ENTRY_REVISION + 1))
@@ -3986,6 +4003,9 @@ remove_combined_role() {
     # still stopped below; purge of their files is only done after ownership
     # has been proven by the Adapter.
     revoke_combined_node_identity
+    if [[ -n "${ENTRY_SPEC_FILE}" ]]; then
+      entry_controller remove
+    fi
     combined_entry_remove "${TP_PURGE_DATA}"
     local resource
     for resource in "${WEB_CADDY_CONTAINER}" "${UI_CONTAINER}" "${PANEL_CONTAINER}" \
@@ -4225,7 +4245,8 @@ main() {
     fi
   fi
 
-  if [[ "${command}" == remove && -n "${ENTRY_SPEC_FILE}" ]]; then
+  if [[ "${command}" == remove && -n "${ENTRY_SPEC_FILE}" &&
+    !( "${TP_DEPLOYMENT_MODE}" == combined && ( "${mode}" == node || "${mode}" == combined ) ) ]]; then
     entry_controller remove
   fi
 
