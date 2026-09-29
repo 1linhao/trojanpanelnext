@@ -182,6 +182,10 @@ jobs:
       - name: Test local init and topology behavior
         shell: bash
         run: bash deploy/installer/tests/local_init_test.sh
+      - name: Test packaged Release CLI and topology contract
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: bash deploy/installer/tests/local_release_bundle_test.sh
 
   docs:
     name: documentation site

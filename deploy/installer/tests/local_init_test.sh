@@ -29,12 +29,15 @@ file_mode() {
 }
 
 source_dir="${work}/source"
-mkdir -p "${source_dir}/entry/adapters"
+mkdir -p "${source_dir}/entry/adapters" "${source_dir}/client/templates"
 paths=(
   bootstrap.sh release-contract.sh verify-assets.sh install.sh secure-file node-bundle
   config-web.yaml config-node.yaml config-combined.yaml
   entry/entryctl.sh entry/controller.sh entry/v2.sh
   entry/adapters/external.sh entry/adapters/nginx_certbot.sh entry/adapters/caddy.sh
+  client/tpnext.sh client/topology.sh client/verify-release.sh
+  client/download-assets.sh client/upload-assets.sh
+  client/templates/unified-ssh.yaml client/templates/unified-local.yaml
 )
 for path in "${paths[@]}"; do printf 'untrusted fixture asset: %s\n' "${path}" >"${source_dir}/${path}"; done
 asset_json='[]'
