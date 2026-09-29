@@ -16,4 +16,4 @@
 
 ### Multi-agent workflow
 
-多模型会话按 GitHub 依赖图、独立 branch/worktree 和每票一个 PR 协作。模型职责、质量门禁与越界升级规则见 `docs/agents/workflow.md`。
+统筹会话先按任务风险和范围选择快速、轻量或完整路径；只有完整路径才要求 GitHub 依赖图、独立 branch/worktree、每票一个 PR 和独立审查。模型职责、路由、质量门禁与越界升级规则见 `docs/agents/workflow.md`。
