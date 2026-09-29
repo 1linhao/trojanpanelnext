@@ -3,13 +3,16 @@ set -Eeuo pipefail
 
 CLIENT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 usage() {
-  printf 'Usage:\n  %s init --config FILE --tag RELEASE_TAG --sha256 ARCHIVE_SHA256 [--archive FILE] [--web-transport ssh|local] [--work-dir DIR]\n  %s plan --config FILE\n' "$0" "$0"
+  printf 'Usage:\n  %s init --config FILE --tag RELEASE_TAG --sha256 ARCHIVE_SHA256 [--archive FILE] [--web-transport ssh|local] [--work-dir DIR]\n  %s plan --config FILE\n  %s check --config FILE\n' "$0" "$0" "$0"
 }
 fail() { printf 'tpnext: %s\n' "$1" >&2; exit "${2:-1}"; }
 [[ $# -ge 1 ]] || { usage >&2; exit 2; }
 command="$1"; shift
 if [[ "${command}" == plan ]]; then
   exec bash "${CLIENT_DIR}/topology.sh" "$@"
+fi
+if [[ "${command}" == check ]]; then
+  exec bash "${CLIENT_DIR}/check.sh" "$@"
 fi
 [[ "${command}" == init ]] || { usage >&2; exit 2; }
 
