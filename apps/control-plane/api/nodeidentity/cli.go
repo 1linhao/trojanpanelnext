@@ -133,6 +133,8 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 		return runStatus(commandArgs[1:], stdout, stderr)
 	case "verify":
 		return runVerify(commandArgs[1:], stdout, stderr)
+	case "catalog":
+		return runCatalog(commandArgs[1:], stdout, stderr)
 	default:
 		fmt.Fprintln(stderr, "node identity: unsupported command")
 		return 2
@@ -318,15 +320,21 @@ func runRegister(args []string, stdout io.Writer, stderr io.Writer) int {
 	set := flag.NewFlagSet("node-identity register", flag.ContinueOnError)
 	set.SetOutput(stderr)
 	var name, domain, publicIP, credentialPath string
+	var grpcPort uint
 	set.StringVar(&name, "name", "", "stable Node name")
 	set.StringVar(&domain, "domain", "", "Node domain")
 	set.StringVar(&publicIP, "public-ip", "", "Node public IP")
 	set.StringVar(&credentialPath, "credential-file", "", "restricted credential output file")
+	set.UintVar(&grpcPort, "grpc-port", 8100, "committed Node gRPC port")
 	if err := set.Parse(args); err != nil {
 		return 2
 	}
 	if err := validateRegisterInput(name, domain, publicIP, credentialPath, set.Args()); err != nil {
 		fmt.Fprintf(stderr, "node identity: %v\n", err)
+		return 2
+	}
+	if grpcPort == 0 || grpcPort > 65535 {
+		fmt.Fprintln(stderr, "node identity: --grpc-port must be between 1 and 65535")
 		return 2
 	}
 
@@ -339,7 +347,7 @@ func runRegister(args []string, stdout io.Writer, stderr io.Writer) int {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	created, err := manager.register(ctx, name, strings.ToLower(domain), publicIP, credentialPath)
+	created, err := manager.register(ctx, name, strings.ToLower(domain), publicIP, credentialPath, grpcPort)
 	if err != nil {
 		fmt.Fprintln(stderr, "node identity: registration failed; no credential was written to the terminal")
 		return 1
@@ -443,7 +451,7 @@ func registrationLockName(name, domain string) string {
 	return "tpn-node-register:" + hex.EncodeToString(digest[:20])
 }
 
-func (manager *lifecycle) register(ctx context.Context, name, domain, publicIP, path string) (identity, error) {
+func (manager *lifecycle) register(ctx context.Context, name, domain, publicIP, path string, grpcPort uint) (identity, error) {
 	if err := validateCredentialPath(path); err != nil {
 		return identity{}, err
 	}
@@ -455,7 +463,7 @@ func (manager *lifecycle) register(ctx context.Context, name, domain, publicIP, 
 		return identity{}, err
 	}
 	defer release()
-	registered, created, err := manager.reserveIdentity(ctx, name, domain, publicIP, filepath.Clean(path))
+	registered, created, err := manager.reserveIdentity(ctx, name, domain, publicIP, filepath.Clean(path), grpcPort)
 	if err != nil {
 		return identity{}, err
 	}
@@ -759,7 +767,7 @@ func (manager *lifecycle) ensureSchema(ctx context.Context) error {
 	return dao.EnsureNodeIdentitySchema(ctx, manager.db)
 }
 
-func (manager *lifecycle) reserveIdentity(ctx context.Context, name, domain, publicIP, credentialPath string) (identity, bool, error) {
+func (manager *lifecycle) reserveIdentity(ctx context.Context, name, domain, publicIP, credentialPath string, grpcPort uint) (identity, bool, error) {
 	var existing identity
 	err := scanIdentity(manager.db.QueryRowContext(ctx, identitySelect+` WHERE name=? OR domain=?`, name, domain), &existing)
 	if err == nil {
@@ -767,6 +775,10 @@ func (manager *lifecycle) reserveIdentity(ctx context.Context, name, domain, pub
 			existing.CredentialPath != credentialPath ||
 			(existing.Status != statusProvisioning && existing.Status != statusActive) {
 			return identity{}, false, errors.New("Node identity conflicts with an existing registration")
+		}
+		var existingPort uint
+		if err = manager.db.QueryRowContext(ctx, "SELECT grpc_port FROM node_server WHERE id=?", existing.NodeServerID).Scan(&existingPort); err != nil || existingPort != grpcPort {
+			return identity{}, false, errors.New("Node server gRPC port conflicts with an existing registration")
 		}
 		return existing, false, nil
 	}
@@ -803,7 +815,7 @@ func (manager *lifecycle) reserveIdentity(ctx context.Context, name, domain, pub
 	defer tx.Rollback()
 	result, err := tx.ExecContext(ctx, `INSERT INTO node_server
 		(ip,name,grpc_port,grpc_tls_mode,grpc_tls_server_name,traffic_period,traffic_limit_mode,traffic_total_limit,traffic_upload_limit,traffic_download_limit)
-		VALUES (?,?,8100,'mtls',?,'none','combined',0,0,0)`, publicIP, name, domain)
+		VALUES (?,?,?,'mtls',?,'none','combined',0,0,0)`, publicIP, name, grpcPort, domain)
 	if err != nil {
 		return identity{}, false, err
 	}
@@ -1119,7 +1131,8 @@ func commandArguments(args []string) []string {
 func writeUsage(output io.Writer) {
 	fmt.Fprintln(output, `TrojanPanel Next Node identity lifecycle
 Usage:
-  trojan-panel node-identity register --name <name> --domain <domain> --public-ip <ip> --credential-file <0600-file>
+  trojan-panel node-identity register --name <name> --domain <domain> --public-ip <ip> --credential-file <0600-file> [--grpc-port <port>]
+  trojan-panel node-identity catalog lookup|reconcile --node-key <key> --host-id <host> --name <name> --domain <domain> --public-ip <ip> --grpc-port <port> --credential-dir <0700-dir>
   trojan-panel node-identity rotate --id <node-identity-id> --credential-file <0600-file>
   trojan-panel node-identity revoke --id <node-identity-id>
   trojan-panel node-identity force-evict --id <node-identity-id>
