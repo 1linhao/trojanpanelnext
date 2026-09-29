@@ -52,7 +52,7 @@ func run(args []string) error {
 		return nil
 	case "verify-receipt":
 		return runVerifyReceipt(args[1:])
-	case "extract", "inspect":
+	case "extract", "inspect", "inspect-config":
 		set := flag.NewFlagSet("node-bundle "+args[0], flag.ContinueOnError)
 		set.SetOutput(os.Stderr)
 		var bundle, directory string
@@ -72,8 +72,17 @@ func run(args []string) error {
 			}
 			return extractBundle(bundle, directory, password)
 		}
-		_, manifest, err := decryptAndValidate(bundle, password)
+		files, manifest, err := decryptAndValidate(bundle, password)
 		if err != nil {
+			return err
+		}
+		if args[0] == "inspect-config" {
+			// The caller pipes this into its in-memory ownership preflight.
+			// Never print the decrypted configuration to a terminal or log.
+			if term.IsTerminal(int(os.Stdout.Fd())) {
+				return errors.New("inspect-config requires piped standard output")
+			}
+			_, err = os.Stdout.Write(files[configPath])
 			return err
 		}
 		encoder := json.NewEncoder(os.Stdout)
@@ -134,6 +143,7 @@ func usage() {
   node-bundle create --credential-file <0600-json> --node-config <0600-yaml> --client-ca <certificate> --revocation-public-key <public-key.txt> --output <bundle.age>
   node-bundle extract --bundle <bundle.age> --directory <empty-0700-directory>
   node-bundle inspect --bundle <bundle.age>
+  node-bundle inspect-config --bundle <bundle.age> (piped output only)
   node-bundle verify-receipt --receipt-file <receipt> --pinned-public-key <installed-key> --identity-id <uuid> --server-id <id> --generation <n>
 
 The password is read from a terminal by default. Set TP_NODE_BUNDLE_PASSWORD

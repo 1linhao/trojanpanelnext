@@ -26,6 +26,10 @@ MANAGED_CERT_DIR="${MANAGED_CERT_DIR:-${TP_DATA}/trojan-panel-core/cert}"
 NETWORK_PLAN_DIR="${NETWORK_PLAN_DIR:-${TP_DATA}/trojanpanelnext-network}"
 INSTALLER_STATE_DIR="${INSTALLER_STATE_DIR:-${TP_DATA}/trojanpanelnext-installer}"
 INSTALLER_STATE_FILE=""
+OWNERSHIP_DEPLOYMENT_ID=""
+OWNERSHIP_PLAN_JSON=""
+OWNERSHIP_SHA=""
+TP_PREFLIGHT_CONFIG_JSON=""
 WEB_EFFECTIVE_CONFIG_FILE="${TP_DATA}/effective-web.yaml"
 
 MARIADB_CONTAINER="${MARIADB_CONTAINER:-trojan-panel-mariadb}"
@@ -131,6 +135,9 @@ TP_DEPENDENCY_PLAN=(
   "yq|yq|all|install yq ${YQ_VERSION} (mikefarah/yq)"
   'jq|jq|entry|install jq'
 )
+
+# shellcheck source=ownership/plan.sh
+source "${INSTALLER_DIR}/ownership/plan.sh"
 
 cleanup() {
   if [[ -n "${TP_TEMP_TOOLS_DIR}" && -d "${TP_TEMP_TOOLS_DIR}" ]]; then
@@ -572,11 +579,19 @@ retain_verified_release_assets() {
 yaml_read_raw() {
   local file="$1"
   local key="$2"
+  if [[ "$file" == __ownership_memory__ ]]; then
+    jq -r --arg key "$key" '.[$key] // "" | tostring' <<<"$TP_PREFLIGHT_CONFIG_JSON"
+    return
+  fi
   yq -r "${TP_CONFIG_ROOT}.${key} // \"\"" "${file}"
 }
 
 detect_config_root() {
   local file="$1"
+  if [[ "$file" == __ownership_memory__ ]]; then
+    TP_CONFIG_ROOT=.trojanpanelnext
+    return
+  fi
   if yq -e '.trojanpanelnext != null' "${file}" >/dev/null 2>&1; then
     TP_CONFIG_ROOT='.trojanpanelnext'
   else
@@ -881,7 +896,7 @@ load_config() {
     usage
     exit 1
   fi
-  if [[ ! -f "${file}" ]]; then
+  if [[ "${file}" != __ownership_memory__ && ! -f "${file}" ]]; then
     echo_content red "Config file not found: ${file}"
     exit 1
   fi
