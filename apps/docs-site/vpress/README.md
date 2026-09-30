@@ -27,7 +27,7 @@ footer: TrojanPanel Next
 
 安装前请预装 Docker、[mikefarah/yq v4](https://github.com/mikefarah/yq)、curl、OpenSSL、tar、coreutils、findutils 和 awk。安装器不会自动安装依赖；[安装器说明](https://github.com/1linhao/trojanpanelnext/blob/main/deploy/installer/README.md)提供 Debian/Ubuntu 命令和 yq 校验安装步骤。
 
-`0.1.0-rc.4` 的标签和镜像发布后，在每台服务器下载对应版本安装器：
+在每台服务器下载 `0.1.0-rc.4` 版本安装器：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v0.1.0-rc.4/deploy/installer/install.sh -o install.sh

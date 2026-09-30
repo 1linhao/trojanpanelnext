@@ -54,7 +54,7 @@ sudo docker info >/dev/null
 
 ## 版本绑定与获取安装器
 
-本分支准备版本 `0.1.0-rc.4`。对应 Git 标签和镜像发布后，每台 Web 或 Node 服务器都执行：
+当前安装器版本为 `0.1.0-rc.4`。每台 Web 或 Node 服务器都执行：
 
 ```bash
 curl -fsSL --connect-timeout 10 --max-time 60 \

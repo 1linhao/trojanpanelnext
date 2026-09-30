@@ -54,7 +54,7 @@ Omit `sudo` when logged in as root. Use the appropriate package manager on other
 
 ## Release binding and installer download
 
-This branch prepares version `0.1.0-rc.4`. After the corresponding Git tag and images have been published, run on each Web or Node server:
+The installer version is `0.1.0-rc.4`. Run on each Web or Node server:
 
 ```bash
 curl -fsSL --connect-timeout 10 --max-time 60 \

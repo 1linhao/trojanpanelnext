@@ -23,7 +23,7 @@ sudo docker info >/dev/null
 
 ## 获取安装器
 
-本分支准备版本 `0.1.0-rc.4`；对应标签和镜像发布后，在 Web 和 Node 服务器分别执行：
+当前安装器版本为 `0.1.0-rc.4`；在 Web 和 Node 服务器分别执行：
 
 ```bash
 curl -fsSL --connect-timeout 10 --max-time 60 \

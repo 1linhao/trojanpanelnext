@@ -8,7 +8,7 @@ TrojanPanel Next is a multi-user Web administration panel for Xray, Hysteria2, a
 
 Preinstall Docker, [mikefarah/yq v4](https://github.com/mikefarah/yq), curl, OpenSSL, tar, coreutils, findutils, and awk. The installer does not install dependencies. See the [installer guide](https://github.com/1linhao/trojanpanelnext/blob/main/deploy/installer/README_EN.md) for Debian/Ubuntu and verified yq installation instructions.
 
-After version `0.1.0-rc.4` and its images have been published, download the matching installer on each server:
+Download the matching `0.1.0-rc.4` installer on each server:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v0.1.0-rc.4/deploy/installer/install.sh -o install.sh
