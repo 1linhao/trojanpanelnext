@@ -25,30 +25,34 @@ footer: TrojanPanel Next
 
 ## 安装
 
-克隆项目并进入安装器目录：
+安装前请预装 Docker、[mikefarah/yq v4](https://github.com/mikefarah/yq)、curl、OpenSSL、tar、coreutils、findutils 和 awk。安装器不会自动安装依赖；[安装器说明](https://github.com/1linhao/trojanpanelnext/blob/main/deploy/installer/README.md)提供 Debian/Ubuntu 命令和 yq 校验安装步骤。
+
+`0.1.0-rc.4` 的标签和镜像发布后，在每台服务器下载对应版本安装器：
 
 ```bash
-git clone https://github.com/1linhao/trojanpanelnext.git
-cd trojanpanelnext/deploy/installer
+curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v0.1.0-rc.4/deploy/installer/install.sh -o install.sh
+chmod +x install.sh
 ```
 
 Web 主控：
 
 ```bash
-cp examples/web.yaml ./web.yaml
-./install.sh validate --mode web --config ./web.yaml
-sudo ./install.sh install --mode web --config ./web.yaml
+./install.sh config web
+nano web.yaml
+./install.sh validate --config ./web.yaml
+sudo ./install.sh install --config ./web.yaml
 ```
 
 Node Agent：
 
 ```bash
-cp examples/node-agent.yaml ./node-agent.yaml
-./install.sh validate --mode node --config ./node-agent.yaml
-sudo ./install.sh install --mode node --config ./node-agent.yaml
+./install.sh config node
+nano node.yaml
+./install.sh validate --config ./node.yaml
+sudo ./install.sh install --config ./node.yaml
 ```
 
-查看[完整安装说明](./install-tutorial/installation.md)。
+Node 安装前需复制 Web 的公开 CA，填写数据库、Redis 凭据和实际服务器 ID。查看[完整安装说明](./install-tutorial/installation.md)。
 
 ## 支持
 

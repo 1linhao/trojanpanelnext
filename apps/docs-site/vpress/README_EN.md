@@ -6,28 +6,34 @@ TrojanPanel Next is a multi-user Web administration panel for Xray, Hysteria2, a
 
 ## Installation
 
-Clone the project and enter the installer directory:
+Preinstall Docker, [mikefarah/yq v4](https://github.com/mikefarah/yq), curl, OpenSSL, tar, coreutils, findutils, and awk. The installer does not install dependencies. See the [installer guide](https://github.com/1linhao/trojanpanelnext/blob/main/deploy/installer/README_EN.md) for Debian/Ubuntu and verified yq installation instructions.
+
+After version `0.1.0-rc.4` and its images have been published, download the matching installer on each server:
 
 ```bash
-git clone https://github.com/1linhao/trojanpanelnext.git
-cd trojanpanelnext/deploy/installer
+curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v0.1.0-rc.4/deploy/installer/install.sh -o install.sh
+chmod +x install.sh
 ```
 
-Install the Web control plane:
+Web control plane:
 
 ```bash
-cp examples/web.yaml ./web.yaml
-./install.sh validate --mode web --config ./web.yaml
-sudo ./install.sh install --mode web --config ./web.yaml
+./install.sh config web
+nano web.yaml
+./install.sh validate --config ./web.yaml
+sudo ./install.sh install --config ./web.yaml
 ```
 
-Install a Node Agent:
+Node Agent:
 
 ```bash
-cp examples/node-agent.yaml ./node-agent.yaml
-./install.sh validate --mode node --config ./node-agent.yaml
-sudo ./install.sh install --mode node --config ./node-agent.yaml
+./install.sh config node
+nano node.yaml
+./install.sh validate --config ./node.yaml
+sudo ./install.sh install --config ./node.yaml
 ```
+
+Before installing Node, copy Web's public CA, fill in database/Redis credentials, and match the actual panel server ID.
 
 ## Support
 

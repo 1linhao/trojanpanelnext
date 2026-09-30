@@ -112,6 +112,15 @@ jobs:
           done < <(find deploy/installer -type f -name '*.sh' -print0)
           test "$count" -gt 0
           printf 'validated %d shell scripts\n' "$count"
+      - name: Prepare installer test dependencies
+        run: |
+          curl -fsSL --retry 2 --connect-timeout 10 --max-time 120 https://github.com/mikefarah/yq/releases/download/v4.53.6/yq_linux_amd64 -o /tmp/yq
+          printf '%s  %s\n' c5f056448f973ae7d39b5401949648a78f2dc1947d6a8eb65be60d5c504b9385 /tmp/yq | sha256sum -c -
+          sudo install -m 0755 /tmp/yq /usr/local/bin/yq
+      - name: Check installer release binding
+        run: node scripts/check-installer-release.mjs
+      - name: Check shell scripts
+        run: shellcheck deploy/installer/install.sh deploy/installer/tests/installer_cli_test.sh
       - name: Test installer CLI contract
         run: bash deploy/installer/tests/installer_cli_test.sh
 

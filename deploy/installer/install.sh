@@ -4,7 +4,11 @@ set -euo pipefail
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
 
 ECHO_TYPE="echo -e"
-YQ_VERSION="v4.53.6"
+INSTALLER_VERSION="0.1.0-rc.4"
+SUPPORTED_SCHEMA_VERSION="1"
+GITHUB_RAW_BASE="https://raw.githubusercontent.com/1linhao/trojanpanelnext"
+DEFAULT_CONFIG_REF="v${INSTALLER_VERSION}"
+CONFIG_REF="${TP_CONFIG_REF:-${DEFAULT_CONFIG_REF}}"
 
 TP_DATA="${TP_DATA:-/tpdata}"
 WEB_PATH="${WEB_PATH:-${TP_DATA}/web}"
@@ -21,9 +25,9 @@ NODE_CADDY_CONTAINER="${NODE_CADDY_CONTAINER:-trojan-panel-node-caddy}"
 CADDY_IMAGE="${CADDY_IMAGE:-caddy:2.8.4}"
 MARIADB_IMAGE="${MARIADB_IMAGE:-mariadb:10.7.3}"
 REDIS_IMAGE="${REDIS_IMAGE:-redis:6.2.7}"
-PANEL_IMAGE="${PANEL_IMAGE:-ghcr.io/1linhao/trojanpanelnext-api:latest}"
-UI_IMAGE="${UI_IMAGE:-ghcr.io/1linhao/trojanpanelnext-web:latest}"
-CORE_IMAGE="${CORE_IMAGE:-ghcr.io/1linhao/trojanpanelnext-node-agent:latest}"
+PANEL_IMAGE="${PANEL_IMAGE:-ghcr.io/1linhao/trojanpanelnext-api:${INSTALLER_VERSION}}"
+UI_IMAGE="${UI_IMAGE:-ghcr.io/1linhao/trojanpanelnext-web:${INSTALLER_VERSION}}"
+CORE_IMAGE="${CORE_IMAGE:-ghcr.io/1linhao/trojanpanelnext-node-agent:${INSTALLER_VERSION}}"
 IMAGE_BUNDLE_DIR="${IMAGE_BUNDLE_DIR:-}"
 
 MARIADB_PORT="${MARIADB_PORT:-9507}"
@@ -50,15 +54,17 @@ TP_FORCE="${TP_FORCE:-0}"
 TP_PURGE_DATA="${TP_PURGE_DATA:-0}"
 TP_PURPOSE=""
 TP_CONFIG_ROOT="${TP_CONFIG_ROOT:-}"
-TP_TEMP_TOOLS_DIR=""
+TP_TEMP_CONFIG_FILE=""
 
 cleanup() {
-  if [[ -n "${TP_TEMP_TOOLS_DIR}" && -d "${TP_TEMP_TOOLS_DIR}" ]]; then
-    rm -rf -- "${TP_TEMP_TOOLS_DIR}"
+  if [[ -n "${TP_TEMP_CONFIG_FILE}" ]]; then
+    rm -f -- "${TP_TEMP_CONFIG_FILE}"
   fi
 }
 
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 echo_content() {
   case $1 in
@@ -72,26 +78,149 @@ echo_content() {
 
 usage() {
   cat <<EOF
+TrojanPanel Next installer ${INSTALLER_VERSION}
+
 Usage:
-  $0 install  --mode web|node --config <file>
-  $0 remove   --mode web|node --config <file> [--purge-data]
-  $0 validate --mode web|node --config <file>
+  $0 config web|node [--output <file>]
+  $0 validate --config <file>
+  $0 install --config <file> [--force]
+  $0 remove --config <file> [--purge-data]
 
 Options:
-  --mode <mode>      Server purpose: web control plane or node agent
-  --config <file>    YAML configuration file
-  --force            Recreate existing containers during installation
-  --purge-data       Delete generated data during removal
-  -h, --help         Show this help
+  --config <file>    YAML deployment configuration; purpose selects web or node
+  --output <file>    Destination for config (default: ./web.yaml or ./node.yaml)
+  --force           Recreate API, UI, Agent and Caddy containers on install
+  --purge-data      Remove the selected purpose's service data on removal
+  -V, --version     Show the installer version
+  -h, --help        Show this help
 
-Examples:
-  $0 validate --mode web --config ./examples/web.yaml
-  $0 install --mode web --config ./examples/web.yaml
-  $0 install --mode node --config ./examples/node-agent.yaml
-
-The command is non-interactive. The value of --mode must match
-trojanpanelnext.purpose in the configuration file.
+Configuration templates come only from GitHub Raw at ${DEFAULT_CONFIG_REF}.
+Existing configuration files are never overwritten by config.
+Install dependencies before use; this installer does not install software tools.
+validate requires mikefarah/yq v4. install requires Docker, yq, curl,
+OpenSSL, tar, coreutils, findutils and awk. install/remove require root.
 EOF
+}
+
+require_commands() {
+  local name
+  local missing=()
+  for name in "$@"; do
+    command -v "${name}" >/dev/null 2>&1 || missing+=("${name}")
+  done
+  if ((${#missing[@]})); then
+    echo_content red "Missing dependencies: ${missing[*]}. Install them first; see the installer README." >&2
+    exit 1
+  fi
+}
+
+require_yq() {
+  require_commands yq
+  local version
+  version="$(yq --version 2>/dev/null)" || {
+    echo_content red "Cannot run yq. Install mikefarah/yq v4 first." >&2
+    exit 1
+  }
+  if [[ "${version}" != *mikefarah/yq* || "${version}" != *"version v4."* ]]; then
+    echo_content red "Unsupported yq. Install mikefarah/yq v4 (not the Python yq package)." >&2
+    exit 1
+  fi
+}
+
+require_option_value() {
+  local option="$1"
+  local value="${2:-}"
+  if [[ -z "${value}" || "${value}" == -* ]]; then
+    echo_content red "${option} requires a value" >&2
+    exit 1
+  fi
+}
+
+download_config() {
+  local purpose="$1"
+  local output="$2"
+  local template="web.yaml"
+  [[ "${purpose}" == node ]] && template="node-agent.yaml"
+  local url="${GITHUB_RAW_BASE}/${CONFIG_REF}/deploy/installer/examples/${template}"
+
+  require_commands curl dirname mktemp chmod ln rm
+  if [[ -e "${output}" || -L "${output}" ]]; then
+    echo_content red "Refusing to overwrite existing config: ${output}" >&2
+    exit 1
+  fi
+  local output_dir
+  output_dir="$(dirname -- "${output}")"
+  if [[ ! -d "${output_dir}" ]]; then
+    echo_content red "Output directory does not exist: ${output_dir}" >&2
+    exit 1
+  fi
+
+  TP_TEMP_CONFIG_FILE="$(mktemp -- "${output}.tmp.XXXXXX")"
+  if ! curl --fail --location --silent --show-error \
+    --proto '=https' --proto-redir '=https' \
+    --retry 2 --retry-max-time 180 --connect-timeout 10 --max-time 60 \
+    --max-filesize 1048576 "${url}" -o "${TP_TEMP_CONFIG_FILE}"; then
+    echo_content red "Failed to download configuration template: ${url}" >&2
+    exit 1
+  fi
+  if [[ ! -s "${TP_TEMP_CONFIG_FILE}" ]]; then
+    echo_content red "Downloaded configuration template is empty." >&2
+    exit 1
+  fi
+  local content
+  content="$(<"${TP_TEMP_CONFIG_FILE}")"
+  if [[ "${content,,}" == *'<html'* || "${content,,}" == *'<!doctype html'* ]]; then
+    echo_content red "Downloaded an HTML page instead of a configuration template." >&2
+    exit 1
+  fi
+
+  chmod 600 -- "${TP_TEMP_CONFIG_FILE}"
+  # A same-directory hard link publishes the complete file atomically, and fails
+  # if the destination appeared while curl was running (including symlinks).
+  if ! ln -T -- "${TP_TEMP_CONFIG_FILE}" "${output}"; then
+    echo_content red "Could not create config without replacing an existing path: ${output}" >&2
+    exit 1
+  fi
+  rm -f -- "${TP_TEMP_CONFIG_FILE}"
+  TP_TEMP_CONFIG_FILE=""
+  echo_content green "Configuration downloaded: ${output} (installer ${INSTALLER_VERSION}, template ref ${CONFIG_REF})"
+  echo_content skyBlue "Edit this file, then run: $0 validate --config ${output}"
+}
+
+handle_config_command() {
+  local purpose="${1:-}"
+  local output=""
+  case "${purpose}" in
+  -h | --help)
+    usage
+    return
+    ;;
+  web) output="./web.yaml" ;;
+  node) output="./node.yaml" ;;
+  *)
+    echo_content red "Usage: $0 config web|node [--output <file>]" >&2
+    exit 1
+    ;;
+  esac
+  shift
+  while (($#)); do
+    case "$1" in
+    --output)
+      require_option_value "$1" "${2:-}"
+      output="$2"
+      shift 2
+      ;;
+    -h | --help)
+      usage
+      return
+      ;;
+    *)
+      echo_content red "Unknown config option: $1" >&2
+      exit 1
+      ;;
+    esac
+  done
+  download_config "${purpose}" "${output}"
 }
 
 require_root() {
@@ -130,66 +259,6 @@ remove_container_if_force() {
   fi
 }
 
-install_packages() {
-  local packages=("$@")
-  if [[ ${#packages[@]} -eq 0 ]]; then
-    return
-  fi
-
-  if command -v apt-get >/dev/null 2>&1; then
-    DEBIAN_FRONTEND=noninteractive apt-get install -y "${packages[@]}"
-  elif command -v apt >/dev/null 2>&1; then
-    DEBIAN_FRONTEND=noninteractive apt install -y "${packages[@]}"
-  elif command -v dnf >/dev/null 2>&1; then
-    dnf install -y "${packages[@]}"
-  elif command -v yum >/dev/null 2>&1; then
-    yum install -y "${packages[@]}"
-  else
-    echo_content red "No supported package manager found"
-    exit 1
-  fi
-}
-
-install_base_tools() {
-  command -v curl >/dev/null 2>&1 || install_packages curl
-  command -v tar >/dev/null 2>&1 || install_packages tar
-  command -v od >/dev/null 2>&1 || install_packages coreutils
-  command -v sha256sum >/dev/null 2>&1 || install_packages coreutils
-  command -v openssl >/dev/null 2>&1 || install_packages openssl
-}
-
-install_yq() {
-  local destination="${1:-/usr/local/bin/yq}"
-  if command -v yq >/dev/null 2>&1; then
-    return
-  fi
-
-  install_base_tools
-  local arch checksum
-  case "$(uname -m)" in
-  x86_64 | amd64)
-    arch="amd64"
-    checksum="c5f056448f973ae7d39b5401949648a78f2dc1947d6a8eb65be60d5c504b9385"
-    ;;
-  aarch64 | arm64)
-    arch="arm64"
-    checksum="88a1016bc1d657375a35864e4f44b6f333df8ff97b559f51bba0adcb2169df09"
-    ;;
-  *)
-    echo_content red "Unsupported architecture for yq: $(uname -m)"
-    exit 1
-    ;;
-  esac
-
-  echo_content green "---> Install yq ${YQ_VERSION}"
-  local download
-  download="$(mktemp)"
-  curl -fsSL "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${arch}" -o "${download}"
-  printf '%s  %s\n' "${checksum}" "${download}" | sha256sum -c -
-  install -m 0755 "${download}" "${destination}"
-  rm -f "${download}"
-}
-
 yaml_read_raw() {
   local file="$1"
   local key="$2"
@@ -201,7 +270,7 @@ detect_config_root() {
   if yq -e '.trojanpanelnext != null' "${file}" >/dev/null 2>&1; then
     TP_CONFIG_ROOT='.trojanpanelnext'
   else
-    echo_content red "Configuration must contain a 'trojanpanelnext' root object"
+    echo_content red "Configuration must contain a 'trojanpanelnext' root object" >&2
     exit 1
   fi
 }
@@ -218,9 +287,7 @@ cfg_apply() {
 }
 
 load_config() {
-  local action="$1"
-  local file="${2:-}"
-  local allow_yq_install="${3:-1}"
+  local file="${1:-}"
   if [[ -z "${file}" ]]; then
     echo_content red "Config file is required"
     usage
@@ -231,19 +298,21 @@ load_config() {
     exit 1
   fi
 
-  if ! command -v yq >/dev/null 2>&1; then
-    if [[ "${allow_yq_install}" == "1" ]]; then
-      install_yq
-    else
-      TP_TEMP_TOOLS_DIR="$(mktemp -d /tmp/trojanpanelnext-tools.XXXXXX)"
-      install_yq "${TP_TEMP_TOOLS_DIR}/yq"
-      export PATH="${TP_TEMP_TOOLS_DIR}:${PATH}"
-    fi
-  fi
+  require_yq
   TP_CONFIG_FILE="${file}"
   detect_config_root "${file}"
-
-  cfg_apply "${file}" TP_PURPOSE purpose
+  TP_PURPOSE="$(yaml_read_raw "${file}" purpose)"
+  if [[ -z "${TP_PURPOSE}" ]]; then
+    echo_content red "trojanpanelnext.purpose is required" >&2
+    exit 1
+  fi
+  case "${TP_PURPOSE}" in
+  web | node) ;;
+  *)
+    echo_content red "Unsupported trojanpanelnext.purpose: ${TP_PURPOSE}" >&2
+    exit 1
+    ;;
+  esac
 
   cfg_apply "${file}" CADDY_IMAGE caddy_image
   cfg_apply "${file}" MARIADB_IMAGE mariadb_image
@@ -275,7 +344,7 @@ load_config() {
   cfg_apply "${file}" NODE_CADDY_HTTPS_PORT node_caddy_https_port
   cfg_apply "${file}" TP_FORCE force
   cfg_apply "${file}" TP_PURGE_DATA purge_data
-  case "${action}" in
+  case "${TP_PURPOSE}" in
   web)
     TP_WEB_DOMAIN=""
     TP_EMAIL=""
@@ -327,17 +396,12 @@ require_port() {
 }
 
 validate_config() {
-  local mode="$1"
+  local purpose="${TP_PURPOSE}"
 
-  if [[ -n "${TP_PURPOSE}" && "${TP_PURPOSE}" != "${mode}" ]]; then
-    echo_content red "Configuration purpose '${TP_PURPOSE}' does not match --mode '${mode}'"
-    exit 1
-  fi
-  require_value TP_PURPOSE
   local schema_version
   schema_version="$(yaml_read_raw "${TP_CONFIG_FILE}" schema_version)"
-  if [[ "${schema_version}" != "1" ]]; then
-    echo_content red "trojanpanelnext.schema_version must be 1"
+  if [[ "${schema_version}" != "${SUPPORTED_SCHEMA_VERSION}" ]]; then
+    echo_content red "Unsupported schema version: ${schema_version}; expected ${SUPPORTED_SCHEMA_VERSION}" >&2
     exit 1
   fi
 
@@ -346,7 +410,7 @@ validate_config() {
   require_port MARIADB_PORT
   require_port REDIS_PORT
 
-  case "${mode}" in
+  case "${purpose}" in
   web)
     require_value TP_WEB_DOMAIN
     require_port PANEL_PORT
@@ -369,29 +433,10 @@ validate_config() {
     require_value TP_PKI_BUNDLE_DIR
     ;;
   *)
-    echo_content red "Unsupported purpose: ${mode}"
+    echo_content red "Unsupported purpose: ${purpose}"
     exit 1
     ;;
   esac
-}
-
-install_docker() {
-  if command -v docker >/dev/null 2>&1; then
-    echo_content skyBlue "---> Docker already installed"
-    return
-  fi
-
-  echo_content green "---> Install Docker"
-  if [[ "${DOCKER_INSTALL_MIRROR:-}" == "aliyun" ]]; then
-    sh <(curl -fsSL https://get.docker.com) --mirror Aliyun
-  else
-    sh <(curl -fsSL https://get.docker.com)
-  fi
-
-  if command -v systemctl >/dev/null 2>&1; then
-    systemctl enable docker >/dev/null 2>&1 || true
-    systemctl restart docker >/dev/null 2>&1 || true
-  fi
 }
 
 container_env_value() {
@@ -532,8 +577,8 @@ EOF
 }
 
 install_pki_material() {
-  local mode="$1"
-  case "${mode}" in
+  local purpose="$1"
+  case "${purpose}" in
   web)
     generate_web_client_pki
     mkdir -p "$(dirname "${GRPC_CLIENT_CERT_PATH}")" "$(dirname "${GRPC_CLIENT_KEY_PATH}")"
@@ -971,8 +1016,6 @@ deploy_core() {
 deploy_web() {
   require_value TP_WEB_DOMAIN
 
-  install_base_tools
-  install_docker
   init_web_secrets
   load_image_archives
   prepare_dirs
@@ -1000,8 +1043,6 @@ deploy_node() {
   require_value REDIS_HOST
   require_value REDIS_PASSWORD
 
-  install_base_tools
-  install_docker
   load_image_archives
   prepare_dirs
   install_pki_material node
@@ -1037,7 +1078,6 @@ remove_node() {
 
 main() {
   local command="${1:-}"
-  local mode=""
   local config_file=""
   local force_override=""
   local purge_override=""
@@ -1045,6 +1085,15 @@ main() {
   case "${command}" in
   -h | --help | help | "")
     usage
+    return
+    ;;
+  -V | --version | version)
+    printf '%s\n' "${INSTALLER_VERSION}"
+    return
+    ;;
+  config)
+    shift
+    handle_config_command "$@"
     return
     ;;
   install | remove | validate)
@@ -1059,13 +1108,8 @@ main() {
 
   while (($# > 0)); do
     case "$1" in
-    --mode)
-      [[ $# -ge 2 ]] || { echo_content red "--mode requires a value"; exit 1; }
-      mode="$2"
-      shift 2
-      ;;
     --config)
-      [[ $# -ge 2 ]] || { echo_content red "--config requires a value"; exit 1; }
+      require_option_value "$1" "${2:-}"
       config_file="$2"
       shift 2
       ;;
@@ -1089,7 +1133,6 @@ main() {
     esac
   done
 
-  require_one_of mode "${mode}" web node
   if [[ -z "${config_file}" ]]; then
     echo_content red "--config is required"
     usage
@@ -1103,30 +1146,37 @@ main() {
     echo_content red "--purge-data is only valid with remove"
     exit 1
   fi
-  if [[ "${command}" == validate ]]; then
-    load_config "${mode}" "${config_file}" 0
-  else
+  if [[ "${command}" != validate ]]; then
     require_root
-    load_config "${mode}" "${config_file}" 1
   fi
+  load_config "${config_file}"
   [[ -n "${force_override}" ]] && TP_FORCE="${force_override}"
   [[ -n "${purge_override}" ]] && TP_PURGE_DATA="${purge_override}"
-  validate_config "${mode}"
+  validate_config
+  echo_content skyBlue "Operation: ${command}; purpose: ${TP_PURPOSE}; config: ${config_file}; installer: ${INSTALLER_VERSION}"
 
-  case "${command}:${mode}" in
+  case "${command}:${TP_PURPOSE}" in
   validate:web | validate:node)
-    echo_content green "Configuration is valid for ${mode} purpose: ${config_file}"
+    echo_content green "Configuration is valid for ${TP_PURPOSE} purpose: ${config_file}"
     ;;
   install:web)
+    require_commands docker curl openssl tar od sha256sum find seq awk
+    docker info >/dev/null
     deploy_web
     ;;
   install:node)
+    require_commands docker curl openssl tar od sha256sum find seq awk
+    docker info >/dev/null
     deploy_node
     ;;
   remove:web)
+    require_commands docker
+    docker info >/dev/null
     remove_web
     ;;
   remove:node)
+    require_commands docker
+    docker info >/dev/null
     remove_node
     ;;
   esac
