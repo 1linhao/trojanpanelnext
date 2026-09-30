@@ -143,6 +143,8 @@ func SelectNodeInfo(id *uint, c *gin.Context) (*vo.NodeOneVo, error) {
 }
 
 func CreateNode(token string, nodeCreateDto dto.NodeCreateDto) error {
+	nodeLifecycle.RLock()
+	defer nodeLifecycle.RUnlock()
 	if nodeCreateDto.NodeTypeId != nil && isRetiredNodeType(*nodeCreateDto.NodeTypeId) {
 		return errors.New("Trojan-Go and Hysteria v1 are retired")
 	}
@@ -171,6 +173,9 @@ func CreateNode(token string, nodeCreateDto dto.NodeCreateDto) error {
 	nodeServer, err := dao.SelectNodeServer(map[string]interface{}{"id": *nodeCreateDto.NodeServerId})
 	if err != nil {
 		return err
+	}
+	if nodeServer.Removing != nil && *nodeServer.Removing != 0 {
+		return errors.New("node server is being removed; retry removal or repair its connection")
 	}
 
 	systemName := constant.SystemName
@@ -288,6 +293,12 @@ func CreateNode(token string, nodeCreateDto dto.NodeCreateDto) error {
 		NaiveUotVersion:    nodeCreateDto.NaiveUotVersion,
 	}
 	if err = dao.CreateNode(&node); err != nil {
+		switch *nodeCreateDto.NodeTypeId {
+		case constant.Xray:
+			_ = dao.DeleteNodeXrayById(&nodeId)
+		case constant.Hysteria2:
+			_ = dao.DeleteNodeHysteria2ById(&nodeId)
+		}
 		return err
 	}
 	return nil
@@ -409,6 +420,8 @@ func SelectNodePage(queryName *string, nodeServerId *uint, pageNum *uint, pageSi
 
 // DeleteNodeById 删除远程节点 删除分表 删除主表
 func DeleteNodeById(token string, id *uint) error {
+	nodeLifecycle.RLock()
+	defer nodeLifecycle.RUnlock()
 	mutex, err := redis.RsLock(constant.DeleteNodeByIdLock)
 	if err != nil {
 		return err
@@ -424,6 +437,9 @@ func DeleteNodeById(token string, id *uint) error {
 	nodeServer, err := dao.SelectNodeServer(map[string]interface{}{"id": *node.NodeServerId})
 	if err != nil {
 		return err
+	}
+	if nodeServer.Removing != nil && *nodeServer.Removing != 0 {
+		return errors.New("node server is being removed")
 	}
 	GrpcRemoveNode(token, *node.NodeServerIp, *node.NodeServerGrpcPort, *node.Port, *node.NodeTypeId, nodeTransport(nodeServer))
 	if *node.NodeTypeId == constant.Xray {
@@ -450,6 +466,8 @@ func DeleteNodeById(token string, id *uint) error {
 }
 
 func UpdateNodeById(token string, nodeUpdateDto *dto.NodeUpdateDto) error {
+	nodeLifecycle.RLock()
+	defer nodeLifecycle.RUnlock()
 	if nodeUpdateDto.NodeTypeId != nil && isRetiredNodeType(*nodeUpdateDto.NodeTypeId) {
 		return errors.New("Trojan-Go and Hysteria v1 are retired")
 	}
@@ -483,6 +501,9 @@ func UpdateNodeById(token string, nodeUpdateDto *dto.NodeUpdateDto) error {
 	if err != nil {
 		return err
 	}
+	if nodeServer.Removing != nil && *nodeServer.Removing != 0 {
+		return errors.New("node server is being removed")
+	}
 
 	systemName := constant.SystemName
 	systemConfig, err := SelectSystemByName(&systemName)
@@ -506,6 +527,9 @@ func UpdateNodeById(token string, nodeUpdateDto *dto.NodeUpdateDto) error {
 	oldNodeServer, err := dao.SelectNodeServer(map[string]interface{}{"id": *nodeEntity.NodeServerId})
 	if err != nil {
 		return err
+	}
+	if oldNodeServer.Removing != nil && *oldNodeServer.Removing != 0 {
+		return errors.New("node server is being removed")
 	}
 	// Grpc的操作
 	GrpcRemoveNode(token, *nodeEntity.NodeServerIp, *nodeEntity.NodeServerGrpcPort, *nodeEntity.Port, *nodeEntity.NodeTypeId, nodeTransport(oldNodeServer))

@@ -48,6 +48,7 @@ export function deleteNodeServerById(data) {
   return request({
     url: '/nodeServer/deleteNodeServerById',
     method: 'post',
+    timeout: 240000,
     data
   })
 }

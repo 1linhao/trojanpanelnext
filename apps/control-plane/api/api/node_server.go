@@ -1,9 +1,15 @@
 package api
 
 import (
+	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"github.com/gin-gonic/gin"
+	"io"
+	"net/http"
 	"strconv"
 	"strings"
+	"trojan-panel/dao"
 	"trojan-panel/model"
 	"trojan-panel/model/constant"
 	"trojan-panel/model/dto"
@@ -11,6 +17,36 @@ import (
 	"trojan-panel/service"
 	"trojan-panel/util"
 )
+
+// CompleteHostRemoval authenticates the host's callback with the random receipt
+// stored in the deletion transaction. The receipt is sent only in the body.
+func CompleteHostRemoval(c *gin.Context) {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 4096)
+	decoder := json.NewDecoder(c.Request.Body)
+	decoder.DisallowUnknownFields()
+	var request struct {
+		NodeID  uint   `json:"nodeId"`
+		Receipt string `json:"receipt"`
+	}
+	err := decoder.Decode(&request)
+	decoded, decodeErr := hex.DecodeString(request.Receipt)
+	if err != nil || request.NodeID == 0 || decodeErr != nil || len(decoded) != 32 || request.Receipt != hex.EncodeToString(decoded) {
+		c.Status(http.StatusBadRequest)
+		return
+	}
+	if err = decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		c.Status(http.StatusBadRequest)
+		return
+	}
+	if err = dao.DeleteRemovalCleanup(request.NodeID, request.Receipt); errors.Is(err, dao.ErrInvalidRemovalReceipt) {
+		c.Status(http.StatusConflict)
+		return
+	} else if err != nil {
+		c.Status(http.StatusInternalServerError)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
 
 func SelectNodeServerById(c *gin.Context) {
 	var nodeServerRequireIdDto dto.RequiredIdDto
@@ -84,17 +120,21 @@ func SelectNodeServerPage(c *gin.Context) {
 }
 
 func DeleteNodeServerById(c *gin.Context) {
-	var nodeServerRequireIdDto dto.RequiredIdDto
-	_ = c.ShouldBindJSON(&nodeServerRequireIdDto)
+	var nodeServerRequireIdDto dto.NodeServerRemovalDto
+	if err := c.ShouldBindJSON(&nodeServerRequireIdDto); err != nil {
+		vo.Fail(constant.ValidateFailed, c)
+		return
+	}
 	if err := validate.Struct(&nodeServerRequireIdDto); err != nil {
 		vo.Fail(constant.ValidateFailed, c)
 		return
 	}
-	if err := service.DeleteNodeServerById(nodeServerRequireIdDto.Id); err != nil {
+	result, err := service.DeleteNodeServerById(nodeServerRequireIdDto.Id, nodeServerRequireIdDto.Purge)
+	if err != nil {
 		vo.Fail(err.Error(), c)
 		return
 	}
-	vo.Success(nil, c)
+	vo.Success(result, c)
 }
 
 func ResetNodeServerTraffic(c *gin.Context) {

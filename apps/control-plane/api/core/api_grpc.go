@@ -66,6 +66,14 @@ func newGrpcInstance(token string, ip string, grpcPort uint, timeout time.Durati
 }
 
 func clientTransportCredentials(serverName string) (credentials.TransportCredentials, error) {
+	config, err := clientTLSConfig(serverName)
+	if err != nil {
+		return nil, err
+	}
+	return credentials.NewTLS(config), nil
+}
+
+func clientTLSConfig(serverName string) (*tls.Config, error) {
 	config := Config.GrpcConfig
 	if serverName == "" {
 		return nil, errors.New("mTLS server name is required")
@@ -89,10 +97,10 @@ func clientTransportCredentials(serverName string) (credentials.TransportCredent
 			return nil, errors.New("gRPC server CA contains no certificates")
 		}
 	}
-	return credentials.NewTLS(&tls.Config{
+	return &tls.Config{
 		MinVersion: tls.VersionTLS12, ServerName: serverName,
 		Certificates: certificates, GetClientCertificate: ManagedClientCertificate, RootCAs: roots,
-	}), nil
+	}, nil
 }
 
 func AddNode(token string, ip string, grpcPort uint, nodeAddDto *NodeAddDto, transports ...NodeTransport) error {

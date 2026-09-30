@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Version label matching the installer, for example 0.1.0-rc.5
+        description: Version label matching the installer, for example 0.1.0-rc.6
         required: true
         type: string
       publish:
@@ -242,6 +242,9 @@ jobs:
           CGO_ENABLED=0 GOOS=linux GOARCH="$TARGET_ARCH" \
             go build -trimpath -ldflags "-s -w -buildid=" \
             -o "build/trojan-panel-core-linux-$TARGET_ARCH" .
+          CGO_ENABLED=0 GOOS=linux GOARCH="$TARGET_ARCH" \
+            go build -trimpath -ldflags "-s -w -buildid=" \
+            -o "build/tp-host-agent-linux-$TARGET_ARCH" ./cmd/host-agent
       - name: Download and verify rescue Xray and Hysteria2
         env:
           GH_TOKEN: ${{ github.token }}

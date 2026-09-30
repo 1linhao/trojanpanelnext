@@ -2,7 +2,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
-const installer = readFileSync(`${root}deploy/installer/install.sh`, 'utf8');
+const installer = readFileSync(`${root}deploy/installer/common.sh`, 'utf8');
+const entrypoint = readFileSync(`${root}deploy/installer/tp.sh`, 'utf8');
 const version = installer.match(/^INSTALLER_VERSION="([^"]+)"$/m)?.[1];
 if (!version || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) {
   throw new Error('INSTALLER_VERSION must be a literal product version without a v prefix');
@@ -13,6 +14,16 @@ if (expected && expected !== version) {
 }
 if (!installer.includes('DEFAULT_CONFIG_REF="v${INSTALLER_VERSION}"')) {
   throw new Error('Configuration ref must be bound to the installer release tag');
+}
+if (!entrypoint.includes(`INSTALLER_VERSION="${version}"`) ||
+    !entrypoint.includes('DEFAULT_SCRIPT_REF="v${INSTALLER_VERSION}"')) {
+  throw new Error('Entrypoint and remote scripts must be bound to the installer release tag');
+}
+for (const file of ['config.sh', 'validate.sh', 'install.sh', 'uninstall.sh']) {
+  const script = readFileSync(`${root}deploy/installer/${file}`, 'utf8');
+  if (!script.includes(`SCRIPT_VERSION="${version}"`)) {
+    throw new Error(`${file} must use installer version ${version}`);
+  }
 }
 for (const [file, images] of [
   ['web.yaml', { panel_image: 'trojanpanelnext-api', ui_image: 'trojanpanelnext-web' }],
@@ -30,4 +41,4 @@ for (const [file, images] of [
     }
   }
 }
-console.log(`Installer, configuration ref and product image tags agree: v${version}`);
+console.log(`Entrypoint, command scripts, configuration ref and product image tags agree: v${version}`);

@@ -3,6 +3,7 @@ package model
 import "time"
 
 type NodeServer struct {
+	Removing             *uint      `ddb:"removing" json:"removing,omitempty"`
 	Id                   *uint      `ddb:"id" json:"id"`
 	Name                 *string    `ddb:"name" json:"name"`
 	Ip                   *string    `ddb:"ip" json:"ip"`

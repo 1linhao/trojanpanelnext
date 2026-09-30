@@ -12,8 +12,16 @@ import (
 )
 
 func SelectNodeServer(where map[string]interface{}) (*model.NodeServer, error) {
+	return selectNodeServer(where)
+}
+
+func SelectNodeServerForRemoval(id uint) (*model.NodeServer, error) {
+	return selectNodeServer(map[string]interface{}{"id": id})
+}
+
+func selectNodeServer(where map[string]interface{}) (*model.NodeServer, error) {
 	var nodeServer model.NodeServer
-	selectFields := []string{"id", "ip", "grpc_port", "grpc_tls_mode", "grpc_tls_server_name", "traffic_period", "traffic_limit_mode", "traffic_total_limit", "traffic_upload_limit", "traffic_download_limit", "`name`", "create_time"}
+	selectFields := []string{"id", "removing", "ip", "grpc_port", "grpc_tls_mode", "grpc_tls_server_name", "traffic_period", "traffic_limit_mode", "traffic_total_limit", "traffic_upload_limit", "traffic_download_limit", "`name`", "create_time"}
 	buildSelect, values, err := builder.BuildSelect("node_server", where, selectFields)
 	if err != nil {
 		logrus.Errorln(err.Error())

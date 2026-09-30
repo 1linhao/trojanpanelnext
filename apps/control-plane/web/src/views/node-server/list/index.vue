@@ -96,7 +96,7 @@
             <tr v-else-if="!listLoading && !list.length" class="tbl-empty">
               <td colspan="9">暂无数据</td>
             </tr>
-            <tr v-for="(row, index) in list" :key="row.id">
+            <tr v-for="row in list" :key="row.id">
               <td class="primary-cell">
                 <strong>{{ row.name }}</strong
                 ><small class="mono">{{ row.ip }}</small>
@@ -139,7 +139,11 @@
                     }}</span>
                   </div>
                   <div class="meter">
-                    <i :style="{ width: trafficPercent(row.trafficStatus) + '%' }"></i>
+                    <i
+                      :style="{
+                        width: trafficPercent(row.trafficStatus) + '%'
+                      }"
+                    ></i>
                   </div>
                 </template>
               </td>
@@ -204,9 +208,20 @@
                     class="icon-btn danger"
                     type="button"
                     title="删除"
-                    @click="handleDelete(row, index)"
+                    @click="handleDelete(row, false)"
+                    :disabled="deletingServerId !== 0"
                   >
                     <app-icon name="delete" />
+                  </button>
+                  <button
+                    v-if="checkPermission(['sysadmin'])"
+                    class="icon-btn danger"
+                    type="button"
+                    title="无痕删除服务器及其数据"
+                    :disabled="deletingServerId !== 0"
+                    @click="handleDelete(row, true)"
+                  >
+                    无痕
                   </button>
                 </div>
               </td>
@@ -233,7 +248,12 @@
           <span class="kicker">Server State</span>
           <h2>{{ detailServer.name }} · 运行状态</h2>
         </div>
-                  <button class="icon-btn" type="button" aria-label="关闭服务器详情" @click="detailServer = null">
+        <button
+          class="icon-btn"
+          type="button"
+          aria-label="关闭服务器详情"
+          @click="detailServer = null"
+        >
           <app-icon name="close" />
         </button>
       </div>
@@ -365,6 +385,7 @@ export default {
       importVisible: false,
       dialogStatus: '',
       resettingServerId: 0,
+      deletingServerId: 0,
       detailServer: null,
       detailState: { cpuUsed: 0, memUsed: 0, diskUsed: 0 }
     }
@@ -404,29 +425,38 @@ export default {
         const ratios = [
           [trafficStatus.uploadUsed, trafficStatus.uploadLimit],
           [trafficStatus.downloadUsed, trafficStatus.downloadLimit]
-        ].filter(([, limit]) => Number(limit) > 0)
+        ]
+          .filter(([, limit]) => Number(limit) > 0)
           .map(([used, limit]) => Number(used || 0) / Number(limit))
-        return ratios.length ? Math.min(100, Math.round(Math.max(...ratios) * 100)) : 0
+        return ratios.length
+          ? Math.min(100, Math.round(Math.max(...ratios) * 100))
+          : 0
       }
       const limit = Number(trafficStatus.totalLimit || 0)
       return limit > 0
-        ? Math.min(100, Math.round((Number(trafficStatus.totalUsed || 0) / limit) * 100))
+        ? Math.min(
+            100,
+            Math.round((Number(trafficStatus.totalUsed || 0) / limit) * 100)
+          )
         : 0
     },
     checkPermission,
     timeStampToDate,
     getList() {
       const request = this.beginListRequest()
-      return selectNodeServerPage(this.listQuery).then((response) => {
-        if (!this.ownsListRequest(request)) return
-        this.list = response.data.nodeServers
-        this.total = response.data.total
-      }).catch(() => {
-        if (!this.ownsListRequest(request)) return
-        this.list = []
-        this.total = 0
-        this.listError = '请求失败，请重试'
-      }).finally(() => this.finishListRequest(request))
+      return selectNodeServerPage(this.listQuery)
+        .then((response) => {
+          if (!this.ownsListRequest(request)) return
+          this.list = response.data.nodeServers
+          this.total = response.data.total
+        })
+        .catch(() => {
+          if (!this.ownsListRequest(request)) return
+          this.list = []
+          this.total = 0
+          this.listError = '请求失败，请重试'
+        })
+        .finally(() => this.finishListRequest(request))
     },
     resetTemp() {
       this.temp = {
@@ -455,27 +485,39 @@ export default {
       this.dialogFormVisible = true
       this.$refs.nodeServerForm.clearValidate()
     },
-    handleDelete(row, index) {
-      MessageBox.confirm(
-        this.$t('confirm.deleteNodeServer'),
-        this.$t('confirm.warn'),
-        {
-          confirmButtonText: this.$t('confirm.yes'),
+    async handleDelete(row, purge = false) {
+      if (this.deletingServerId) return
+      const message = purge
+        ? `无痕删除服务器「${row.name}」？目标机器的容器、镜像、服务数据、证书、伪装站和部署配置将被删除，Web 中关联的代理节点、流量和内核任务记录也将清理。此操作无法恢复。`
+        : `删除服务器「${row.name}」？将先卸载目标机器的容器与镜像并保留数据，再移除 Web 中的服务器及关联代理节点。`
+      try {
+        await MessageBox.confirm(message, this.$t('confirm.warn'), {
+          confirmButtonText: purge ? '确认无痕删除' : '确认卸载并删除',
           cancelButtonText: this.$t('confirm.cancel'),
           type: 'warning'
-        }
-      ).then(() => {
-        const tempData = Object.assign({}, row)
-        deleteNodeServerById(tempData).then(() => {
-          this.list.splice(index, 1)
-          this.$notify({
-            title: 'Success',
-            message: this.$t('confirm.deleteSuccess'),
-            type: 'success',
-            duration: 2000
-          })
         })
-      })
+      } catch (_) {
+        return
+      }
+      this.deletingServerId = row.id
+      try {
+        const response = await deleteNodeServerById({ id: row.id, purge })
+        await this.getList()
+        const pending = response.data && response.data.cleanupPending
+        this.$notify({
+          title: pending ? '清理待完成' : 'Success',
+          message: pending
+            ? '目标机器已卸载，Web 记录已删除；维护服务正在完成最终清理，异常时会自动重试。'
+            : this.$t('confirm.deleteSuccess'),
+          type: pending ? 'info' : 'success',
+          duration: pending ? 6000 : 2000
+        })
+      } catch (_) {
+        // The request interceptor reports the server error. Keep the row so
+        // the administrator can fix connectivity or dependencies and retry.
+      } finally {
+        this.deletingServerId = 0
+      }
     },
     handleResetAllServerTraffic() {
       this.showPendingTrafficReset('全部服务器')

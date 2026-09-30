@@ -28,6 +28,7 @@ func init() {
 	if err := service.InitCertificateAuthority(); err != nil {
 		panic(fmt.Sprintf("mTLS authority init failed: %v", err))
 	}
+	service.InitNodeRemovalFinalizer()
 	middleware.InitCron()
 	middleware.InitRateLimiter()
 	api.InitValidator()

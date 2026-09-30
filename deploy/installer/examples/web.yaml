@@ -9,8 +9,8 @@ trojanpanelnext:
   caddy_image: caddy:2.8.4
   mariadb_image: mariadb:10.7.3
   redis_image: redis:6.2.7
-  panel_image: ghcr.io/1linhao/trojanpanelnext-api:0.1.0-rc.5
-  ui_image: ghcr.io/1linhao/trojanpanelnext-web:0.1.0-rc.5
+  panel_image: ghcr.io/1linhao/trojanpanelnext-api:0.1.0-rc.6
+  ui_image: ghcr.io/1linhao/trojanpanelnext-web:0.1.0-rc.6
 
   mariadb_port: 9507
   redis_port: 6378

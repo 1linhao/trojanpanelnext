@@ -137,18 +137,6 @@ func SelectNodeServerPage(queryName *string, queryIp *string, pageNum *uint, pag
 	return &nodeServerPageVo, nil
 }
 
-func DeleteNodeServerById(id *uint) error {
-	count, err := dao.CountNodeByNameAndNodeServerId(nil, nil, id)
-	if err != nil {
-		return err
-	}
-	if count > 0 {
-		return errors.New(constant.NodeServerDeletedError)
-	}
-
-	return dao.DeleteNodeServerById(id)
-}
-
 func ResetNodeServerTraffic(id *uint) (*vo.ResetNodeServerTrafficVo, error) {
 	deletedRows, err := dao.ResetNodeServerTraffic(*id)
 	if err != nil {
@@ -158,6 +146,8 @@ func ResetNodeServerTraffic(id *uint) (*vo.ResetNodeServerTrafficVo, error) {
 }
 
 func UpdateNodeServerById(dto *dto.NodeServerUpdateDto) error {
+	nodeLifecycle.RLock()
+	defer nodeLifecycle.RUnlock()
 	existing, err := dao.SelectNodeServer(map[string]interface{}{"id": *dto.Id})
 	if err != nil {
 		return err

@@ -3,6 +3,7 @@ package dao
 import (
 	"database/sql"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 	"trojan-panel/model"
@@ -34,6 +35,25 @@ func CreateKernelUpgradeTask(task *model.KernelUpgradeTask, items []model.Kernel
 		return err
 	}
 	defer transaction.Rollback()
+	ids := make([]uint, 0, len(items))
+	seen := make(map[uint]bool)
+	for _, item := range items {
+		if !seen[item.NodeServerId] {
+			ids = append(ids, item.NodeServerId)
+			seen[item.NodeServerId] = true
+		}
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	for _, id := range ids {
+		var removing uint
+		if err = transaction.QueryRow("SELECT removing FROM node_server WHERE id=? FOR UPDATE", id).Scan(&removing); err != nil {
+			return err
+		}
+		if removing != 0 {
+			return fmt.Errorf("node server %d is being removed", id)
+		}
+	}
+
 	result, err := transaction.Exec(`INSERT INTO kernel_upgrade_task
 		(operator_id,operator_name,canary_node_id,status) VALUES (?,?,?,'queued')`,
 		task.OperatorId, task.OperatorName, task.CanaryNodeId)
@@ -169,6 +189,29 @@ func ResetKernelTaskItems(taskId uint64, itemIds []uint64) ([]model.KernelUpgrad
 	if err != nil {
 		return nil, err
 	}
+	tx, err := db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	ids := make([]uint, 0, len(items))
+	seen := make(map[uint]bool)
+	for _, item := range items {
+		if !seen[item.NodeServerId] {
+			ids = append(ids, item.NodeServerId)
+			seen[item.NodeServerId] = true
+		}
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	for _, id := range ids {
+		var removing uint
+		if err = tx.QueryRow("SELECT removing FROM node_server WHERE id=? FOR UPDATE", id).Scan(&removing); err != nil {
+			return nil, err
+		}
+		if removing != 0 {
+			return nil, fmt.Errorf("node server %d is being removed", id)
+		}
+	}
 	for index := range items {
 		items[index].Attempt++
 		items[index].IdempotencyKey = fmt.Sprintf("task-%d-item-%d-attempt-%d", taskId, items[index].Id, items[index].Attempt)
@@ -177,16 +220,19 @@ func ResetKernelTaskItems(taskId uint64, itemIds []uint64) ([]model.KernelUpgrad
 		items[index].Error = ""
 		items[index].RollbackResult = ""
 		items[index].CoreOperationId = ""
-		if _, err = db.Exec(`UPDATE kernel_upgrade_task_item SET stage='queued',result='',
+		if _, err = tx.Exec(`UPDATE kernel_upgrade_task_item SET stage='queued',result='',
 			error_message='',rollback_result='',core_operation_id='',attempt=?,idempotency_key=? WHERE id=?`,
 			items[index].Attempt, items[index].IdempotencyKey, items[index].Id); err != nil {
 			return nil, err
 		}
 	}
 	if len(items) > 0 {
-		_, err = db.Exec("UPDATE kernel_upgrade_task SET status='queued' WHERE id=?", taskId)
+		_, err = tx.Exec("UPDATE kernel_upgrade_task SET status='queued' WHERE id=?", taskId)
 	}
-	return items, err
+	if err != nil {
+		return nil, err
+	}
+	return items, tx.Commit()
 }
 
 func RefreshKernelTaskStatus(taskId uint64) error {

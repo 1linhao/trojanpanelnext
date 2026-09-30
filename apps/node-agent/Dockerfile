@@ -22,6 +22,7 @@ ENV mariadb_ip=127.0.0.1 \
 ARG TARGETOS
 ARG TARGETARCH
 COPY build/trojan-panel-core-${TARGETOS}-${TARGETARCH} trojan-panel-core
+COPY build/tp-host-agent-${TARGETOS}-${TARGETARCH} /usr/local/bin/tp-host-agent
 COPY build/xray-${TARGETOS}-${TARGETARCH} bin/xray/xray
 COPY build/naiveproxy-${TARGETOS}-${TARGETARCH} bin/naiveproxy/naiveproxy
 COPY build/hysteria2-${TARGETOS}-${TARGETARCH} bin/hysteria2/hysteria2

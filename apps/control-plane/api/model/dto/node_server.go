@@ -1,5 +1,10 @@
 package dto
 
+type NodeServerRemovalDto struct {
+	RequiredIdDto
+	Purge bool `json:"purge"`
+}
+
 type NodeServerPageDto struct {
 	NodeServerDto
 	BaseDto

@@ -6,6 +6,7 @@ import (
 	"github.com/didi/gendry/builder"
 	"github.com/didi/gendry/scanner"
 	"github.com/sirupsen/logrus"
+	"sort"
 	"trojan-panel/model"
 	"trojan-panel/model/constant"
 )
@@ -70,11 +71,23 @@ func CreateNode(node *model.Node) error {
 		logrus.Errorln(err.Error())
 		return errors.New(constant.SysError)
 	}
-	if _, err = db.Exec(buildInsert, values...); err != nil {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var removing uint
+	if err = tx.QueryRow("SELECT removing FROM node_server WHERE id=? FOR UPDATE", *node.NodeServerId).Scan(&removing); err != nil {
+		return err
+	}
+	if removing != 0 {
+		return errors.New("node server is being removed")
+	}
+	if _, err = tx.Exec(buildInsert, values...); err != nil {
 		logrus.Errorln(err.Error())
 		return errors.New(constant.SysError)
 	}
-	return nil
+	return tx.Commit()
 }
 
 func SelectNodePage(queryName *string, nodeServerId *uint, pageNum *uint, pageSize *uint) (*[]model.Node, uint, error) {
@@ -151,6 +164,36 @@ func DeleteNodeById(id *uint) error {
 }
 
 func UpdateNodeById(node *model.Node) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var oldServerID uint
+	if err = tx.QueryRow("SELECT node_server_id FROM node WHERE id=?", *node.Id).Scan(&oldServerID); err != nil {
+		return err
+	}
+	ids := []uint{oldServerID}
+	if node.NodeServerId != nil && *node.NodeServerId != oldServerID {
+		ids = append(ids, *node.NodeServerId)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	for _, id := range ids {
+		var removing uint
+		if err = tx.QueryRow("SELECT removing FROM node_server WHERE id=? FOR UPDATE", id).Scan(&removing); err != nil {
+			return err
+		}
+		if removing != 0 {
+			return errors.New("node server is being removed")
+		}
+	}
+	var currentServerID uint
+	if err = tx.QueryRow("SELECT node_server_id FROM node WHERE id=? FOR UPDATE", *node.Id).Scan(&currentServerID); err != nil {
+		return err
+	}
+	if currentServerID != oldServerID {
+		return errors.New("node server changed; retry editing")
+	}
 	where := map[string]interface{}{"id": *node.Id}
 	update := map[string]interface{}{}
 	if node.NodeServerId != nil {
@@ -196,12 +239,12 @@ func UpdateNodeById(node *model.Node) error {
 			return errors.New(constant.SysError)
 		}
 
-		if _, err = db.Exec(buildUpdate, values...); err != nil {
+		if _, err = tx.Exec(buildUpdate, values...); err != nil {
 			logrus.Errorln(err.Error())
 			return errors.New(constant.SysError)
 		}
 	}
-	return nil
+	return tx.Commit()
 }
 
 func CountNode() (int, error) {

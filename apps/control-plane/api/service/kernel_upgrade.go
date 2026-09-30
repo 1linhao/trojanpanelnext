@@ -24,6 +24,8 @@ func GetNodeKernelInventory(token string, nodeServerId uint) (*core.KernelInvent
 }
 
 func CreateKernelTask(request dto.KernelTaskCreateDto, operator vo.AccountVo, token string) (*model.KernelUpgradeTask, error) {
+	nodeLifecycle.RLock()
+	defer nodeLifecycle.RUnlock()
 	seenNodes := make(map[uint]bool)
 	var servers []*model.NodeServer
 	for _, id := range request.NodeServerIds {
@@ -97,6 +99,8 @@ func SelectKernelTask(id uint64) (*model.KernelUpgradeTask, error) {
 }
 
 func RetryKernelTask(request dto.KernelTaskRetryDto, token string) error {
+	nodeLifecycle.RLock()
+	defer nodeLifecycle.RUnlock()
 	task, err := dao.SelectKernelUpgradeTask(request.Id)
 	if err != nil {
 		return err

@@ -75,6 +75,9 @@ func InitMySQL() {
 		logrus.Errorf("traffic accounting database migration err: %v", err)
 		panic(err)
 	}
+	if err = migrateNodeRemovalSchema(); err != nil {
+		panic(err)
+	}
 }
 
 func migrateTrafficAccountingSchema() error {

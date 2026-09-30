@@ -1,243 +1,28 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
-
-ECHO_TYPE="echo -e"
-INSTALLER_VERSION="0.1.0-rc.5"
-SUPPORTED_SCHEMA_VERSION="1"
-GITHUB_RAW_BASE="https://raw.githubusercontent.com/1linhao/trojanpanelnext"
-DEFAULT_CONFIG_REF="v${INSTALLER_VERSION}"
-CONFIG_REF="${TP_CONFIG_REF:-${DEFAULT_CONFIG_REF}}"
-
-TP_DATA="${TP_DATA:-/tpdata}"
-WEB_PATH="${WEB_PATH:-${TP_DATA}/web}"
-TP_PKI_BUNDLE_DIR="${TP_PKI_BUNDLE_DIR:-${TP_DATA}/trojanpanelnext-pki}"
-
-MARIADB_CONTAINER="${MARIADB_CONTAINER:-trojan-panel-mariadb}"
-REDIS_CONTAINER="${REDIS_CONTAINER:-trojan-panel-redis}"
-PANEL_CONTAINER="${PANEL_CONTAINER:-trojan-panel}"
-UI_CONTAINER="${UI_CONTAINER:-trojan-panel-ui}"
-CORE_CONTAINER="${CORE_CONTAINER:-trojan-panel-core}"
-WEB_CADDY_CONTAINER="${WEB_CADDY_CONTAINER:-trojan-panel-web-caddy}"
-NODE_CADDY_CONTAINER="${NODE_CADDY_CONTAINER:-trojan-panel-node-caddy}"
-
-CADDY_IMAGE="${CADDY_IMAGE:-caddy:2.8.4}"
-MARIADB_IMAGE="${MARIADB_IMAGE:-mariadb:10.7.3}"
-REDIS_IMAGE="${REDIS_IMAGE:-redis:6.2.7}"
-PANEL_IMAGE="${PANEL_IMAGE:-ghcr.io/1linhao/trojanpanelnext-api:${INSTALLER_VERSION}}"
-UI_IMAGE="${UI_IMAGE:-ghcr.io/1linhao/trojanpanelnext-web:${INSTALLER_VERSION}}"
-CORE_IMAGE="${CORE_IMAGE:-ghcr.io/1linhao/trojanpanelnext-node-agent:${INSTALLER_VERSION}}"
-IMAGE_BUNDLE_DIR="${IMAGE_BUNDLE_DIR:-}"
-
-MARIADB_PORT="${MARIADB_PORT:-9507}"
-MARIADB_USER="${MARIADB_USER:-root}"
-MARIADB_DATABASE="${MARIADB_DATABASE:-trojan_panel_db}"
-ACCOUNT_TABLE="${ACCOUNT_TABLE:-account}"
-REDIS_PORT="${REDIS_PORT:-6378}"
-PANEL_PORT="${PANEL_PORT:-8081}"
-UI_PORT="${UI_PORT:-8888}"
-CORE_PORT="${CORE_PORT:-8082}"
-GRPC_PORT="${GRPC_PORT:-8100}"
-NODE_SERVER_ID="${NODE_SERVER_ID:-0}"
-GRPC_TLS_MODE="${GRPC_TLS_MODE:-mtls}"
-GRPC_TLS_SERVER_NAME="${GRPC_TLS_SERVER_NAME:-}"
-GRPC_CLIENT_CA_PATH="${GRPC_CLIENT_CA_PATH:-${TP_DATA}/trojan-panel-core/pki/client-ca.crt}"
-GRPC_CLIENT_CERT_PATH="${GRPC_CLIENT_CERT_PATH:-${TP_DATA}/trojan-panel/pki/client.crt}"
-GRPC_CLIENT_KEY_PATH="${GRPC_CLIENT_KEY_PATH:-${TP_DATA}/trojan-panel/pki/client.key}"
-GRPC_SERVER_CA_PATH="${GRPC_SERVER_CA_PATH:-}"
-KERNEL_RUNTIME_PATH="${KERNEL_RUNTIME_PATH:-${TP_DATA}/trojan-panel-core/runtime}"
-NODE_CADDY_HTTP_PORT="${NODE_CADDY_HTTP_PORT:-80}"
-NODE_CADDY_HTTPS_PORT="${NODE_CADDY_HTTPS_PORT:-8863}"
-
-TP_FORCE="${TP_FORCE:-0}"
-TP_PURGE_DATA="${TP_PURGE_DATA:-0}"
-TP_PURPOSE=""
-TP_CONFIG_ROOT="${TP_CONFIG_ROOT:-}"
-TP_TEMP_CONFIG_FILE=""
-
-cleanup() {
-  if [[ -n "${TP_TEMP_CONFIG_FILE}" ]]; then
-    rm -f -- "${TP_TEMP_CONFIG_FILE}"
-  fi
-}
-
-trap cleanup EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
-
-echo_content() {
-  case $1 in
-  "red") ${ECHO_TYPE} "\033[31m$2\033[0m" ;;
-  "green") ${ECHO_TYPE} "\033[32m$2\033[0m" ;;
-  "yellow") ${ECHO_TYPE} "\033[33m$2\033[0m" ;;
-  "skyBlue") ${ECHO_TYPE} "\033[36m$2\033[0m" ;;
-  *) ${ECHO_TYPE} "$2" ;;
-  esac
-}
+SCRIPT_VERSION="0.1.0-rc.6"
+TP_SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+if [[ ! -f "${TP_SCRIPT_DIR}/common.sh" ]]; then
+  printf 'Missing common.sh. Use tp.sh to download the command and its dependencies.\n' >&2
+  exit 1
+fi
+# shellcheck source=deploy/installer/common.sh
+source "${TP_SCRIPT_DIR}/common.sh"
+require_matching_version "${SCRIPT_VERSION}"
 
 usage() {
   cat <<EOF
-TrojanPanel Next installer ${INSTALLER_VERSION}
-
-Usage:
-  $0 config web|node [--output <file>]
-  $0 validate --config <file>
-  $0 install --config <file> [--force]
-  $0 remove --config <file> [--purge-data]
-
-Options:
-  --config <file>    YAML deployment configuration; purpose selects web or node
-  --output <file>    Destination for config (default: ./web.yaml or ./node.yaml)
-  --force           Recreate API, UI, Agent and Caddy containers on install
-  --purge-data      Remove the selected purpose's service data on removal
-  -V, --version     Show the installer version
-  -h, --help        Show this help
-
-Configuration templates come only from GitHub Raw at ${DEFAULT_CONFIG_REF}.
-Existing configuration files are never overwritten by config.
-Install dependencies before use; this installer does not install software tools.
-validate requires mikefarah/yq v4. install requires Docker, yq, curl,
-OpenSSL, tar, coreutils, findutils and awk. install/remove require root.
+TrojanPanel Next installation ${INSTALLER_VERSION}
+Usage: $0 --config <file> [--force]
+  --config <file>  YAML deployment configuration; purpose selects web or node
+  --force          Recreate API, UI, Agent and Caddy containers
+  -V, --version    Show version
+  -h, --help       Show help
+Requires root, Docker, mikefarah/yq v4, curl, OpenSSL, tar,
+coreutils, findutils and awk. Install these dependencies before use.
+Use tp.sh config, validate or remove for the other commands.
 EOF
-}
-
-require_commands() {
-  local name
-  local missing=()
-  for name in "$@"; do
-    command -v "${name}" >/dev/null 2>&1 || missing+=("${name}")
-  done
-  if ((${#missing[@]})); then
-    echo_content red "Missing dependencies: ${missing[*]}. Install them first; see the installer README." >&2
-    exit 1
-  fi
-}
-
-require_yq() {
-  require_commands yq
-  local version
-  version="$(yq --version 2>/dev/null)" || {
-    echo_content red "Cannot run yq. Install mikefarah/yq v4 first." >&2
-    exit 1
-  }
-  if [[ "${version}" != *mikefarah/yq* || "${version}" != *"version v4."* ]]; then
-    echo_content red "Unsupported yq. Install mikefarah/yq v4 (not the Python yq package)." >&2
-    exit 1
-  fi
-}
-
-require_option_value() {
-  local option="$1"
-  local value="${2:-}"
-  if [[ -z "${value}" || "${value}" == -* ]]; then
-    echo_content red "${option} requires a value" >&2
-    exit 1
-  fi
-}
-
-download_config() {
-  local purpose="$1"
-  local output="$2"
-  local template="web.yaml"
-  [[ "${purpose}" == node ]] && template="node-agent.yaml"
-  local url="${GITHUB_RAW_BASE}/${CONFIG_REF}/deploy/installer/examples/${template}"
-
-  require_commands curl dirname mktemp chmod ln rm
-  if [[ -e "${output}" || -L "${output}" ]]; then
-    echo_content red "Refusing to overwrite existing config: ${output}" >&2
-    exit 1
-  fi
-  local output_dir
-  output_dir="$(dirname -- "${output}")"
-  if [[ ! -d "${output_dir}" ]]; then
-    echo_content red "Output directory does not exist: ${output_dir}" >&2
-    exit 1
-  fi
-
-  TP_TEMP_CONFIG_FILE="$(mktemp -- "${output}.tmp.XXXXXX")"
-  if ! curl --fail --location --silent --show-error \
-    --proto '=https' --proto-redir '=https' \
-    --retry 2 --retry-max-time 180 --connect-timeout 10 --max-time 60 \
-    --max-filesize 1048576 "${url}" -o "${TP_TEMP_CONFIG_FILE}"; then
-    echo_content red "Failed to download configuration template: ${url}" >&2
-    exit 1
-  fi
-  if [[ ! -s "${TP_TEMP_CONFIG_FILE}" ]]; then
-    echo_content red "Downloaded configuration template is empty." >&2
-    exit 1
-  fi
-  local content
-  content="$(<"${TP_TEMP_CONFIG_FILE}")"
-  if [[ "${content,,}" == *'<html'* || "${content,,}" == *'<!doctype html'* ]]; then
-    echo_content red "Downloaded an HTML page instead of a configuration template." >&2
-    exit 1
-  fi
-
-  chmod 600 -- "${TP_TEMP_CONFIG_FILE}"
-  # A same-directory hard link publishes the complete file atomically, and fails
-  # if the destination appeared while curl was running (including symlinks).
-  if ! ln -T -- "${TP_TEMP_CONFIG_FILE}" "${output}"; then
-    echo_content red "Could not create config without replacing an existing path: ${output}" >&2
-    exit 1
-  fi
-  rm -f -- "${TP_TEMP_CONFIG_FILE}"
-  TP_TEMP_CONFIG_FILE=""
-  echo_content green "Configuration downloaded: ${output} (installer ${INSTALLER_VERSION}, template ref ${CONFIG_REF})"
-  echo_content skyBlue "Edit this file, then run: $0 validate --config ${output}"
-}
-
-handle_config_command() {
-  local purpose="${1:-}"
-  local output=""
-  case "${purpose}" in
-  -h | --help)
-    usage
-    return
-    ;;
-  web) output="./web.yaml" ;;
-  node) output="./node.yaml" ;;
-  *)
-    echo_content red "Usage: $0 config web|node [--output <file>]" >&2
-    exit 1
-    ;;
-  esac
-  shift
-  while (($#)); do
-    case "$1" in
-    --output)
-      require_option_value "$1" "${2:-}"
-      output="$2"
-      shift 2
-      ;;
-    -h | --help)
-      usage
-      return
-      ;;
-    *)
-      echo_content red "Unknown config option: $1" >&2
-      exit 1
-      ;;
-    esac
-  done
-  download_config "${purpose}" "${output}"
-}
-
-require_root() {
-  if [[ "$(id -u)" != "0" ]]; then
-    echo_content red "Please run as root"
-    exit 1
-  fi
-}
-
-require_value() {
-  local name="$1"
-  local value="${!name:-}"
-  if [[ -z "${value}" ]]; then
-    echo_content red "${name} is required"
-    usage
-    exit 1
-  fi
 }
 
 random_password() {
@@ -257,194 +42,6 @@ remove_container_if_force() {
   if container_exists "${name}" && [[ "${TP_FORCE}" == "1" ]]; then
     docker rm -fv "${name}" >/dev/null 2>&1 || true
   fi
-}
-
-yaml_read_raw() {
-  local file="$1"
-  local key="$2"
-  yq -r "${TP_CONFIG_ROOT}.${key} // \"\"" "${file}"
-}
-
-detect_config_root() {
-  local file="$1"
-  if yq -e '.trojanpanelnext != null' "${file}" >/dev/null 2>&1; then
-    TP_CONFIG_ROOT='.trojanpanelnext'
-  else
-    echo_content red "Configuration must contain a 'trojanpanelnext' root object" >&2
-    exit 1
-  fi
-}
-
-cfg_apply() {
-  local file="$1"
-  local var_name="$2"
-  local key="$3"
-  local value
-  value="$(yaml_read_raw "${file}" "${key}")"
-  if [[ -n "${value}" ]]; then
-    printf -v "${var_name}" '%s' "${value}"
-  fi
-}
-
-load_config() {
-  local file="${1:-}"
-  if [[ -z "${file}" ]]; then
-    echo_content red "Config file is required"
-    usage
-    exit 1
-  fi
-  if [[ ! -f "${file}" ]]; then
-    echo_content red "Config file not found: ${file}"
-    exit 1
-  fi
-
-  require_yq
-  TP_CONFIG_FILE="${file}"
-  detect_config_root "${file}"
-  TP_PURPOSE="$(yaml_read_raw "${file}" purpose)"
-  if [[ -z "${TP_PURPOSE}" ]]; then
-    echo_content red "trojanpanelnext.purpose is required" >&2
-    exit 1
-  fi
-  case "${TP_PURPOSE}" in
-  web | node) ;;
-  *)
-    echo_content red "Unsupported trojanpanelnext.purpose: ${TP_PURPOSE}" >&2
-    exit 1
-    ;;
-  esac
-
-  cfg_apply "${file}" CADDY_IMAGE caddy_image
-  cfg_apply "${file}" MARIADB_IMAGE mariadb_image
-  cfg_apply "${file}" REDIS_IMAGE redis_image
-  cfg_apply "${file}" PANEL_IMAGE panel_image
-  cfg_apply "${file}" UI_IMAGE ui_image
-  cfg_apply "${file}" CORE_IMAGE core_image
-  cfg_apply "${file}" IMAGE_BUNDLE_DIR image_bundle_dir
-
-  cfg_apply "${file}" MARIADB_PORT mariadb_port
-  cfg_apply "${file}" MARIADB_USER mariadb_user
-  cfg_apply "${file}" MARIADB_DATABASE database
-  cfg_apply "${file}" ACCOUNT_TABLE account_table
-  cfg_apply "${file}" REDIS_PORT redis_port
-  cfg_apply "${file}" PANEL_PORT panel_port
-  cfg_apply "${file}" UI_PORT ui_port
-  cfg_apply "${file}" CORE_PORT core_port
-  cfg_apply "${file}" GRPC_PORT grpc_port
-  cfg_apply "${file}" NODE_SERVER_ID node_server_id
-  cfg_apply "${file}" GRPC_TLS_MODE grpc_tls_mode
-  cfg_apply "${file}" GRPC_TLS_SERVER_NAME grpc_tls_server_name
-  cfg_apply "${file}" GRPC_CLIENT_CA_PATH grpc_client_ca_path
-  cfg_apply "${file}" GRPC_CLIENT_CERT_PATH grpc_client_cert_path
-  cfg_apply "${file}" GRPC_CLIENT_KEY_PATH grpc_client_key_path
-  cfg_apply "${file}" GRPC_SERVER_CA_PATH grpc_server_ca_path
-  cfg_apply "${file}" KERNEL_RUNTIME_PATH kernel_runtime_path
-  cfg_apply "${file}" TP_PKI_BUNDLE_DIR pki_bundle_dir
-  cfg_apply "${file}" NODE_CADDY_HTTP_PORT node_caddy_http_port
-  cfg_apply "${file}" NODE_CADDY_HTTPS_PORT node_caddy_https_port
-  cfg_apply "${file}" TP_FORCE force
-  cfg_apply "${file}" TP_PURGE_DATA purge_data
-  case "${TP_PURPOSE}" in
-  web)
-    TP_WEB_DOMAIN=""
-    TP_EMAIL=""
-    MARIADB_PASSWORD=""
-    REDIS_PASSWORD=""
-    cfg_apply "${file}" TP_WEB_DOMAIN hostname
-    cfg_apply "${file}" TP_EMAIL email
-    cfg_apply "${file}" MARIADB_PASSWORD mariadb_password
-    cfg_apply "${file}" REDIS_PASSWORD redis_password
-    ;;
-  node)
-    TP_NODE_DOMAIN=""
-    TP_EMAIL=""
-    MARIADB_HOST=""
-    MARIADB_PASSWORD=""
-    REDIS_HOST=""
-    REDIS_PASSWORD=""
-    cfg_apply "${file}" TP_NODE_DOMAIN hostname
-    cfg_apply "${file}" TP_EMAIL email
-    cfg_apply "${file}" MARIADB_HOST mariadb_host
-    cfg_apply "${file}" MARIADB_PASSWORD mariadb_password
-    cfg_apply "${file}" REDIS_HOST redis_host
-    cfg_apply "${file}" REDIS_PASSWORD redis_password
-    ;;
-  esac
-}
-
-require_one_of() {
-  local name="$1"
-  local value="$2"
-  shift 2
-  local allowed
-  for allowed in "$@"; do
-    if [[ "${value}" == "${allowed}" ]]; then
-      return
-    fi
-  done
-  echo_content red "${name} has unsupported value: ${value}"
-  exit 1
-}
-
-require_port() {
-  local name="$1"
-  local value="${!name:-}"
-  if [[ ! "${value}" =~ ^[0-9]+$ ]] || ((value < 1 || value > 65535)); then
-    echo_content red "${name} must be an integer between 1 and 65535"
-    exit 1
-  fi
-}
-
-validate_config() {
-  local purpose="${TP_PURPOSE}"
-
-  local schema_version
-  schema_version="$(yaml_read_raw "${TP_CONFIG_FILE}" schema_version)"
-  if [[ "${schema_version}" != "${SUPPORTED_SCHEMA_VERSION}" ]]; then
-    echo_content red "Unsupported schema version: ${schema_version}; expected ${SUPPORTED_SCHEMA_VERSION}" >&2
-    exit 1
-  fi
-
-  require_one_of force "${TP_FORCE}" 0 1
-  require_one_of purge_data "${TP_PURGE_DATA}" 0 1
-  require_port MARIADB_PORT
-  require_port REDIS_PORT
-  if [[ "${TP_PKI_BUNDLE_DIR}" != /* ]]; then
-    echo_content red "pki_bundle_dir must be an absolute path" >&2
-    exit 1
-  fi
-
-  case "${purpose}" in
-  web)
-    require_value TP_WEB_DOMAIN
-    require_port PANEL_PORT
-    require_port UI_PORT
-    require_value PANEL_IMAGE
-    require_value UI_IMAGE
-    ;;
-  node)
-    require_value TP_NODE_DOMAIN
-    require_value MARIADB_HOST
-    require_value MARIADB_PASSWORD
-    require_value REDIS_HOST
-    require_value REDIS_PASSWORD
-    require_value CORE_IMAGE
-    require_port CORE_PORT
-    require_port GRPC_PORT
-    require_port NODE_CADDY_HTTP_PORT
-    require_port NODE_CADDY_HTTPS_PORT
-    require_one_of grpc_tls_mode "${GRPC_TLS_MODE}" mtls
-    require_value TP_PKI_BUNDLE_DIR
-    if [[ "${GRPC_CLIENT_CA_PATH}" != /* ]]; then
-      echo_content red "grpc_client_ca_path must be an absolute path" >&2
-      exit 1
-    fi
-    ;;
-  *)
-    echo_content red "Unsupported purpose: ${purpose}"
-    exit 1
-    ;;
-  esac
 }
 
 container_env_value() {
@@ -947,6 +544,7 @@ deploy_panel_backend() {
     -v "${TP_PKI_BUNDLE_DIR}:${TP_PKI_BUNDLE_DIR}" \
     -v /etc/localtime:/etc/localtime \
     -e GIN_MODE=release \
+    -e "TP_HOST_REMOVAL_CALLBACK_URL=https://${TP_WEB_DOMAIN}/api/nodeServer/completeHostRemoval" \
     -e "mariadb_ip=127.0.0.1" \
     -e "mariadb_port=${MARIADB_PORT}" \
     -e "mariadb_user=${MARIADB_USER}" \
@@ -1071,6 +669,11 @@ deploy_node() {
   require_value MARIADB_PASSWORD
   require_value REDIS_HOST
   require_value REDIS_PASSWORD
+  require_commands systemctl
+  if [[ ! -d /run/systemd/system || ! -f "${TP_SCRIPT_DIR}/uninstall.sh" ]]; then
+    echo_content red "Node installation requires systemd and matching uninstall.sh; use tp.sh install" >&2
+    exit 1
+  fi
 
   load_image_archives
   prepare_dirs
@@ -1080,6 +683,7 @@ deploy_node() {
   start_caddy "${NODE_CADDY_CONTAINER}" "${TP_DATA}/custom/node-caddy" "${TP_DATA}/custom/node-caddy/data" "${WEB_PATH}"
   wait_for_cert "${TP_NODE_DOMAIN}" "${TP_DATA}/custom/node-caddy/data"
   deploy_core "${TP_NODE_DOMAIN}"
+  install_host_removal_service
 
   echo_content red "\n=============================================================="
   echo_content skyBlue "Trojan Panel node side deployed"
@@ -1089,125 +693,72 @@ deploy_node() {
   echo_content red "==============================================================\n"
 }
 
-remove_web() {
-  docker rm -f "${WEB_CADDY_CONTAINER}" "${UI_CONTAINER}" "${PANEL_CONTAINER}" "${REDIS_CONTAINER}" "${MARIADB_CONTAINER}" >/dev/null 2>&1 || true
-  if [[ "${TP_PURGE_DATA}" == "1" ]]; then
-    rm -rf "${TP_DATA}/custom/web-caddy" "${TP_DATA}/trojan-panel" "${TP_DATA}/trojan-panel-ui" "${TP_DATA}/mariadb" "${TP_DATA}/redis"
+install_host_removal_service() {
+  local host_dir=/etc/trojanpanelnext-host
+  local library_dir=/usr/local/lib/trojanpanelnext-host
+  # Stop an existing helper before replacing its executable or persisted state.
+  if [[ -f /etc/systemd/system/trojanpanelnext-host.service ]]; then
+    systemctl stop trojanpanelnext-host.service
   fi
-  echo_content skyBlue "---> Trojan Panel web side removed"
+  mkdir -p "${host_dir}" "${library_dir}"
+  chmod 700 "${host_dir}" "${library_dir}"
+  install -m 0600 "${TP_SCRIPT_DIR}/common.sh" "${library_dir}/common.sh"
+  install -m 0600 "${TP_SCRIPT_DIR}/uninstall.sh" "${library_dir}/uninstall.sh"
+  install -m 0600 "${TP_CONFIG_FILE}" "${host_dir}/node.yaml"
+  docker cp "${CORE_CONTAINER}:/usr/local/bin/tp-host-agent" "${library_dir}/tp-host-agent"
+  chmod 700 "${library_dir}/tp-host-agent"
+  local cert_base="${TP_DATA}/custom/node-caddy/data/caddy/certificates/acme-v02.api.letsencrypt.org-directory/${TP_NODE_DOMAIN}/${TP_NODE_DOMAIN}"
+  local original_config
+  original_config="$(realpath -- "${TP_CONFIG_FILE}")"
+  export NODE_SERVER_ID GRPC_PORT GRPC_CLIENT_CA_PATH TP_DATA WEB_PATH TP_PKI_BUNDLE_DIR KERNEL_RUNTIME_PATH
+  export MARIADB_CONTAINER REDIS_CONTAINER PANEL_CONTAINER UI_CONTAINER CORE_CONTAINER WEB_CADDY_CONTAINER NODE_CADDY_CONTAINER
+  TP_HOST_CERT="${cert_base}.crt" TP_HOST_KEY="${cert_base}.key" TP_ORIGINAL_CONFIG="${original_config}" \
+    yq -n -o=json '{
+      "nodeId": (strenv(NODE_SERVER_ID) | tonumber),
+      "port": ((strenv(GRPC_PORT) | tonumber) + 1),
+      "certificate": strenv(TP_HOST_CERT), "key": strenv(TP_HOST_KEY),
+      "clientCA": strenv(GRPC_CLIENT_CA_PATH), "originalConfig": strenv(TP_ORIGINAL_CONFIG),
+      "environment": {
+        "TP_DATA": strenv(TP_DATA), "WEB_PATH": strenv(WEB_PATH),
+        "TP_PKI_BUNDLE_DIR": strenv(TP_PKI_BUNDLE_DIR), "KERNEL_RUNTIME_PATH": strenv(KERNEL_RUNTIME_PATH),
+        "MARIADB_CONTAINER": strenv(MARIADB_CONTAINER), "REDIS_CONTAINER": strenv(REDIS_CONTAINER),
+        "PANEL_CONTAINER": strenv(PANEL_CONTAINER), "UI_CONTAINER": strenv(UI_CONTAINER),
+        "CORE_CONTAINER": strenv(CORE_CONTAINER), "WEB_CADDY_CONTAINER": strenv(WEB_CADDY_CONTAINER),
+        "NODE_CADDY_CONTAINER": strenv(NODE_CADDY_CONTAINER)
+      }
+    }' >"${host_dir}/config.json"
+  chmod 600 "${host_dir}/config.json"
+  # A fresh installation supersedes any completed removal receipt.
+  rm -f -- "${host_dir}/result.json" "${host_dir}/finalize.json" "${host_dir}/server.crt" "${host_dir}/server.key" "${host_dir}/client-ca.crt" "${library_dir}/cleanup-ready"
+  cat >/etc/systemd/system/trojanpanelnext-host.service <<'EOF'
+[Unit]
+Description=TrojanPanel Next authenticated host removal
+After=network-online.target docker.service
+Wants=network-online.target
+[Service]
+Type=simple
+ExecStart=/usr/local/lib/trojanpanelnext-host/tp-host-agent
+Restart=on-failure
+RestartSec=5
+UMask=0077
+[Install]
+WantedBy=multi-user.target
+EOF
+  systemctl daemon-reload
+  systemctl enable trojanpanelnext-host.service
+  systemctl restart trojanpanelnext-host.service
+  systemctl is-active --quiet trojanpanelnext-host.service
 }
-
-remove_node() {
-  docker rm -f "${CORE_CONTAINER}" "${NODE_CADDY_CONTAINER}" >/dev/null 2>&1 || true
-  if [[ "${TP_PURGE_DATA}" == "1" ]]; then
-    rm -rf "${TP_DATA}/custom/node-caddy" "${TP_DATA}/trojan-panel-core"
-  fi
-  echo_content skyBlue "---> Trojan Panel node side removed"
-}
-
 main() {
-  local command="${1:-}"
-  local config_file=""
-  local force_override=""
-  local purge_override=""
-
-  case "${command}" in
-  -h | --help | help | "")
-    usage
-    return
-    ;;
-  -V | --version | version)
-    printf '%s\n' "${INSTALLER_VERSION}"
-    return
-    ;;
-  config)
-    shift
-    handle_config_command "$@"
-    return
-    ;;
-  install | remove | validate)
-    shift
-    ;;
-  *)
-    echo_content red "Unknown command: ${command}"
-    usage
-    exit 1
-    ;;
-  esac
-
-  while (($# > 0)); do
-    case "$1" in
-    --config)
-      require_option_value "$1" "${2:-}"
-      config_file="$2"
-      shift 2
-      ;;
-    --force)
-      force_override=1
-      shift
-      ;;
-    --purge-data)
-      purge_override=1
-      shift
-      ;;
-    -h | --help)
-      usage
-      return
-      ;;
-    *)
-      echo_content red "Unknown option: $1"
-      usage
-      exit 1
-      ;;
-    esac
-  done
-
-  if [[ -z "${config_file}" ]]; then
-    echo_content red "--config is required"
-    usage
-    exit 1
-  fi
-  if [[ -n "${force_override}" && "${command}" != install ]]; then
-    echo_content red "--force is only valid with install"
-    exit 1
-  fi
-  if [[ -n "${purge_override}" && "${command}" != remove ]]; then
-    echo_content red "--purge-data is only valid with remove"
-    exit 1
-  fi
-  if [[ "${command}" != validate ]]; then
-    require_root
-  fi
-  load_config "${config_file}"
-  [[ -n "${force_override}" ]] && TP_FORCE="${force_override}"
-  [[ -n "${purge_override}" ]] && TP_PURGE_DATA="${purge_override}"
+  if handle_metadata "$@"; then return; fi
+  parse_config_options install "$@"
   validate_config
-  echo_content skyBlue "Operation: ${command}; purpose: ${TP_PURPOSE}; config: ${config_file}; installer: ${INSTALLER_VERSION}"
-
-  case "${command}:${TP_PURPOSE}" in
-  validate:web | validate:node)
-    echo_content green "Configuration is valid for ${TP_PURPOSE} purpose: ${config_file}"
-    ;;
-  install:web)
-    require_commands docker curl openssl tar od sha256sum find seq awk
-    docker info >/dev/null
-    deploy_web
-    ;;
-  install:node)
-    require_commands docker curl openssl tar od sha256sum find seq awk
-    docker info >/dev/null
-    deploy_node
-    ;;
-  remove:web)
-    require_commands docker
-    docker info >/dev/null
-    remove_web
-    ;;
-  remove:node)
-    require_commands docker
-    docker info >/dev/null
-    remove_node
-    ;;
+  echo_content skyBlue "Operation: install; purpose: ${TP_PURPOSE}; config: ${TP_CONFIG_FILE}; installer: ${INSTALLER_VERSION}"
+  require_commands docker curl openssl tar od sha256sum find seq awk
+  docker info >/dev/null
+  case "${TP_PURPOSE}" in
+  web) deploy_web ;;
+  node) deploy_node ;;
   esac
 }
 
