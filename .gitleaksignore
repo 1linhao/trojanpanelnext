@@ -1,0 +1,7 @@
+# Exact historical false positives also recorded in v0.1.0-rc.3.
+# Fixed passwords in isolated unit tests; no deployed credentials.
+27e36293964edca308e297a964ea38e37ec4f3c8:apps/control-plane/api/dao/initial_admin_test.go:generic-api-key:191
+7982cdbfafdd3371ffe681010f9bf0efdde89b22:apps/control-plane/api/dao/initial_admin_test.go:generic-api-key:94
+7982cdbfafdd3371ffe681010f9bf0efdde89b22:apps/control-plane/api/dao/initial_admin_test.go:generic-api-key:114
+# Repeated hexadecimal owner-token fixture in an example using example.com domains.
+c4c661dccc98d2392d3c860ebf6cc1d79f7358d4:docs/entry-controller/examples/combined-caddy-v2.json:generic-api-key:6
