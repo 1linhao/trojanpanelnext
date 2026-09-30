@@ -17,13 +17,13 @@ TrojanPanel Next 是一个支持 Xray、Hysteria2 和 NaiveProxy 的多用户 We
 
 ## 开始使用
 
-当前版本为 `0.1.0-rc.7`。先按[安装说明](deploy/installer/README.md#系统与软件依赖)预装 Docker Engine、mikefarah/yq v4 等依赖并启动 Docker；安装器不会自动安装依赖。Node 主机还需要 systemd。
+当前版本为 `0.1.0-rc.8`。先按[安装说明](deploy/installer/README.md#系统与软件依赖)预装 Docker Engine、mikefarah/yq v4 等依赖并启动 Docker；安装器不会自动安装依赖。Node 主机还需要 systemd。
 
 在每台 Web 或 Node 服务器下载命令入口：
 
 ```bash
 curl -fsSL --connect-timeout 10 --max-time 60 \
-  https://raw.githubusercontent.com/1linhao/trojanpanelnext/v0.1.0-rc.7/deploy/installer/tp.sh \
+  https://raw.githubusercontent.com/1linhao/trojanpanelnext/v0.1.0-rc.8/deploy/installer/tp.sh \
   -o tp.sh
 chmod +x tp.sh
 ./tp.sh --version
@@ -76,7 +76,7 @@ sudo ./tp.sh remove --config ./web.yaml --purge-data
 
 本地卸载不会同步删除 Web 登记；需要同时卸载 Node 并清理登记时，请直接在 Web 的节点服务器页面发起删除。
 
-普通删除保留数据和 Web 历史，无痕删除还清理数据及对应历史；节点离线、旧版本缺少维护服务或卸载失败时保留登记并报错。删除单个代理节点仅删除代理。完整行为见[卸载说明](deploy/installer/README.md#卸载)。
+点击服务器的删除按钮后，在弹窗中选择“删除”或“彻底删除”。“删除”保留数据和 Web 历史，“彻底删除”还清理数据及对应历史；节点离线、旧版本缺少维护服务或卸载失败时保留登记并报错。删除单个代理节点仅删除代理。完整行为见[卸载说明](deploy/installer/README.md#卸载)。
 
 [Web 管理界面](apps/control-plane/web/README.md)
 

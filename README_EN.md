@@ -14,13 +14,13 @@ TrojanPanel Next is a multi-user Web administration panel supporting Xray, Hyste
 
 ## Get started
 
-The current version is `0.1.0-rc.7`. First follow the [dependency instructions](deploy/installer/README_EN.md#system-and-software-dependencies) to install Docker Engine, mikefarah/yq v4, and the other tools, then start Docker. The installer does not install dependencies. Node hosts also require systemd.
+The current version is `0.1.0-rc.8`. First follow the [dependency instructions](deploy/installer/README_EN.md#system-and-software-dependencies) to install Docker Engine, mikefarah/yq v4, and the other tools, then start Docker. The installer does not install dependencies. Node hosts also require systemd.
 
 Download the command entrypoint on each Web or Node server:
 
 ```bash
 curl -fsSL --connect-timeout 10 --max-time 60 \
-  https://raw.githubusercontent.com/1linhao/trojanpanelnext/v0.1.0-rc.7/deploy/installer/tp.sh \
+  https://raw.githubusercontent.com/1linhao/trojanpanelnext/v0.1.0-rc.8/deploy/installer/tp.sh \
   -o tp.sh
 chmod +x tp.sh
 ./tp.sh --version
@@ -73,7 +73,7 @@ Both modes remove the corresponding containers, anonymous volumes, and all local
 
 Local removal does not remove Web registration; initiate deletion directly on Web's node server page to coordinate Node removal and registration cleanup.
 
-Ordinary deletion retains data and Web history; deletion with data purge also removes the corresponding history. Offline nodes, older versions without the maintenance service, or removal failure retain registration and return an error. Deleting one proxy node only deletes that proxy. See the [removal guide](deploy/installer/README_EN.md#removal) for details.
+The server delete button opens a dialog with Cancel (取消), Delete (删除), and Delete completely (彻底删除). Delete retains data and Web history; Delete completely also removes the corresponding history. Offline nodes, older versions without the maintenance service, or removal failure retain registration and return an error. Deleting one proxy node only deletes that proxy. See the [removal guide](deploy/installer/README_EN.md#removal) for details.
 
 [Web administration interface](apps/control-plane/web/README_EN.md)
 

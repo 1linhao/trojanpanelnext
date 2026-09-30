@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Version label matching the installer, for example 0.1.0-rc.7
+        description: Version label matching the installer, for example 0.1.0-rc.8
         required: true
         type: string
       publish:

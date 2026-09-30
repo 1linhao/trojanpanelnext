@@ -6,13 +6,13 @@ TrojanPanel Next is a multi-user Web administration panel for Xray, Hysteria2, a
 
 ## Installation
 
-The current version is `0.1.0-rc.7`. Preinstall Docker Engine, [mikefarah/yq v4](https://github.com/mikefarah/yq), Bash, curl, CA certificates, grep, OpenSSL, tar, coreutils, findutils, and awk, then start Docker. Node hosts must run systemd. The installer does not install dependencies. The [installer guide](https://github.com/1linhao/trojanpanelnext/blob/main/deploy/installer/README_EN.md) includes complete Debian/Ubuntu commands and manual checksum-verified yq installation instructions.
+The current version is `0.1.0-rc.8`. Preinstall Docker Engine, [mikefarah/yq v4](https://github.com/mikefarah/yq), Bash, curl, CA certificates, grep, OpenSSL, tar, coreutils, findutils, and awk, then start Docker. Node hosts must run systemd. The installer does not install dependencies. The [installer guide](https://github.com/1linhao/trojanpanelnext/blob/main/deploy/installer/README_EN.md) includes complete Debian/Ubuntu commands and manual checksum-verified yq installation instructions.
 
 Download the command entrypoint on each server:
 
 ```bash
 curl -fsSL --connect-timeout 10 --max-time 60 \
-  https://raw.githubusercontent.com/1linhao/trojanpanelnext/v0.1.0-rc.7/deploy/installer/tp.sh \
+  https://raw.githubusercontent.com/1linhao/trojanpanelnext/v0.1.0-rc.8/deploy/installer/tp.sh \
   -o tp.sh
 chmod +x tp.sh
 ./tp.sh --version
@@ -42,7 +42,7 @@ Set the Node domain, Web database/Redis addresses and credentials, and actual `n
 
 ## Recreate containers and remove services
 
-To upgrade, update application image tags in existing YAML to `0.1.0-rc.7`, update every Node first, and then Web. Forced Node installation provisions the host maintenance service:
+To upgrade, update application image tags in existing YAML to `0.1.0-rc.8`, update every Node first, and then Web. Forced Node installation provisions the host maintenance service:
 
 ```bash
 sudo ./tp.sh install --config ./node.yaml --force
@@ -69,7 +69,7 @@ Both modes remove the corresponding containers, anonymous volumes, and all local
 
 Deleting a node server in Web first uninstalls it remotely; after success, Web transactionally deletes the server and associated proxy configurations while retaining service data and traffic/kernel task history. Deletion with data purge also removes data and the corresponding Web history. Offline nodes, missing older services, or removal failure produce an error and retain registration. Maintenance TLS files remain until both sides confirm the result. Result confirmation and maintenance service cleanup retry in the background on failure, resume after restart, and report `cleanupPending`. Keep maintenance connectivity and Node access to Web HTTPS (TCP 443) available until cleanup completes. Deleting a single proxy node only deletes that proxy. Local `remove` does not clean up Web registration; initiate server deletion in Web to coordinate both operations.
 
-`TP_SCRIPT_REF` selects the script source (default `v0.1.0-rc.7`), and templates follow that ref. `TP_CONFIG_REF` can override only templates. Direct scripts require matching adjacent `common.sh` and no command prefix. See the [installer guide](https://github.com/1linhao/trojanpanelnext/blob/main/deploy/installer/README_EN.md) for complete parameters.
+`TP_SCRIPT_REF` selects the script source (default `v0.1.0-rc.8`), and templates follow that ref. `TP_CONFIG_REF` can override only templates. Direct scripts require matching adjacent `common.sh` and no command prefix. See the [installer guide](https://github.com/1linhao/trojanpanelnext/blob/main/deploy/installer/README_EN.md) for complete parameters.
 
 ## Support
 

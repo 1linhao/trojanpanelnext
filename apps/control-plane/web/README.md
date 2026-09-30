@@ -73,6 +73,12 @@ npm run test:live-stack:e2e
 
 构建产物位于 `dist/`，可通过 Nginx 或项目 Docker 镜像部署。
 
+```bash
+npm run test:server-delete:e2e
+```
+
+`test:server-delete:e2e` 会自行启动隔离的本地模拟 API、Web 和 ChromeDriver（需要已有 Chromium / ChromeDriver，端口 18081、18082、18888、9518 空闲）。它检查删除弹窗、两种删除参数、关闭与取消、失败重试、移动布局和浏览器错误，不连接真实服务器。截图保存在仓库 `.local/server-delete-dialog/`。
+
 ## 支持
 
 - [TrojanPanel 原项目](https://github.com/trojanpanel)

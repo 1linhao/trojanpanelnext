@@ -61,6 +61,12 @@ npm run test:live-stack:e2e
 
 `test:live-stack:e2e` uses only the local mock account and captcha fixtures. The production build is written to `dist/` and can be deployed with Nginx or the project Docker image.
 
+```bash
+npm run test:server-delete:e2e
+```
+
+`test:server-delete:e2e` starts an isolated local mock API, Web, and ChromeDriver. Chromium / ChromeDriver must be installed and ports 18081, 18082, 18888, and 9518 must be free. It checks dialog actions, deletion parameters, dismissal, failed deletion retries, mobile layout, and browser errors without contacting a deployed server. Screenshots are saved in the repository’s `.local/server-delete-dialog/`.
+
 ## Support
 
 - [Original TrojanPanel project](https://github.com/trojanpanel)

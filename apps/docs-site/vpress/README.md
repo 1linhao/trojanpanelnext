@@ -25,13 +25,13 @@ footer: TrojanPanel Next
 
 ## 安装
 
-当前版本为 `0.1.0-rc.7`。先预装 Docker Engine、[mikefarah/yq v4](https://github.com/mikefarah/yq)、Bash、curl、CA 证书、grep、OpenSSL、tar、coreutils、findutils 和 awk，并启动 Docker。Node 主机必须运行 systemd。安装器不会自动安装依赖；[安装器说明](https://github.com/1linhao/trojanpanelnext/blob/main/deploy/installer/README.md)保留完整 Debian/Ubuntu 命令与 yq 手工校验安装步骤。
+当前版本为 `0.1.0-rc.8`。先预装 Docker Engine、[mikefarah/yq v4](https://github.com/mikefarah/yq)、Bash、curl、CA 证书、grep、OpenSSL、tar、coreutils、findutils 和 awk，并启动 Docker。Node 主机必须运行 systemd。安装器不会自动安装依赖；[安装器说明](https://github.com/1linhao/trojanpanelnext/blob/main/deploy/installer/README.md)保留完整 Debian/Ubuntu 命令与 yq 手工校验安装步骤。
 
 在每台服务器下载命令入口：
 
 ```bash
 curl -fsSL --connect-timeout 10 --max-time 60 \
-  https://raw.githubusercontent.com/1linhao/trojanpanelnext/v0.1.0-rc.7/deploy/installer/tp.sh \
+  https://raw.githubusercontent.com/1linhao/trojanpanelnext/v0.1.0-rc.8/deploy/installer/tp.sh \
   -o tp.sh
 chmod +x tp.sh
 ./tp.sh --version
@@ -61,7 +61,7 @@ sudo ./tp.sh install --config ./node.yaml
 
 ## 重建与卸载
 
-升级时修改现有 YAML 的应用镜像标签为 `0.1.0-rc.7`，先更新所有 Node，再更新 Web；Node 的 `--force` 安装会部署宿主机维护服务：
+升级时修改现有 YAML 的应用镜像标签为 `0.1.0-rc.8`，先更新所有 Node，再更新 Web；Node 的 `--force` 安装会部署宿主机维护服务：
 
 ```bash
 sudo ./tp.sh install --config ./node.yaml --force
@@ -88,7 +88,7 @@ sudo ./tp.sh remove --config ./web.yaml --purge-data
 
 Web 节点服务器的“删除”先远程卸载、成功后事务删除服务器及关联代理配置，并保留业务数据和流量/内核任务历史；“无痕删除”还清理数据及相应 Web 历史。离线、旧版服务缺失或卸载失败时保留登记并报错。远程维护服务的 TLS 暂存直到双方完成结果确认；结果确认和辅助服务清理失败会后台重试，支持重启恢复，并显示 `cleanupPending`。保持双向维护通道及 Node 到 Web HTTPS（TCP 443）可达，直到清理完成。删除单个代理节点仍只删除代理。本地 `remove` 不同步清理 Web 登记；需要联动清理时直接在 Web 删除服务器。
 
-脚本来源由 `TP_SCRIPT_REF` 控制，默认 `v0.1.0-rc.7`，模板跟随该 ref；`TP_CONFIG_REF` 可仅覆盖模板来源。直接使用子脚本需同目录、同版本 `common.sh`，且不再加命令前缀。完整参数见[安装器说明](https://github.com/1linhao/trojanpanelnext/blob/main/deploy/installer/README.md)。
+脚本来源由 `TP_SCRIPT_REF` 控制，默认 `v0.1.0-rc.8`，模板跟随该 ref；`TP_CONFIG_REF` 可仅覆盖模板来源。直接使用子脚本需同目录、同版本 `common.sh`，且不再加命令前缀。完整参数见[安装器说明](https://github.com/1linhao/trojanpanelnext/blob/main/deploy/installer/README.md)。
 
 ## 支持
 

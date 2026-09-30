@@ -55,17 +55,17 @@ sudo docker info >/dev/null
 
 ## 版本绑定与获取入口
 
-当前版本为 `0.1.0-rc.7`。每台 Web 或 Node 服务器都执行：
+当前版本为 `0.1.0-rc.8`。每台 Web 或 Node 服务器都执行：
 
 ```bash
 curl -fsSL --connect-timeout 10 --max-time 60 \
-  https://raw.githubusercontent.com/1linhao/trojanpanelnext/v0.1.0-rc.7/deploy/installer/tp.sh \
+  https://raw.githubusercontent.com/1linhao/trojanpanelnext/v0.1.0-rc.8/deploy/installer/tp.sh \
   -o tp.sh
 chmod +x tp.sh
 ./tp.sh --version
 ```
 
-入口默认从 GitHub Raw 的 `v0.1.0-rc.7` 下载所选命令及 `common.sh`，安装时额外下载 `uninstall.sh`。下载文件经过版本匹配检查和 Bash 语法检查，在临时目录执行，结束后清理。配置模板也默认使用同一标签；API、Web 和 Node Agent 镜像使用 `:0.1.0-rc.7`。Git 标签带 `v`，镜像标签不带 `v`。无需本地仓库。
+入口默认从 GitHub Raw 的 `v0.1.0-rc.8` 下载所选命令及 `common.sh`，安装时额外下载 `uninstall.sh`。下载文件经过版本匹配检查和 Bash 语法检查，在临时目录执行，结束后清理。配置模板也默认使用同一标签；API、Web 和 Node Agent 镜像使用 `:0.1.0-rc.8`。Git 标签带 `v`，镜像标签不带 `v`。无需本地仓库。
 
 `schema_version: 1` 是 YAML 配置结构版本，与产品版本分别维护。已有配置应使用 `trojanpanelnext.purpose: web` 或 `node`；旧部署类型参数不再受支持。
 
@@ -142,7 +142,7 @@ Node 安装在宿主机部署 `trojanpanelnext-host.service`，提供 mTLS HTTPS
 
 ## 重建与升级
 
-修改配置中的应用镜像后，使用 `--force` 重新创建 API、UI、Agent 或 Caddy 容器。升级到 `0.1.0-rc.7` 时，先把所有 Node YAML 的 `core_image` 更新到 `:0.1.0-rc.7`，再更新 Web YAML 的 `panel_image` 和 `ui_image`；在各主机下载此版本入口，按以下顺序执行：
+修改配置中的应用镜像后，使用 `--force` 重新创建 API、UI、Agent 或 Caddy 容器。升级到 `0.1.0-rc.8` 时，先把所有 Node YAML 的 `core_image` 更新到 `:0.1.0-rc.8`，再更新 Web YAML 的 `panel_image` 和 `ui_image`；在各主机下载此版本入口，按以下顺序执行：
 
 ```bash
 # 先在每台 Node 主机执行，安装宿主机维护服务
@@ -188,7 +188,7 @@ Web 对应 MariaDB、Redis、API、UI、Web Caddy 容器；Node 对应 Agent、N
 
 ### 从 Web 删除节点服务器
 
-节点服务器页面的普通“删除”会先调用 Node 的宿主机维护服务，以保留数据模式卸载容器和镜像；成功回报后，Web 在事务中删除服务器及关联代理配置，保留该服务器的流量和内核任务历史。“无痕删除”使用彻底卸载模式，同时清理该服务器对应的 Web 流量、内核任务记录。涉及其他服务器的共享任务记录不会一并删除。
+点击节点服务器页面的“删除”按钮后，弹窗提供“取消”“删除”“彻底删除”。选择“删除”会先调用 Node 的宿主机维护服务，以保留数据模式卸载容器和镜像；成功回报后，Web 在事务中删除服务器及关联代理配置，保留该服务器的流量和内核任务历史。“彻底删除”使用彻底卸载模式，同时清理该服务器对应的 Web 流量、内核任务记录。涉及其他服务器的共享任务记录不会一并删除。
 
 节点离线、旧版 Node 没有维护服务、mTLS/网络失败或本地卸载失败时，Web 报错并保留服务器登记与关联代理配置；连接失败不会当作卸载成功。单个代理节点的删除仍只删除该代理，不卸载宿主机。
 
@@ -196,9 +196,21 @@ Web 对应 MariaDB、Redis、API、UI、Web Caddy 容器；Node 对应 Agent、N
 
 本地 `tp.sh remove` 只操作本机，不同步清理 Web 登记。如需同时卸载 Node 和清理登记，请直接在 Web 的节点服务器页面发起删除。
 
+### 删除后重新接入 Node
+
+“删除”保留 Node 的数据、PKI、HTTPS 证书和原始部署 YAML，可以重新安装接入。它已删除 Web 中原有服务器及关联代理配置，因此不会自动恢复原来的代理节点。
+
+1. 等待宿主机维护服务完成清理，在 Web 重新添加服务器（可以使用相同名称和地址），取得新服务器 ID。
+2. 修改保留的 `node.yaml`，将 `trojanpanelnext.node_server_id` 改为新的 ID；核对数据库、Redis 和 TLS 配置。不能继续使用旧 ID。
+3. 在 Node 执行 `sudo ./tp.sh install --config ./node.yaml`。安装器会重新下载镜像，复用保留的数据和有效证书，重新部署维护服务。
+4. 在 Web 检查服务器在线后，重新创建需要的代理节点。原流量和内核任务历史保留在旧服务器 ID 下，不会迁移到新 ID。
+
+“彻底删除”会清除上述本地配置及数据，再次接入需按首次安装步骤准备配置和 Web 公共 CA。
+
+
 ## 开发验证
 
-`TP_SCRIPT_REF` 默认是 `v0.1.0-rc.7`，可设为 GitHub 上实际存在的分支或完整提交 SHA，用同一 ref 下载子脚本与模板。入口仍要求子脚本版本与入口相同；测试分支上的代码时也应下载该分支上的 `tp.sh`。例如：
+`TP_SCRIPT_REF` 默认是 `v0.1.0-rc.8`，可设为 GitHub 上实际存在的分支或完整提交 SHA，用同一 ref 下载子脚本与模板。入口仍要求子脚本版本与入口相同；测试分支上的代码时也应下载该分支上的 `tp.sh`。例如：
 
 ```bash
 TP_SCRIPT_REF=feat/installer-entrypoint ./tp.sh config web --output ./test-web.yaml
@@ -220,5 +232,5 @@ sudo env TP_SCRIPT_REF=feat/installer-entrypoint ./tp.sh install --config ./test
 - Node Agent 每分钟检查 NaiveProxy 的证书。新证书与私钥有效时，保存运行配置和用户信息、校验配置，再重启对应实例；现有连接会短暂中断，客户端需重新连接。失败会记录日志并在下次检查时重试。
 - Web API 启动时及每 5 分钟检查内部 mTLS 身份，客户端证书剩余不足 90 天时重新签发；新证书有效期最多 825 天，且不超过 CA 到期时间。CA 私钥仅保留在 Web。
 - CA 剩余不足 365 天时开始轮换：通过现有 mTLS 通道分发新旧 CA，所有已登记的 mTLS Node 确认后切换客户端身份。保留旧身份至少 24 小时，待所有节点确认移除旧 CA 后清理旧私钥。离线或不支持轮换的旧版 Node 会阻止推进，每 5 分钟重试。
-- 首次引导仍需手动复制 Web 当前的 `client-ca.crt`。新节点请先登记到面板并使用当前公开 CA 文件；未登记节点不在轮换范围。升级先更新所有 Node，再更新 Web；修改现有 YAML 镜像标签为 `0.1.0-rc.7`，执行 `./tp.sh install --config ... --force` 以更新挂载并部署 Node 宿主机维护服务。Node 重装会保留已有运行时 CA 文件，避免旧引导副本覆盖新信任；Agent 同时更新引导 CA 副本，供清理运行数据后的重新安装使用。
+- 首次引导仍需手动复制 Web 当前的 `client-ca.crt`。新节点请先登记到面板并使用当前公开 CA 文件；未登记节点不在轮换范围。升级先更新所有 Node，再更新 Web；修改现有 YAML 镜像标签为 `0.1.0-rc.8`，执行 `./tp.sh install --config ... --force` 以更新挂载并部署 Node 宿主机维护服务。Node 重装会保留已有运行时 CA 文件，避免旧引导副本覆盖新信任；Agent 同时更新引导 CA 副本，供清理运行数据后的重新安装使用。
 - Web API 挂载 `pki_bundle_dir` 并拥有签发权限，Node 仅能写入公开 CA 信任文件。完整备份 Web 的 PKI 目录（包含 `state.json` 和 `generations`），不要只备份根目录的符号链接。证书轮换失败可查看 API / Agent 日志。节点离线超过旧 CA 的有效期或恢复过期的备份时，需要人工重新引导信任。

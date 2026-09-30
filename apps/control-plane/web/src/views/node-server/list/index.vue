@@ -208,20 +208,10 @@
                     class="icon-btn danger"
                     type="button"
                     title="删除"
-                    @click="handleDelete(row, false)"
+                    @click="handleDelete(row)"
                     :disabled="deletingServerId !== 0"
                   >
                     <app-icon name="delete" />
-                  </button>
-                  <button
-                    v-if="checkPermission(['sysadmin'])"
-                    class="icon-btn danger"
-                    type="button"
-                    title="无痕删除服务器及其数据"
-                    :disabled="deletingServerId !== 0"
-                    @click="handleDelete(row, true)"
-                  >
-                    无痕
                   </button>
                 </div>
               </td>
@@ -309,6 +299,47 @@
       </div>
     </ui-sheet>
 
+    <ui-dialog
+      v-if="deleteServer"
+      :visible="true"
+      title="删除节点服务器"
+      width="580px"
+      role="alertdialog"
+      described-by="server-delete-description"
+      custom-class="server-delete-dialog"
+      @open="$refs.cancelDelete.$el.focus()"
+      @close="deleteServer = null"
+    >
+      <div id="server-delete-description" class="server-delete-description">
+        <p class="server-delete-target">
+          确认删除服务器「{{ deleteServer.name }}」？
+        </p>
+        <p>
+          两种方式都会先卸载目标机器的容器与镜像，再移除 Web
+          中的服务器及关联代理节点。
+        </p>
+        <p>
+          <strong>删除：</strong>保留目标机器的数据、证书、伪装站和部署配置。
+        </p>
+        <p class="server-delete-warning">
+          <strong>彻底删除：</strong
+          >同时删除目标机器的服务数据、证书、伪装站和部署配置，并清理 Web
+          中关联的流量、内核任务和连接信息。此操作无法恢复。
+        </p>
+      </div>
+      <div slot="footer" class="dialog-footer server-delete-actions">
+        <liquid-button ref="cancelDelete" @click="deleteServer = null"
+          >取消</liquid-button
+        >
+        <liquid-button type="primary" @click="confirmDelete(false)"
+          >删除</liquid-button
+        >
+        <liquid-button type="danger" @click="confirmDelete(true)"
+          >彻底删除</liquid-button
+        >
+      </div>
+    </ui-dialog>
+
     <NodeServerForm
       ref="nodeServerForm"
       :node-server="temp"
@@ -386,6 +417,7 @@ export default {
       dialogStatus: '',
       resettingServerId: 0,
       deletingServerId: 0,
+      deleteServer: null,
       detailServer: null,
       detailState: { cpuUsed: 0, memUsed: 0, diskUsed: 0 }
     }
@@ -485,21 +517,16 @@ export default {
       this.dialogFormVisible = true
       this.$refs.nodeServerForm.clearValidate()
     },
-    async handleDelete(row, purge = false) {
-      if (this.deletingServerId) return
-      const message = purge
-        ? `无痕删除服务器「${row.name}」？目标机器的容器、镜像、服务数据、证书、伪装站和部署配置将被删除，Web 中关联的代理节点、流量和内核任务记录也将清理。此操作无法恢复。`
-        : `删除服务器「${row.name}」？将先卸载目标机器的容器与镜像并保留数据，再移除 Web 中的服务器及关联代理节点。`
-      try {
-        await MessageBox.confirm(message, this.$t('confirm.warn'), {
-          confirmButtonText: purge ? '确认无痕删除' : '确认卸载并删除',
-          cancelButtonText: this.$t('confirm.cancel'),
-          type: 'warning'
-        })
-      } catch (_) {
+    handleDelete(row) {
+      if (this.deletingServerId || !checkPermission(['sysadmin'])) return
+      this.deleteServer = row
+    },
+    async confirmDelete(purge) {
+      const row = this.deleteServer
+      if (!row || this.deletingServerId || !checkPermission(['sysadmin']))
         return
-      }
       this.deletingServerId = row.id
+      this.deleteServer = null
       try {
         const response = await deleteNodeServerById({ id: row.id, purge })
         await this.getList()
@@ -642,5 +669,20 @@ export default {
 <style scoped>
 .liquid-button {
   margin-left: 10px;
+}
+.server-delete-description {
+  line-height: 1.7;
+}
+.server-delete-description p {
+  margin: 0 0 12px;
+}
+.server-delete-target {
+  overflow-wrap: anywhere;
+}
+.server-delete-warning {
+  color: var(--bad-fg);
+}
+.server-delete-actions .liquid-button {
+  margin-left: 0;
 }
 </style>
