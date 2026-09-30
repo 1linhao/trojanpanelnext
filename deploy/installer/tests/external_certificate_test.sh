@@ -11,7 +11,7 @@ source "${SCRIPT_DIR}/install.sh"
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
 assert_error() {
   local expected="$1"; shift
-  if ("$@") >"${TEST_DIR}/out" 2>"${TEST_DIR}/err"; then fail 'invalid certificate accepted'; fi
+  if ("$@") >"${TEST_DIR}/out" 2>"${TEST_DIR}/err"; then fail "invalid certificate accepted: ${expected}"; fi
   cat "${TEST_DIR}/out" "${TEST_DIR}/err" | grep -Fq "${expected}" || fail "missing error: ${expected}"
 }
 

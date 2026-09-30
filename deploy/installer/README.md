@@ -171,6 +171,8 @@ sudo ./tp.sh install --config ./node.yaml --force
 
 证书目录及符号链接目标目录均只读挂载，支持 Certbot 更新 `live/<domain>` 的文件链接和 `archive/<domain>` 的版本文件。保持路径和目录稳定；移动文件或把链接指向其他目录后，加 `--force` 重新安装以更新挂载。请使用独立证书目录：不接受直接挂载 `/`、`/etc`、`/root` 等宽泛目录，证书也不能位于项目数据、PKI、伪装站或维护目录中。
 
+证书目录须与可写的 mTLS 信任目录分开。若 Certbot 原来使用 standalone 验证，切换到 Nginx webroot 后，需检查并移除会停止 Nginx 的旧 pre/post hook，再执行 `certbot renew --cert-name <域名> --dry-run --no-random-sleep-on-renew` 验证续签。
+
 续签后，gRPC、宿主机维护服务及 Hysteria2 在新 TLS 握手时读取文件；NaiveProxy 每分钟检测，证书变化后短暂重启受影响的实例；Xray 使用文件热加载，默认周期为一小时，可在面板重启该代理立即加载。Nginx 使用同一证书时，由 Certbot deploy hook 检查并 reload Nginx。
 
 切换时迁移原有代理配置中与旧证书、私钥路径相同的引用，保留账户和其他参数；自定义的其他证书引用保留。`--force` 成功切换后移除原项目 Node Caddy 容器，旧证书数据保留到项目数据清理时。外部证书在本地两种卸载模式及 Web 远程卸载中均保留，Nginx、Certbot 及其配置也保留；与项目清理路径重叠时会拒绝操作。

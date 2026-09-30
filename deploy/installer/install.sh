@@ -619,8 +619,10 @@ prepare_node_certificate() {
       exit 1
     fi
   done
+  # Older OpenSSL releases print a hostname mismatch while still returning 0.
+  # Check the explicit match result as well as the command status.
   if ! openssl x509 -in "${NODE_CERTIFICATE_PATH}" -noout -checkend 0 >/dev/null 2>&1 || \
-    ! openssl x509 -in "${NODE_CERTIFICATE_PATH}" -noout -checkhost "${TP_NODE_DOMAIN}" >/dev/null 2>&1; then
+    ! openssl x509 -in "${NODE_CERTIFICATE_PATH}" -noout -checkhost "${TP_NODE_DOMAIN}" 2>/dev/null | grep -Fq 'does match certificate'; then
     echo_content red "External certificate must be valid and cover hostname ${TP_NODE_DOMAIN}" >&2
     exit 1
   fi

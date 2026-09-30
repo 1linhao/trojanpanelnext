@@ -171,6 +171,8 @@ Installation checks readability, validity dates, hostname coverage, and key pair
 
 Certificate directories and symlink target directories are mounted read-only, supporting Certbot's replacement file links in `live/<domain>` and new files in `archive/<domain>`. Keep paths and directories stable. Moving files or redirecting links to another directory requires installation with `--force` to update mounts. Use dedicated certificate directories: broad mounts such as `/`, `/etc`, and `/root`, and paths inside project data, PKI, camouflage content, or maintenance directories are rejected.
 
+Keep server certificate directories separate from writable mTLS trust directories. When migrating Certbot from standalone validation to an Nginx webroot, remove obsolete pre/post hooks that stop Nginx, then check renewal with `certbot renew --cert-name <domain> --dry-run --no-random-sleep-on-renew`.
+
 After renewal, gRPC, host maintenance, and Hysteria2 read files for new TLS handshakes. NaiveProxy checks every minute and briefly restarts affected instances when certificates change. Xray uses file reload with a default one-hour interval; restart that proxy in the panel for immediate activation. Certbot's deploy hook must still validate and reload Nginx if it consumes the certificate.
 
 Migration updates saved proxy references matching the previous certificate/key pair, preserving accounts and other settings. Custom references to other certificates remain intact. Successful forced migration removes the old project Node Caddy container; its old data remains until project cleanup. Both local removal modes and remote Web removal preserve external certificates, Nginx, Certbot, and their configuration. Overlapping project cleanup paths are rejected.
