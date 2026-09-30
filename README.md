@@ -17,13 +17,13 @@ TrojanPanel Next 是一个支持 Xray、Hysteria2 和 NaiveProxy 的多用户 We
 
 ## 开始使用
 
-当前版本为 `0.1.0-rc.6`。先按[安装说明](deploy/installer/README.md#系统与软件依赖)预装 Docker Engine、mikefarah/yq v4 等依赖并启动 Docker；安装器不会自动安装依赖。Node 主机还需要 systemd。
+当前版本为 `0.1.0-rc.7`。先按[安装说明](deploy/installer/README.md#系统与软件依赖)预装 Docker Engine、mikefarah/yq v4 等依赖并启动 Docker；安装器不会自动安装依赖。Node 主机还需要 systemd。
 
 在每台 Web 或 Node 服务器下载命令入口：
 
 ```bash
 curl -fsSL --connect-timeout 10 --max-time 60 \
-  https://raw.githubusercontent.com/1linhao/trojanpanelnext/v0.1.0-rc.6/deploy/installer/tp.sh \
+  https://raw.githubusercontent.com/1linhao/trojanpanelnext/v0.1.0-rc.7/deploy/installer/tp.sh \
   -o tp.sh
 chmod +x tp.sh
 ./tp.sh --version

@@ -27,16 +27,22 @@ func InitRedis() {
 			conn, err := redis.Dial("tcp", fmt.Sprintf("%s:%d", redisConfig.Host, redisConfig.Port),
 				redis.DialPassword(redisConfig.Password),
 				redis.DialDatabase(redisConfig.Db),
+				redis.DialConnectTimeout(3*time.Second),
+				redis.DialReadTimeout(3*time.Second),
+				redis.DialWriteTimeout(3*time.Second),
 			)
 			if err != nil {
 				logrus.Errorf("Redis初始化失败 err: %v", err)
-				panic(err)
+				return nil, err
 			}
 			result, err := redis.String(conn.Do("PING"))
 			if err != nil || result != "PONG" {
 				conn.Close()
+				if err == nil {
+					err = fmt.Errorf("Redis PING returned an unexpected response")
+				}
 				logrus.Errorf("Redis连接失败 err: %v", err)
-				panic(err)
+				return nil, err
 			}
 			return conn, nil
 		},

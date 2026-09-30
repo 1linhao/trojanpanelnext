@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_VERSION="0.1.0-rc.6"
+SCRIPT_VERSION="0.1.0-rc.7"
 TP_SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 if [[ ! -f "${TP_SCRIPT_DIR}/common.sh" ]]; then
   printf 'Missing common.sh. Use tp.sh to download the command and its dependencies.\n' >&2
@@ -222,6 +222,13 @@ persist_container_path() {
   if ! container_exists "${name}"; then
     return
   fi
+  local mounted_source
+  mounted_source="$(docker inspect --format "{{range .Mounts}}{{if eq .Destination \"${src}\"}}{{.Source}}{{end}}{{end}}" "${name}")"
+  if [[ -n "${mounted_source}" && "$(realpath -m -- "${mounted_source}")" == "$(realpath -m -- "${dst}")" ]]; then
+    # An empty bind directory is already persistent. Exporting it through a
+    # root-owned mktemp directory would replace its running service's metadata.
+    return
+  fi
   if find "${dst}" -mindepth 1 -print -quit 2>/dev/null | grep -q .; then
     return
   fi
@@ -230,7 +237,13 @@ persist_container_path() {
   local tmp_dir
   tmp_dir="$(mktemp -d)"
   docker cp "${name}:${src}/." "${tmp_dir}/"
-  cp -a "${tmp_dir}/." "${dst}/"
+  # Copy contents, including dotfiles, without copying mktemp's owner/mode onto
+  # the destination directory. Keep metadata on the migrated files themselves.
+  (
+    shopt -s dotglob nullglob
+    local -a entries=("${tmp_dir}"/*)
+    if ((${#entries[@]})); then cp -a -- "${entries[@]}" "${dst}/"; fi
+  )
   rm -rf "${tmp_dir}"
 }
 
@@ -507,6 +520,17 @@ deploy_mariadb() {
 deploy_redis() {
   persist_container_path "${REDIS_CONTAINER}" "/data" "${TP_DATA}/redis/data"
   if container_running "${REDIS_CONTAINER}"; then
+    # Repair directories damaged by earlier upgrades without restarting Redis
+    # or discarding its in-memory sessions. UID/GID come from the running server.
+    docker exec --user 0 "${REDIS_CONTAINER}" sh -c '
+      set -eu
+      uid=$(awk '\''/^Uid:/{print $3}'\'' /proc/1/status)
+      gid=$(awk '\''/^Gid:/{print $3}'\'' /proc/1/status)
+      if [ "$uid" != 0 ]; then
+        chown "$uid:$gid" /data
+        chmod u+rwx /data
+      fi
+    '
     echo_content skyBlue "---> Redis already running"
     return
   fi
@@ -754,7 +778,7 @@ main() {
   parse_config_options install "$@"
   validate_config
   echo_content skyBlue "Operation: install; purpose: ${TP_PURPOSE}; config: ${TP_CONFIG_FILE}; installer: ${INSTALLER_VERSION}"
-  require_commands docker curl openssl tar od sha256sum find seq awk
+  require_commands docker curl openssl tar od sha256sum find seq awk realpath
   docker info >/dev/null
   case "${TP_PURPOSE}" in
   web) deploy_web ;;

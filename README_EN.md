@@ -14,13 +14,13 @@ TrojanPanel Next is a multi-user Web administration panel supporting Xray, Hyste
 
 ## Get started
 
-The current version is `0.1.0-rc.6`. First follow the [dependency instructions](deploy/installer/README_EN.md#system-and-software-dependencies) to install Docker Engine, mikefarah/yq v4, and the other tools, then start Docker. The installer does not install dependencies. Node hosts also require systemd.
+The current version is `0.1.0-rc.7`. First follow the [dependency instructions](deploy/installer/README_EN.md#system-and-software-dependencies) to install Docker Engine, mikefarah/yq v4, and the other tools, then start Docker. The installer does not install dependencies. Node hosts also require systemd.
 
 Download the command entrypoint on each Web or Node server:
 
 ```bash
 curl -fsSL --connect-timeout 10 --max-time 60 \
-  https://raw.githubusercontent.com/1linhao/trojanpanelnext/v0.1.0-rc.6/deploy/installer/tp.sh \
+  https://raw.githubusercontent.com/1linhao/trojanpanelnext/v0.1.0-rc.7/deploy/installer/tp.sh \
   -o tp.sh
 chmod +x tp.sh
 ./tp.sh --version

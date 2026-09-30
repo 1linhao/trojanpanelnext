@@ -6,7 +6,7 @@ set -euo pipefail
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
 
 ECHO_TYPE="echo -e"
-INSTALLER_VERSION="0.1.0-rc.6"
+INSTALLER_VERSION="0.1.0-rc.7"
 SUPPORTED_SCHEMA_VERSION="1"
 GITHUB_RAW_BASE="https://raw.githubusercontent.com/1linhao/trojanpanelnext"
 DEFAULT_CONFIG_REF="v${INSTALLER_VERSION}"

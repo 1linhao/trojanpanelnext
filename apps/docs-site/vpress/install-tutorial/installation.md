@@ -35,17 +35,17 @@ sudo docker info >/dev/null
 
 ## 版本绑定与获取入口
 
-当前版本为 `0.1.0-rc.6`。每台 Web 或 Node 服务器都执行：
+当前版本为 `0.1.0-rc.7`。每台 Web 或 Node 服务器都执行：
 
 ```bash
 curl -fsSL --connect-timeout 10 --max-time 60 \
-  https://raw.githubusercontent.com/1linhao/trojanpanelnext/v0.1.0-rc.6/deploy/installer/tp.sh \
+  https://raw.githubusercontent.com/1linhao/trojanpanelnext/v0.1.0-rc.7/deploy/installer/tp.sh \
   -o tp.sh
 chmod +x tp.sh
 ./tp.sh --version
 ```
 
-入口默认从 GitHub Raw 的 `v0.1.0-rc.6` 下载所选命令及 `common.sh`，安装时额外下载 `uninstall.sh`。下载文件经过版本匹配检查和 Bash 语法检查，在临时目录执行，结束后清理。配置模板也默认使用同一标签；API、Web 和 Node Agent 镜像使用 `:0.1.0-rc.6`。Git 标签带 `v`，镜像标签不带 `v`。无需本地仓库。
+入口默认从 GitHub Raw 的 `v0.1.0-rc.7` 下载所选命令及 `common.sh`，安装时额外下载 `uninstall.sh`。下载文件经过版本匹配检查和 Bash 语法检查，在临时目录执行，结束后清理。配置模板也默认使用同一标签；API、Web 和 Node Agent 镜像使用 `:0.1.0-rc.7`。Git 标签带 `v`，镜像标签不带 `v`。无需本地仓库。
 
 `schema_version: 1` 是 YAML 配置结构版本，与产品版本分别维护。已有配置应使用 `trojanpanelnext.purpose: web` 或 `node`；旧部署类型参数不再受支持。
 
@@ -122,7 +122,7 @@ Node 安装在宿主机部署 `trojanpanelnext-host.service`，提供 mTLS HTTPS
 
 ## 重建与升级
 
-修改配置中的应用镜像后，使用 `--force` 重新创建 API、UI、Agent 或 Caddy 容器。升级到 `0.1.0-rc.6` 时，先把所有 Node YAML 的 `core_image` 更新到 `:0.1.0-rc.6`，再更新 Web YAML 的 `panel_image` 和 `ui_image`；在各主机下载此版本入口，按以下顺序执行：
+修改配置中的应用镜像后，使用 `--force` 重新创建 API、UI、Agent 或 Caddy 容器。升级到 `0.1.0-rc.7` 时，先把所有 Node YAML 的 `core_image` 更新到 `:0.1.0-rc.7`，再更新 Web YAML 的 `panel_image` 和 `ui_image`；在各主机下载此版本入口，按以下顺序执行：
 
 ```bash
 # 先在每台 Node 主机执行，安装宿主机维护服务
@@ -178,7 +178,7 @@ Web 对应 MariaDB、Redis、API、UI、Web Caddy 容器；Node 对应 Agent、N
 
 ## 脚本与模板来源
 
-`TP_SCRIPT_REF` 默认是 `v0.1.0-rc.6`，可用 GitHub 上实际存在的分支或完整提交 SHA 同时覆盖子脚本和模板来源；入口仍要求所有脚本版本匹配。测试时也应从相同 ref 获取 `tp.sh`。`TP_CONFIG_REF` 优先级更高，可单独覆盖模板来源；已有 YAML 的镜像标签不会随这些变量改变。需要 root 的命令通过 `sudo env TP_SCRIPT_REF=<ref> ./tp.sh ...` 显式传递变量。
+`TP_SCRIPT_REF` 默认是 `v0.1.0-rc.7`，可用 GitHub 上实际存在的分支或完整提交 SHA 同时覆盖子脚本和模板来源；入口仍要求所有脚本版本匹配。测试时也应从相同 ref 获取 `tp.sh`。`TP_CONFIG_REF` 优先级更高，可单独覆盖模板来源；已有 YAML 的镜像标签不会随这些变量改变。需要 root 的命令通过 `sudo env TP_SCRIPT_REF=<ref> ./tp.sh ...` 显式传递变量。
 
 完整参数与开发发布校验见[安装器说明](https://github.com/1linhao/trojanpanelnext/blob/main/deploy/installer/README.md)。
 
@@ -188,5 +188,5 @@ Web 对应 MariaDB、Redis、API、UI、Web Caddy 容器；Node 对应 Agent、N
 - Node Agent 每分钟检查 NaiveProxy 的证书。新证书与私钥有效时，保存运行配置和用户信息、校验配置，再重启对应实例；现有连接会短暂中断，客户端需重新连接。失败会记录日志并在下次检查时重试。
 - Web API 启动时及每 5 分钟检查内部 mTLS 身份，客户端证书剩余不足 90 天时重新签发；新证书有效期最多 825 天，且不超过 CA 到期时间。CA 私钥仅保留在 Web。
 - CA 剩余不足 365 天时开始轮换：通过现有 mTLS 通道分发新旧 CA，所有已登记的 mTLS Node 确认后切换客户端身份。保留旧身份至少 24 小时，待所有节点确认移除旧 CA 后清理旧私钥。离线或不支持轮换的旧版 Node 会阻止推进，每 5 分钟重试。
-- 首次引导仍需手动复制 Web 当前的 `client-ca.crt`。新节点请先登记到面板并使用当前公开 CA 文件；未登记节点不在轮换范围。升级先更新所有 Node，再更新 Web；修改现有 YAML 镜像标签为 `0.1.0-rc.6`，执行 `./tp.sh install --config ... --force` 以更新挂载并部署 Node 宿主机维护服务。Node 重装会保留已有运行时 CA 文件，避免旧引导副本覆盖新信任；Agent 同时更新引导 CA 副本，供清理运行数据后的重新安装使用。
+- 首次引导仍需手动复制 Web 当前的 `client-ca.crt`。新节点请先登记到面板并使用当前公开 CA 文件；未登记节点不在轮换范围。升级先更新所有 Node，再更新 Web；修改现有 YAML 镜像标签为 `0.1.0-rc.7`，执行 `./tp.sh install --config ... --force` 以更新挂载并部署 Node 宿主机维护服务。Node 重装会保留已有运行时 CA 文件，避免旧引导副本覆盖新信任；Agent 同时更新引导 CA 副本，供清理运行数据后的重新安装使用。
 - Web API 挂载 `pki_bundle_dir` 并拥有签发权限，Node 仅能写入公开 CA 信任文件。完整备份 Web 的 PKI 目录（包含 `state.json` 和 `generations`），不要只备份根目录的符号链接。证书轮换失败可查看 API / Agent 日志。节点离线超过旧 CA 的有效期或恢复过期的备份时，需要人工重新引导信任。
