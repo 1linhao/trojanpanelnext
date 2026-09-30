@@ -10,6 +10,8 @@ import (
 func InitCron() {
 	location, _ := time.LoadLocation("Asia/Shanghai")
 	c := cron.New(cron.WithLocation(location))
+	_, _ = c.AddFunc("@every 5m", service.MaintainCertificates)
+	go service.MaintainCertificates()
 	// 定时任务：扫描无效用户 1. 被禁用 2.到期的用户
 	_, _ = c.AddFunc("@every 1m", service.CronScanAccounts)
 	// 每天12:00发送到期提醒邮件

@@ -1,6 +1,7 @@
 /.artifacts/
 /.local/
 /node_modules/
+/apps/docs-site/docs/
 *.local
 *.local.json
 *.local.yaml

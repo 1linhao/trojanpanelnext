@@ -14,6 +14,8 @@ import (
 )
 
 func InitNaiveProxyApp() error {
+	certificateRestart.Lock()
+	defer certificateRestart.Unlock()
 	apiPorts, err := util.GetConfigApiPorts(constant.NaiveProxyPath)
 	if err != nil {
 		return err
@@ -28,6 +30,8 @@ func InitNaiveProxyApp() error {
 }
 
 func StartNaiveProxy(naiveProxyConfigDto dto.NaiveProxyConfigDto) error {
+	certificateRestart.Lock()
+	defer certificateRestart.Unlock()
 	var err error
 	if err = initNaiveProxy(naiveProxyConfigDto); err != nil {
 		return err
@@ -39,6 +43,8 @@ func StartNaiveProxy(naiveProxyConfigDto dto.NaiveProxyConfigDto) error {
 }
 
 func StopNaiveProxy(apiPort uint, removeFile bool) error {
+	certificateRestart.Lock()
+	defer certificateRestart.Unlock()
 	if err := process.NewNaiveProxyInstance().Stop(apiPort, removeFile); err != nil {
 		logrus.Errorf("naiveproxy stop err: %v", err)
 		return err
@@ -47,10 +53,9 @@ func StopNaiveProxy(apiPort uint, removeFile bool) error {
 }
 
 func RestartNaiveProxy(apiPort uint) error {
-	if err := StopNaiveProxy(apiPort, false); err != nil {
-		return err
-	}
-	if err := StartNaiveProxy(dto.NaiveProxyConfigDto{ApiPort: apiPort}); err != nil {
+	certificateRestart.Lock()
+	defer certificateRestart.Unlock()
+	if err := restartSavedInstance(apiPort); err != nil {
 		return err
 	}
 	return nil

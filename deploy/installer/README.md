@@ -54,17 +54,17 @@ sudo docker info >/dev/null
 
 ## 版本绑定与获取安装器
 
-当前安装器版本为 `0.1.0-rc.4`。每台 Web 或 Node 服务器都执行：
+当前安装器版本为 `0.1.0-rc.5`。每台 Web 或 Node 服务器都执行：
 
 ```bash
 curl -fsSL --connect-timeout 10 --max-time 60 \
-  https://raw.githubusercontent.com/1linhao/trojanpanelnext/v0.1.0-rc.4/deploy/installer/install.sh \
+  https://raw.githubusercontent.com/1linhao/trojanpanelnext/v0.1.0-rc.5/deploy/installer/install.sh \
   -o install.sh
 chmod +x install.sh
 ./install.sh --version
 ```
 
-安装器版本 `0.1.0-rc.4` 默认从 GitHub Raw 的 `v0.1.0-rc.4` 获取模板；模板中的 API、Web 和 Node Agent 镜像使用 `:0.1.0-rc.4`。Git 标签带 `v`，镜像标签不带 `v`。模板只通过远程下载获取，无需本地仓库。
+安装器版本 `0.1.0-rc.5` 默认从 GitHub Raw 的 `v0.1.0-rc.5` 获取模板；模板中的 API、Web 和 Node Agent 镜像使用 `:0.1.0-rc.5`。Git 标签带 `v`，镜像标签不带 `v`。模板只通过远程下载获取，无需本地仓库。
 
 `schema_version: 1` 表示 YAML 配置结构版本，与产品版本分别维护。此次 CLI 直接移除了旧部署类型参数，已有配置只要采用 `purpose` 字段即可使用新命令；使用旧参数会失败。
 
@@ -151,3 +151,12 @@ Web 会删除 MariaDB、Redis、API、UI 和 Web Caddy 的数据；Node 会删�
 ## 支持
 
 本项目来源：[TrojanPanel 原项目](https://github.com/trojanpanel)。
+
+## 证书自动维护
+
+- Web 与 Node 的公网域名证书由 Caddy 自动续签。保留 Caddy 数据目录，并保持域名解析及 ACME 验证端口可达。
+- Node Agent 每分钟检查 NaiveProxy 的证书。新证书与私钥有效时，保存运行配置和用户信息、校验配置，再重启对应实例；现有连接会短暂中断，客户端需重新连接。失败会记录日志并在下次检查时重试。
+- Web API 启动时及每 5 分钟检查内部 mTLS 身份，客户端证书剩余不足 90 天时重新签发；新证书有效期最多 825 天，且不超过 CA 到期时间。CA 私钥仅保留在 Web。
+- CA 剩余不足 365 天时开始轮换：通过现有 mTLS 通道分发新旧 CA，所有已登记的 mTLS Node 确认后切换客户端身份。保留旧身份至少 24 小时，待所有节点确认移除旧 CA 后清理旧私钥。离线或不支持轮换的旧版 Node 会阻止推进，每 5 分钟重试。
+- 首次引导仍需手动复制 Web 当前的 `client-ca.crt`。新节点请先登记到面板并使用当前公开 CA 文件；未登记节点不在轮换范围。升级先更新所有 Node，再更新 Web；修改现有 YAML 镜像标签为 `0.1.0-rc.5`，执行 `install --config ... --force` 以更新挂载。Node 重装会保留已有运行时 CA 文件，避免旧引导副本覆盖新信任；Agent 同时更新引导 CA 副本，供清理运行数据后的重新安装使用。
+- Web API 挂载 `pki_bundle_dir` 并拥有签发权限，Node 仅能写入公开 CA 信任文件。完整备份 Web 的 PKI 目录（包含 `state.json` 和 `generations`），不要只备份根目录的符号链接。证书轮换失败可查看 API / Agent 日志。节点离线超过旧 CA 的有效期或恢复过期的备份时，需要人工重新引导信任。

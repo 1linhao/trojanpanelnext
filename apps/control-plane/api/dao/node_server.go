@@ -255,6 +255,19 @@ func SelectNodeServersForControl() ([]model.NodeServer, error) {
 	return nodeServers, nil
 }
 
+func SelectNodeServersForCertificates() ([]model.NodeServer, error) {
+	var nodes []model.NodeServer
+	rows, err := db.Query("SELECT id, ip, grpc_port, grpc_tls_mode, grpc_tls_server_name FROM node_server ORDER BY id")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if err = scanner.Scan(rows, &nodes); err != nil {
+		return nil, err
+	}
+	return nodes, rows.Err()
+}
+
 func SelectNodeServerAll() ([]vo.NodeServerExportVo, error) {
 	var nodeServerExportVo []vo.NodeServerExportVo
 	selectFields := []string{"ip", "name", "grpc_port", "grpc_tls_mode", "grpc_tls_server_name", "traffic_period", "traffic_limit_mode", "traffic_total_limit", "traffic_upload_limit", "traffic_download_limit", "create_time"}

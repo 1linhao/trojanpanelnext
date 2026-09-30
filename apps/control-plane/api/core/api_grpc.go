@@ -23,6 +23,10 @@ type NodeTransport struct {
 	ServerName string
 }
 
+// Installed once at startup by the managed PKI authority. Each handshake reads
+// one complete generation and can select the previous CA during rotation.
+var ManagedClientCertificate func(*tls.CertificateRequestInfo) (*tls.Certificate, error)
+
 func newGrpcInstance(token string, ip string, grpcPort uint, timeout time.Duration, transports ...NodeTransport) (conn *grpc.ClientConn, ctx context.Context, clo func(), err error) {
 	tokenParam := TokenValidateParam{
 		Token: token,
@@ -66,9 +70,13 @@ func clientTransportCredentials(serverName string) (credentials.TransportCredent
 	if serverName == "" {
 		return nil, errors.New("mTLS server name is required")
 	}
-	certificate, err := tls.LoadX509KeyPair(config.ClientCertPath, config.ClientKeyPath)
-	if err != nil {
-		return nil, fmt.Errorf("load gRPC client certificate: %w", err)
+	var certificates []tls.Certificate
+	if ManagedClientCertificate == nil {
+		certificate, err := tls.LoadX509KeyPair(config.ClientCertPath, config.ClientKeyPath)
+		if err != nil {
+			return nil, fmt.Errorf("load gRPC client certificate: %w", err)
+		}
+		certificates = []tls.Certificate{certificate}
 	}
 	var roots *x509.CertPool
 	if config.ServerCAPath != "" {
@@ -83,7 +91,7 @@ func clientTransportCredentials(serverName string) (credentials.TransportCredent
 	}
 	return credentials.NewTLS(&tls.Config{
 		MinVersion: tls.VersionTLS12, ServerName: serverName,
-		Certificates: []tls.Certificate{certificate}, RootCAs: roots,
+		Certificates: certificates, GetClientCertificate: ManagedClientCertificate, RootCAs: roots,
 	}), nil
 }
 

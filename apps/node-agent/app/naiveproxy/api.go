@@ -61,6 +61,8 @@ func (n *naiveProxyApi) ListUsers() (*[]bo.HandleAuth, error) {
 
 // ListUserTraffic queries per-user traffic from the custom NaiveProxy build.
 func (n *naiveProxyApi) ListUserTraffic(reset bool) (map[string]bo.NaiveProxyUserTraffic, error) {
+	certificateRestart.RLock()
+	defer certificateRestart.RUnlock()
 	url := fmt.Sprintf("http://127.0.0.1:%d/trojan-panel/naiveproxy/traffic", n.apiPort)
 	if reset {
 		url += "?reset=true"
@@ -111,6 +113,8 @@ func (n *naiveProxyApi) GetUser(pass string) (*bo.HandleAuth, *int, error) {
 
 // AddUser add user on node
 func (n *naiveProxyApi) AddUser(dto dto.NaiveProxyAddUserDto) error {
+	certificateRestart.RLock()
+	defer certificateRestart.RUnlock()
 	user, _, err := n.GetUser(dto.Pass)
 	if err != nil {
 		return err
@@ -169,6 +173,8 @@ func encodeAuthCredential(username string, pass string) []byte {
 
 // DeleteUser delete user on node
 func (n *naiveProxyApi) DeleteUser(pass string) error {
+	certificateRestart.RLock()
+	defer certificateRestart.RUnlock()
 	_, index, err := n.GetUser(pass)
 	if err != nil {
 		return err

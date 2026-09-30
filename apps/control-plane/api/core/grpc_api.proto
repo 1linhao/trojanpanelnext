@@ -28,6 +28,10 @@ service ApiKernelService {
   rpc GetKernelOperation(KernelOperationStateRequest) returns (Response) {}
 }
 
+service ApiCertificateService {
+  rpc UpdateClientTrust(ClientTrustRequest) returns (Response) {}
+}
+
 message NodeAddDto {
   uint64 nodeTypeId = 1;
   uint64 port = 2;
@@ -165,4 +169,8 @@ message Response {
   bool success = 1;
   string msg = 2;
   google.protobuf.Any data = 3;
+}
+
+message ClientTrustRequest {
+  bytes caBundle = 1;
 }

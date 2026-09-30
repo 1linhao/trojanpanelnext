@@ -2,7 +2,7 @@ import { readdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
 
 const root = path.resolve(import.meta.dirname, '..')
-const ignoredDirectories = new Set(['.git', '.local', 'dist', 'node_modules'])
+const ignoredDirectories = new Set(['.git', '.local', '.cache', 'dist', 'node_modules'])
 const failures = []
 
 async function collectReadmes(directory) {

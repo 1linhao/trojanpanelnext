@@ -9,6 +9,7 @@ import (
 	"trojan-panel/dao/redis"
 	"trojan-panel/middleware"
 	"trojan-panel/router"
+	"trojan-panel/service"
 )
 
 func main() {
@@ -24,6 +25,9 @@ func init() {
 	middleware.InitLog()
 	dao.InitMySQL()
 	redis.InitRedis()
+	if err := service.InitCertificateAuthority(); err != nil {
+		panic(fmt.Sprintf("mTLS authority init failed: %v", err))
+	}
 	middleware.InitCron()
 	middleware.InitRateLimiter()
 	api.InitValidator()

@@ -64,6 +64,17 @@ func TestGRPCMTLSAcceptsOnlyTrustedClientAndServerName(t *testing.T) {
 		MinVersion: tls.VersionTLS12, ServerName: "node.test",
 		RootCAs: roots, Certificates: []tls.Certificate{untrustedPair},
 	}, false)
+	// Updating the bundle changes the next handshake without restarting gRPC.
+	if err := writeTrustBundle(caPath, append(append([]byte{}, caPEM...), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: otherCA.Raw})...)); err != nil {
+		t.Fatal(err)
+	}
+	otherClient := &tls.Config{MinVersion: tls.VersionTLS12, ServerName: "node.test", RootCAs: roots, Certificates: []tls.Certificate{untrustedPair}}
+	assertTLSHandshake(t, serverConfig, otherClient, true)
+	if err := writeTrustBundle(caPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: otherCA.Raw})); err != nil {
+		t.Fatal(err)
+	}
+	assertTLSHandshake(t, serverConfig, otherClient, true)
+	assertTLSHandshake(t, serverConfig, &tls.Config{MinVersion: tls.VersionTLS12, ServerName: "node.test", RootCAs: roots, Certificates: []tls.Certificate{trustedPair}}, false)
 }
 
 func assertTLSHandshake(t *testing.T, serverConfig, clientConfig *tls.Config, success bool) {

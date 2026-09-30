@@ -2,13 +2,13 @@ package api
 
 import (
 	"crypto/tls"
-	"crypto/x509"
 	"fmt"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"net"
 	"os"
 	"strings"
+	"time"
 	"trojan-panel-core/core"
 )
 
@@ -36,6 +36,7 @@ func InitGrpcServer() {
 		RegisterApiStateServiceServer(rpcServer, new(StateApiServer))
 		RegisterApiNodeServerServiceServer(rpcServer, new(NodeServerApiServer))
 		RegisterApiKernelServiceServer(rpcServer, new(KernelApiServer))
+		RegisterApiCertificateServiceServer(rpcServer, new(CertificateApiServer))
 		listener, err := net.Listen("tcp", fmt.Sprintf(":%s", grpcConfig.Port))
 		if err != nil {
 			panic(fmt.Sprintf("gRPC service listening port err: %v", err))
@@ -51,11 +52,11 @@ func grpcTLSConfig() (*tls.Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read client CA: %w", err)
 	}
-	pool := x509.NewCertPool()
-	if !pool.AppendCertsFromPEM(clientCA) {
-		return nil, fmt.Errorf("client CA contains no certificates")
+	pool, err := clientTrustPool(clientCA, time.Now())
+	if err != nil {
+		return nil, err
 	}
-	return &tls.Config{
+	config := &tls.Config{
 		MinVersion: tls.VersionTLS12,
 		ClientAuth: tls.RequireAndVerifyClientCert,
 		ClientCAs:  pool,
@@ -66,5 +67,20 @@ func grpcTLSConfig() (*tls.Config, error) {
 			}
 			return &certificate, nil
 		},
-	}, nil
+	}
+	config.GetConfigForClient = func(*tls.ClientHelloInfo) (*tls.Config, error) {
+		data, err := os.ReadFile(clientCAPath)
+		if err != nil {
+			return nil, err
+		}
+		roots, err := clientTrustPool(data, time.Now())
+		if err != nil {
+			return nil, err
+		}
+		next := config.Clone()
+		next.GetConfigForClient = nil
+		next.ClientCAs = roots
+		return next, nil
+	}
+	return config, nil
 }

@@ -54,17 +54,17 @@ Omit `sudo` when logged in as root. Use the appropriate package manager on other
 
 ## Release binding and installer download
 
-The installer version is `0.1.0-rc.4`. Run on each Web or Node server:
+The installer version is `0.1.0-rc.5`. Run on each Web or Node server:
 
 ```bash
 curl -fsSL --connect-timeout 10 --max-time 60 \
-  https://raw.githubusercontent.com/1linhao/trojanpanelnext/v0.1.0-rc.4/deploy/installer/install.sh \
+  https://raw.githubusercontent.com/1linhao/trojanpanelnext/v0.1.0-rc.5/deploy/installer/install.sh \
   -o install.sh
 chmod +x install.sh
 ./install.sh --version
 ```
 
-Installer `0.1.0-rc.4` downloads templates only from GitHub Raw at `v0.1.0-rc.4`. Product images use `:0.1.0-rc.4`, without the Git tag's `v` prefix. No local checkout is needed. `schema_version: 1` describes the YAML structure and is independent of the product version. The previous deployment-type CLI option has been removed; existing YAML using `purpose` can use the new commands.
+Installer `0.1.0-rc.5` downloads templates only from GitHub Raw at `v0.1.0-rc.5`. Product images use `:0.1.0-rc.5`, without the Git tag's `v` prefix. No local checkout is needed. `schema_version: 1` describes the YAML structure and is independent of the product version. The previous deployment-type CLI option has been removed; existing YAML using `purpose` can use the new commands.
 
 ## Network preparation
 
@@ -149,3 +149,12 @@ Run `node scripts/check-installer-release.mjs` before release. Publishing verifi
 ## Support
 
 [Original TrojanPanel project](https://github.com/trojanpanel).
+
+## Automatic certificate maintenance
+
+- Caddy renews public Web and Node certificates. Preserve its data directories and keep DNS and ACME validation reachable.
+- Every minute, the Agent checks NaiveProxy certificates. It validates the certificate/key pair, saves the live configuration including users, validates that configuration, and restarts only affected instances. Existing connections disconnect briefly and clients must reconnect. Failures are logged and retried on the next pass.
+- At startup and every 5 minutes, the Web API renews its internal mTLS client certificate when fewer than 90 days remain. Certificates last at most 825 days and never outlive their CA. CA private keys stay on Web.
+- With fewer than 365 days remaining, CA rotation distributes both CAs over existing authenticated mTLS connections. The client identity switches only after every registered mTLS Node acknowledges. The previous identity is retained for at least 24 hours, then retired after all nodes acknowledge removal of the old CA. Offline or older unsupported nodes block progress; retries run every 5 minutes.
+- Initial bootstrap still requires copying Web's current public `client-ca.crt`. Register new nodes before rotation and use the current bundle; unregistered nodes are outside the rotation inventory. Upgrade all Nodes before Web, update existing YAML image tags to `0.1.0-rc.5`, and run `install --config ... --force` to update mounts. Node reinstalls preserve the live CA file rather than replacing it with an old bootstrap copy. The Agent also updates the public bootstrap bundle for reinstalls after runtime data removal.
+- The API mounts `pki_bundle_dir` with signing access; Nodes can write only their public trust file. Back up the entire Web PKI directory, including `state.json` and `generations`, rather than only the top-level symlinks. Inspect API / Agent logs for rotation failures. Nodes offline past the previous CA's expiry, or restored from expired backups, require manual trust bootstrap.

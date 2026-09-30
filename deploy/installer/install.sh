@@ -4,7 +4,7 @@ set -euo pipefail
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
 
 ECHO_TYPE="echo -e"
-INSTALLER_VERSION="0.1.0-rc.4"
+INSTALLER_VERSION="0.1.0-rc.5"
 SUPPORTED_SCHEMA_VERSION="1"
 GITHUB_RAW_BASE="https://raw.githubusercontent.com/1linhao/trojanpanelnext"
 DEFAULT_CONFIG_REF="v${INSTALLER_VERSION}"
@@ -409,6 +409,10 @@ validate_config() {
   require_one_of purge_data "${TP_PURGE_DATA}" 0 1
   require_port MARIADB_PORT
   require_port REDIS_PORT
+  if [[ "${TP_PKI_BUNDLE_DIR}" != /* ]]; then
+    echo_content red "pki_bundle_dir must be an absolute path" >&2
+    exit 1
+  fi
 
   case "${purpose}" in
   web)
@@ -431,6 +435,10 @@ validate_config() {
     require_port NODE_CADDY_HTTPS_PORT
     require_one_of grpc_tls_mode "${GRPC_TLS_MODE}" mtls
     require_value TP_PKI_BUNDLE_DIR
+    if [[ "${GRPC_CLIENT_CA_PATH}" != /* ]]; then
+      echo_content red "grpc_client_ca_path must be an absolute path" >&2
+      exit 1
+    fi
     ;;
   *)
     echo_content red "Unsupported purpose: ${purpose}"
@@ -547,6 +555,8 @@ generate_web_client_pki() {
   local temporary_pki
   temporary_pki="$(mktemp -d)"
   openssl req -x509 -newkey rsa:3072 -sha256 -days 3650 -nodes \
+    -addext 'basicConstraints=critical,CA:TRUE' \
+    -addext 'keyUsage=critical,keyCertSign,cRLSign' \
     -subj "/CN=TrojanPanel Next Control CA" \
     -keyout "${temporary_pki}/client-ca.key" \
     -out "${temporary_pki}/client-ca.crt" >/dev/null 2>&1
@@ -586,11 +596,21 @@ install_pki_material() {
     install -m 0600 "${TP_PKI_BUNDLE_DIR}/client.key" "${GRPC_CLIENT_KEY_PATH}"
     ;;
   node)
+    # Preserve the live trust bundle maintained by the Agent during rotation.
+    if [[ -f "${GRPC_CLIENT_CA_PATH}" ]]; then
+      mkdir -p "${TP_PKI_BUNDLE_DIR}"
+      chmod 700 "${TP_PKI_BUNDLE_DIR}"
+      if [[ "${GRPC_CLIENT_CA_PATH}" != "${TP_PKI_BUNDLE_DIR}/client-ca.crt" ]]; then
+        install -m 0644 "${GRPC_CLIENT_CA_PATH}" "${TP_PKI_BUNDLE_DIR}/client-ca.crt"
+      fi
+      return
+    fi
     if [[ ! -f "${TP_PKI_BUNDLE_DIR}/client-ca.crt" ]]; then
       echo_content red "Missing control-plane CA: ${TP_PKI_BUNDLE_DIR}/client-ca.crt"
       exit 1
     fi
     mkdir -p "$(dirname "${GRPC_CLIENT_CA_PATH}")"
+    chmod 700 "${TP_PKI_BUNDLE_DIR}"
     install -m 0644 "${TP_PKI_BUNDLE_DIR}/client-ca.crt" "${GRPC_CLIENT_CA_PATH}"
     ;;
   esac
@@ -924,6 +944,7 @@ deploy_panel_backend() {
     -v "${TP_DATA}/trojan-panel/logs/:${TP_DATA}/trojan-panel/logs/" \
     -v "${TP_DATA}/trojan-panel/config/:${TP_DATA}/trojan-panel/config/" \
     -v "${TP_DATA}/trojan-panel/pki/:${TP_DATA}/trojan-panel/pki/:ro" \
+    -v "${TP_PKI_BUNDLE_DIR}:${TP_PKI_BUNDLE_DIR}" \
     -v /etc/localtime:/etc/localtime \
     -e GIN_MODE=release \
     -e "mariadb_ip=127.0.0.1" \
@@ -937,6 +958,7 @@ deploy_panel_backend() {
     -e "GRPC_CLIENT_CERT_PATH=${GRPC_CLIENT_CERT_PATH}" \
     -e "GRPC_CLIENT_KEY_PATH=${GRPC_CLIENT_KEY_PATH}" \
     -e "GRPC_SERVER_CA_PATH=${GRPC_SERVER_CA_PATH}" \
+    -e "TP_PKI_AUTHORITY_DIR=${TP_PKI_BUNDLE_DIR}" \
     "${PANEL_IMAGE}"
   wait_for_container "${PANEL_CONTAINER}"
 }
@@ -966,6 +988,12 @@ deploy_core() {
   local cert_data="${TP_DATA}/custom/node-caddy/data"
   local crt_path="${cert_data}/caddy/certificates/acme-v02.api.letsencrypt.org-directory/${domain}/${domain}.crt"
   local key_path="${cert_data}/caddy/certificates/acme-v02.api.letsencrypt.org-directory/${domain}/${domain}.key"
+  local ca_directory
+  ca_directory="$(dirname "${GRPC_CLIENT_CA_PATH}")"
+  local -a pki_mounts=(-v "${TP_PKI_BUNDLE_DIR}:${TP_PKI_BUNDLE_DIR}")
+  if [[ "${ca_directory}" != "${TP_PKI_BUNDLE_DIR}" ]]; then
+    pki_mounts+=(-v "${ca_directory}:${ca_directory}")
+  fi
 
   write_core_runtime_config "${crt_path}" "${key_path}"
   remove_container_if_force "${CORE_CONTAINER}"
@@ -986,7 +1014,7 @@ deploy_core() {
     -v "${TP_DATA}/trojan-panel-core/bin/hysteria2/config/:${TP_DATA}/trojan-panel-core/bin/hysteria2/config/" \
     -v "${TP_DATA}/trojan-panel-core/logs/:${TP_DATA}/trojan-panel-core/logs/" \
     -v "${TP_DATA}/trojan-panel-core/config/:${TP_DATA}/trojan-panel-core/config/" \
-    -v "${TP_DATA}/trojan-panel-core/pki/:${TP_DATA}/trojan-panel-core/pki/:ro" \
+    "${pki_mounts[@]}" \
     -v "${KERNEL_RUNTIME_PATH}:${TP_DATA}/trojan-panel-core/runtime/" \
     -v "${cert_data}:${cert_data}" \
     -v "${WEB_PATH}:${WEB_PATH}" \
@@ -1007,6 +1035,7 @@ deploy_core() {
 	-e "NODE_SERVER_ID=${NODE_SERVER_ID}" \
     -e "grpc_tls_mode=${GRPC_TLS_MODE}" \
     -e "grpc_client_ca_path=${GRPC_CLIENT_CA_PATH}" \
+    -e "TP_PKI_BOOTSTRAP_CA_PATH=${TP_PKI_BUNDLE_DIR}/client-ca.crt" \
     -e "TP_KERNEL_RUNTIME=${TP_DATA}/trojan-panel-core/runtime" \
     -e "server_port=${CORE_PORT}" \
     "${CORE_IMAGE}"

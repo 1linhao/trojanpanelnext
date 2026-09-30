@@ -59,7 +59,7 @@ assert_fails "${INSTALLER}" validate --config "${TEST_DIR}/legacy.yaml"
 
 # Dependency failures must not download tools or require root for validate.
 # Exported to the installer subprocess.
-# shellcheck disable=SC2317
+# shellcheck disable=SC2317,SC2329
 command() {
   if [[ "${1:-}" == -v && "${2:-}" == "${MOCK_MISSING_COMMAND:-}" ]]; then return 1; fi
   builtin command "$@"
@@ -72,7 +72,7 @@ grep -q 'Unsupported yq' "${TEST_DIR}/stderr"
 
 # Only network transport is mocked. Purpose and schema use real mikefarah/yq.
 # Exported to the installer subprocess.
-# shellcheck disable=SC2317
+# shellcheck disable=SC2317,SC2329
 curl() {
   local destination="" url=""
   while (($#)); do
@@ -123,7 +123,7 @@ assert_fails env MOCK_DOWNLOAD=race MOCK_OUTPUT="${TEST_DIR}/race.yaml" "${INSTA
 grep -qx 'existing-secrets' "${TEST_DIR}/race.yaml"
 [[ -z "$(find "${TEST_DIR}" -name '*.tmp.*' -print -quit)" ]] || fail 'temporary file remains after collision'
 # Exported to the installer subprocess.
-# shellcheck disable=SC2317
+# shellcheck disable=SC2317,SC2329
 chmod() { if [[ "${MOCK_CHMOD_FAIL:-0}" == 1 ]]; then return 1; fi; builtin command chmod "$@"; }
 export -f chmod
 assert_fails env MOCK_CHMOD_FAIL=1 "${INSTALLER}" config web --output "${TEST_DIR}/chmod.yaml"
@@ -172,6 +172,10 @@ test "$(stat -c '%a' "${pki_dir}/client.key")" = 600
 assert_fails bash -c 'source "$1"; TP_PKI_BUNDLE_DIR="$2"; GRPC_CLIENT_CA_PATH="$3/client-ca.crt"; install_pki_material node' \
   test "${INSTALLER}" "${node_pki_dir}" "${TEST_DIR}/node-runtime"
 cp "${pki_dir}/client-ca.crt" "${node_pki_dir}/client-ca.crt"
+bash -c 'source "$1"; TP_PKI_BUNDLE_DIR="$2"; GRPC_CLIENT_CA_PATH="$3/client-ca.crt"; install_pki_material node' \
+  test "${INSTALLER}" "${node_pki_dir}" "${TEST_DIR}/node-runtime"
+cmp "${pki_dir}/client-ca.crt" "${TEST_DIR}/node-runtime/client-ca.crt"
+printf 'stale-bootstrap-copy\n' >"${node_pki_dir}/client-ca.crt"
 bash -c 'source "$1"; TP_PKI_BUNDLE_DIR="$2"; GRPC_CLIENT_CA_PATH="$3/client-ca.crt"; install_pki_material node' \
   test "${INSTALLER}" "${node_pki_dir}" "${TEST_DIR}/node-runtime"
 cmp "${pki_dir}/client-ca.crt" "${TEST_DIR}/node-runtime/client-ca.crt"
