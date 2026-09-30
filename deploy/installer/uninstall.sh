@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_VERSION="0.1.0-rc.8"
+SCRIPT_VERSION="0.1.0-rc.9"
 TP_SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 if [[ ! -f "${TP_SCRIPT_DIR}/common.sh" ]]; then
   printf 'Missing common.sh. Use tp.sh to download the command and its dependencies.\n' >&2
@@ -50,8 +50,12 @@ prepare_removal() {
     TP_OTHER_CONTAINERS=("${CORE_CONTAINER}" "${NODE_CADDY_CONTAINER}")
     TP_REMOVE_PATHS=("${TP_DATA}/custom/web-caddy" "${TP_DATA}/trojan-panel" "${TP_DATA}/trojan-panel-ui" "${TP_DATA}/mariadb" "${TP_DATA}/redis")
   else
-    TP_REMOVE_CONTAINERS=("${CORE_CONTAINER}" "${NODE_CADDY_CONTAINER}")
-    TP_REMOVE_IMAGES=("${CORE_IMAGE}" "${CADDY_IMAGE}")
+    TP_REMOVE_CONTAINERS=("${CORE_CONTAINER}")
+    TP_REMOVE_IMAGES=("${CORE_IMAGE}")
+    if [[ "${NODE_CERTIFICATE_MODE}" == caddy ]]; then
+      TP_REMOVE_CONTAINERS+=("${NODE_CADDY_CONTAINER}")
+      TP_REMOVE_IMAGES+=("${CADDY_IMAGE}")
+    fi
     TP_REMOVE_IMAGES+=("ghcr.io/1linhao/trojanpanelnext-node-agent:${INSTALLER_VERSION}")
     TP_OTHER_CONTAINERS=("${WEB_CADDY_CONTAINER}" "${UI_CONTAINER}" "${PANEL_CONTAINER}" "${REDIS_CONTAINER}" "${MARIADB_CONTAINER}")
     TP_REMOVE_PATHS=("${TP_DATA}/custom/node-caddy" "${TP_DATA}/trojan-panel-core")
@@ -78,6 +82,9 @@ prepare_removal() {
   for path in "${GRPC_CLIENT_CERT_PATH}" "${GRPC_CLIENT_KEY_PATH}" "${GRPC_CLIENT_CA_PATH}"; do
     validate_purge_path "${path}"
   done
+  protect_external_certificates "${TP_REMOVE_PATHS[@]}" \
+    "${GRPC_CLIENT_CERT_PATH}" "${GRPC_CLIENT_KEY_PATH}" "${GRPC_CLIENT_CA_PATH}" \
+    "${TP_CONFIG_FILE}" "${TP_ORIGINAL_CONFIG_FILE:-${TP_CONFIG_FILE}}"
 }
 
 remove_project_images() {

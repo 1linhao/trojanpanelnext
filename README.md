@@ -17,13 +17,13 @@ TrojanPanel Next 是一个支持 Xray、Hysteria2 和 NaiveProxy 的多用户 We
 
 ## 开始使用
 
-当前版本为 `0.1.0-rc.8`。先按[安装说明](deploy/installer/README.md#系统与软件依赖)预装 Docker Engine、mikefarah/yq v4 等依赖并启动 Docker；安装器不会自动安装依赖。Node 主机还需要 systemd。
+当前版本为 `0.1.0-rc.9`。先按[安装说明](deploy/installer/README.md#系统与软件依赖)预装 Docker Engine、mikefarah/yq v4 等依赖并启动 Docker；安装器不会自动安装依赖。Node 主机还需要 systemd。
 
 在每台 Web 或 Node 服务器下载命令入口：
 
 ```bash
 curl -fsSL --connect-timeout 10 --max-time 60 \
-  https://raw.githubusercontent.com/1linhao/trojanpanelnext/v0.1.0-rc.8/deploy/installer/tp.sh \
+  https://raw.githubusercontent.com/1linhao/trojanpanelnext/v0.1.0-rc.9/deploy/installer/tp.sh \
   -o tp.sh
 chmod +x tp.sh
 ./tp.sh --version
@@ -50,6 +50,22 @@ sudo ./tp.sh install --config ./node.yaml
 ```
 
 填写 Node 域名、Web 数据库和 Redis 地址/凭据、实际 `node_server_id`。只向 Node 复制公开 CA，私钥与 Web 客户端身份留在 Web。Web 到 Node 的 gRPC 端口（默认 `8100`）及宿主机维护 HTTPS 端口（固定为 `grpc_port + 1`，默认 `8101`）只允许 Web 来源。Node 还需能访问 Web 的 HTTPS（TCP 443），以完成卸载结果确认。详细网络准备见[完整安装说明](deploy/installer/README.md)。`validate` 仅检查 YAML 与字段。
+
+### Node 使用已有证书
+
+宿主机已使用 Nginx＋Certbot 管理证书时，在编辑好的 `node.yaml` 中设置外部证书模式：
+
+```bash
+yq -i '.trojanpanelnext.node_certificate_mode = "external" |
+  .trojanpanelnext.node_certificate_path = "/etc/letsencrypt/live/node.example.com/fullchain.pem" |
+  .trojanpanelnext.node_private_key_path = "/etc/letsencrypt/live/node.example.com/privkey.pem"' node.yaml
+./tp.sh validate --config ./node.yaml
+sudo ./tp.sh install --config ./node.yaml
+```
+
+替换为真实路径，证书必须覆盖 YAML 的 `hostname`。此模式跳过 Node Caddy 和证书申请，不占用签证端口 80/8863；证书目录只读挂载，支持 Certbot 的 `live` → `archive` 符号链接及续签更新。证书申请、续签和 Nginx 入口由宿主机维护，两种卸载模式均保留外部证书。
+
+已安装 Node 切换模式或证书路径时加 `--force`，重建挂载并迁移原有代理的证书引用。默认 `node_certificate_mode: caddy` 保持自动申请方式。详见[外部证书说明](deploy/installer/README.md#使用已有证书跳过-node-caddy)。
 
 修改应用镜像配置后重建容器；升级到此版本时先执行所有 Node，再执行 Web：
 

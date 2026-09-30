@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_VERSION="0.1.0-rc.8"
+SCRIPT_VERSION="0.1.0-rc.9"
 TP_SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 if [[ ! -f "${TP_SCRIPT_DIR}/common.sh" ]]; then
   printf 'Missing common.sh. Use tp.sh to download the command and its dependencies.\n' >&2
@@ -605,11 +605,114 @@ deploy_panel_ui() {
   wait_for_container "${UI_CONTAINER}"
 }
 
+prepare_node_certificate() {
+  resolve_node_certificate_paths
+  NODE_CERTIFICATE_MOUNTS=()
+  if [[ "${NODE_CERTIFICATE_MODE}" == caddy ]]; then
+    NODE_CERTIFICATE_MOUNTS=(-v "${TP_DATA}/custom/node-caddy/data:${TP_DATA}/custom/node-caddy/data")
+    return
+  fi
+  local path directory references cert_public key_public starts
+  for path in "${NODE_CERTIFICATE_PATH}" "${NODE_PRIVATE_KEY_PATH}"; do
+    if [[ ! -f "${path}" || ! -r "${path}" || ! -s "${path}" ]]; then
+      echo_content red "External certificate file is missing, empty or unreadable: ${path}" >&2
+      exit 1
+    fi
+  done
+  if ! openssl x509 -in "${NODE_CERTIFICATE_PATH}" -noout -checkend 0 >/dev/null 2>&1 || \
+    ! openssl x509 -in "${NODE_CERTIFICATE_PATH}" -noout -checkhost "${TP_NODE_DOMAIN}" >/dev/null 2>&1; then
+    echo_content red "External certificate must be valid and cover hostname ${TP_NODE_DOMAIN}" >&2
+    exit 1
+  fi
+  starts="$(openssl x509 -in "${NODE_CERTIFICATE_PATH}" -noout -startdate)"
+  if [[ "$(LC_ALL=C date -d "${starts#notBefore=}" +%s)" -gt "$(date +%s)" ]]; then
+    echo_content red "External certificate is not valid yet" >&2
+    exit 1
+  fi
+  cert_public="$(openssl x509 -in "${NODE_CERTIFICATE_PATH}" -noout -pubkey | openssl pkey -pubin -outform DER | sha256sum)"
+  if ! key_public="$(openssl pkey -in "${NODE_PRIVATE_KEY_PATH}" -passin pass: -pubout -outform DER 2>/dev/null | sha256sum)" || \
+    [[ "${cert_public}" != "${key_public}" ]]; then
+    echo_content red "External certificate and unencrypted private key must form a matching PEM pair" >&2
+    exit 1
+  fi
+  references="$(external_certificate_references)"
+  local -A mounted=()
+  while IFS= read -r path; do
+    directory="$(dirname -- "${path}")"
+    if [[ "${directory}" == "$(dirname -- "${GRPC_CLIENT_CA_PATH}")" || "${directory}" == "${TP_PKI_BUNDLE_DIR}" ]]; then
+      echo_content red "External server certificates need a directory separate from writable mTLS trust material" >&2
+      exit 1
+    fi
+    case "${directory}" in
+    / | /etc | /root | /home | /usr | /var | /var/lib | "${TP_DATA}")
+      echo_content red "Store certificates in a dedicated directory; refusing broad certificate mount: ${directory}" >&2
+      exit 1
+      ;;
+    esac
+    [[ -z "${mounted[${directory}]:-}" ]] || continue
+    mounted["${directory}"]=1
+    NODE_CERTIFICATE_MOUNTS+=(--mount "type=bind,src=${directory},dst=${directory},readonly")
+  done <<<"${references}"
+}
+
+check_node_certificate_migration() {
+  OLD_NODE_CERTIFICATE_PATH=""
+  OLD_NODE_PRIVATE_KEY_PATH=""
+  if container_exists "${CORE_CONTAINER}"; then
+    local mode cert key
+    mode="$(container_env_value "${CORE_CONTAINER}" TP_NODE_CERTIFICATE_MODE)"
+    mode="${mode:-caddy}"
+    cert="$(container_env_value "${CORE_CONTAINER}" crt_path)"
+    key="$(container_env_value "${CORE_CONTAINER}" key_path)"
+    OLD_NODE_CERTIFICATE_PATH="${cert}"
+    OLD_NODE_PRIVATE_KEY_PATH="${key}"
+    if [[ "${TP_FORCE}" != 1 && ( "${mode}" != "${NODE_CERTIFICATE_MODE}" || \
+      "${cert}" != "${NODE_CERTIFICATE_PATH}" || "${key}" != "${NODE_PRIVATE_KEY_PATH}" ) ]]; then
+      echo_content red "Changing Node certificate mode or paths requires install --force to recreate certificate mounts" >&2
+      exit 1
+    fi
+  elif [[ -f "${TP_DATA}/trojan-panel-core/config/config.ini" ]]; then
+    OLD_NODE_CERTIFICATE_PATH="$(awk '/^\[cert\]/{section=1;next} /^\[/{section=0} section && /^crt_path=/{sub(/^crt_path=/, ""); print; exit}' "${TP_DATA}/trojan-panel-core/config/config.ini")"
+    OLD_NODE_PRIVATE_KEY_PATH="$(awk '/^\[cert\]/{section=1;next} /^\[/{section=0} section && /^key_path=/{sub(/^key_path=/, ""); print; exit}' "${TP_DATA}/trojan-panel-core/config/config.ini")"
+  fi
+  if [[ "${NODE_CERTIFICATE_MODE}" == external && "${TP_FORCE}" != 1 ]] && container_exists "${NODE_CADDY_CONTAINER}"; then
+    echo_content red "Switching an existing Node Caddy to external certificates requires install --force" >&2
+    exit 1
+  fi
+}
+
+migrate_node_kernel_certificates() {
+  [[ -n "${OLD_NODE_CERTIFICATE_PATH}" && -n "${OLD_NODE_PRIVATE_KEY_PATH}" ]] || return 0
+  if [[ "${OLD_NODE_CERTIFICATE_PATH}" == "${NODE_CERTIFICATE_PATH}" && "${OLD_NODE_PRIVATE_KEY_PATH}" == "${NODE_PRIVATE_KEY_PATH}" ]]; then return; fi
+  local file temporary
+  local -a configs=()
+  shopt -s nullglob
+  configs=("${TP_DATA}"/trojan-panel-core/bin/{naiveproxy,hysteria2,xray}/config/config-*.json)
+  shopt -u nullglob
+  for file in "${configs[@]}"; do
+    temporary="$(mktemp "${file}.certificate.XXXXXX")"
+    if ! TP_OLD_CERT="${OLD_NODE_CERTIFICATE_PATH}" TP_OLD_KEY="${OLD_NODE_PRIVATE_KEY_PATH}" \
+      TP_NEW_CERT="${NODE_CERTIFICATE_PATH}" TP_NEW_KEY="${NODE_PRIVATE_KEY_PATH}" \
+      yq -o=json '
+        (.. | select(tag == "!!map") | select(.certificate == strenv(TP_OLD_CERT) and .key == strenv(TP_OLD_KEY))) |=
+          (.certificate = strenv(TP_NEW_CERT) | .key = strenv(TP_NEW_KEY)) |
+        (.. | select(tag == "!!map") | select(.cert == strenv(TP_OLD_CERT) and .key == strenv(TP_OLD_KEY))) |=
+          (.cert = strenv(TP_NEW_CERT) | .key = strenv(TP_NEW_KEY)) |
+        (.. | select(tag == "!!map") | select(.certificateFile == strenv(TP_OLD_CERT) and .keyFile == strenv(TP_OLD_KEY))) |=
+          (.certificateFile = strenv(TP_NEW_CERT) | .keyFile = strenv(TP_NEW_KEY))
+      ' "${file}" >"${temporary}"; then
+      rm -f -- "${temporary}"
+      echo_content red "Could not migrate saved proxy certificate references: ${file}" >&2
+      exit 1
+    fi
+    chmod 600 "${temporary}"
+    mv -- "${temporary}" "${file}"
+  done
+}
+
 deploy_core() {
-  local domain="$1"
-  local cert_data="${TP_DATA}/custom/node-caddy/data"
-  local crt_path="${cert_data}/caddy/certificates/acme-v02.api.letsencrypt.org-directory/${domain}/${domain}.crt"
-  local key_path="${cert_data}/caddy/certificates/acme-v02.api.letsencrypt.org-directory/${domain}/${domain}.key"
+  local crt_path="${NODE_CERTIFICATE_PATH}"
+  local key_path="${NODE_PRIVATE_KEY_PATH}"
   local ca_directory
   ca_directory="$(dirname "${GRPC_CLIENT_CA_PATH}")"
   local -a pki_mounts=(-v "${TP_PKI_BUNDLE_DIR}:${TP_PKI_BUNDLE_DIR}")
@@ -617,8 +720,9 @@ deploy_core() {
     pki_mounts+=(-v "${ca_directory}:${ca_directory}")
   fi
 
-  write_core_runtime_config "${crt_path}" "${key_path}"
   remove_container_if_force "${CORE_CONTAINER}"
+  migrate_node_kernel_certificates
+  write_core_runtime_config "${crt_path}" "${key_path}"
   if container_running "${CORE_CONTAINER}"; then
     echo_content skyBlue "---> Trojan Panel Core already running"
     return
@@ -638,7 +742,7 @@ deploy_core() {
     -v "${TP_DATA}/trojan-panel-core/config/:${TP_DATA}/trojan-panel-core/config/" \
     "${pki_mounts[@]}" \
     -v "${KERNEL_RUNTIME_PATH}:${TP_DATA}/trojan-panel-core/runtime/" \
-    -v "${cert_data}:${cert_data}" \
+    "${NODE_CERTIFICATE_MOUNTS[@]}" \
     -v "${WEB_PATH}:${WEB_PATH}" \
     -v /etc/localtime:/etc/localtime \
     -e GIN_MODE=release \
@@ -653,6 +757,7 @@ deploy_core() {
     -e "redis_pass=${REDIS_PASSWORD}" \
     -e "crt_path=${crt_path}" \
     -e "key_path=${key_path}" \
+    -e "TP_NODE_CERTIFICATE_MODE=${NODE_CERTIFICATE_MODE}" \
     -e "grpc_port=${GRPC_PORT}" \
 	-e "NODE_SERVER_ID=${NODE_SERVER_ID}" \
     -e "grpc_tls_mode=${GRPC_TLS_MODE}" \
@@ -699,15 +804,23 @@ deploy_node() {
     exit 1
   fi
 
+  prepare_node_certificate
+  check_node_certificate_migration
   load_image_archives
   prepare_dirs
   install_pki_material node
   prepare_static_web
-  write_node_caddyfile "${TP_NODE_DOMAIN}"
-  start_caddy "${NODE_CADDY_CONTAINER}" "${TP_DATA}/custom/node-caddy" "${TP_DATA}/custom/node-caddy/data" "${WEB_PATH}"
-  wait_for_cert "${TP_NODE_DOMAIN}" "${TP_DATA}/custom/node-caddy/data"
-  deploy_core "${TP_NODE_DOMAIN}"
+  if [[ "${NODE_CERTIFICATE_MODE}" == caddy ]]; then
+    write_node_caddyfile "${TP_NODE_DOMAIN}"
+    start_caddy "${NODE_CADDY_CONTAINER}" "${TP_DATA}/custom/node-caddy" "${TP_DATA}/custom/node-caddy/data" "${WEB_PATH}"
+    wait_for_cert "${TP_NODE_DOMAIN}" "${TP_DATA}/custom/node-caddy/data"
+  fi
+  deploy_core
   install_host_removal_service
+  if [[ "${NODE_CERTIFICATE_MODE}" == external ]]; then
+    # Remove only the old project-owned signer after the replacement is ready.
+    remove_container_if_force "${NODE_CADDY_CONTAINER}"
+  fi
 
   echo_content red "\n=============================================================="
   echo_content skyBlue "Trojan Panel node side deployed"
@@ -731,12 +844,11 @@ install_host_removal_service() {
   install -m 0600 "${TP_CONFIG_FILE}" "${host_dir}/node.yaml"
   docker cp "${CORE_CONTAINER}:/usr/local/bin/tp-host-agent" "${library_dir}/tp-host-agent"
   chmod 700 "${library_dir}/tp-host-agent"
-  local cert_base="${TP_DATA}/custom/node-caddy/data/caddy/certificates/acme-v02.api.letsencrypt.org-directory/${TP_NODE_DOMAIN}/${TP_NODE_DOMAIN}"
   local original_config
   original_config="$(realpath -- "${TP_CONFIG_FILE}")"
   export NODE_SERVER_ID GRPC_PORT GRPC_CLIENT_CA_PATH TP_DATA WEB_PATH TP_PKI_BUNDLE_DIR KERNEL_RUNTIME_PATH
   export MARIADB_CONTAINER REDIS_CONTAINER PANEL_CONTAINER UI_CONTAINER CORE_CONTAINER WEB_CADDY_CONTAINER NODE_CADDY_CONTAINER
-  TP_HOST_CERT="${cert_base}.crt" TP_HOST_KEY="${cert_base}.key" TP_ORIGINAL_CONFIG="${original_config}" \
+  TP_HOST_CERT="${NODE_CERTIFICATE_PATH}" TP_HOST_KEY="${NODE_PRIVATE_KEY_PATH}" TP_ORIGINAL_CONFIG="${original_config}" \
     yq -n -o=json '{
       "nodeId": (strenv(NODE_SERVER_ID) | tonumber),
       "port": ((strenv(GRPC_PORT) | tonumber) + 1),

@@ -129,6 +129,7 @@ jobs:
           bash deploy/installer/tests/entrypoint_test.sh
           bash deploy/installer/tests/uninstall_test.sh
           bash deploy/installer/tests/persistence_test.sh
+          bash deploy/installer/tests/external_certificate_test.sh
 
   docs:
     name: documentation site

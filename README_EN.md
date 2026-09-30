@@ -14,13 +14,13 @@ TrojanPanel Next is a multi-user Web administration panel supporting Xray, Hyste
 
 ## Get started
 
-The current version is `0.1.0-rc.8`. First follow the [dependency instructions](deploy/installer/README_EN.md#system-and-software-dependencies) to install Docker Engine, mikefarah/yq v4, and the other tools, then start Docker. The installer does not install dependencies. Node hosts also require systemd.
+The current version is `0.1.0-rc.9`. First follow the [dependency instructions](deploy/installer/README_EN.md#system-and-software-dependencies) to install Docker Engine, mikefarah/yq v4, and the other tools, then start Docker. The installer does not install dependencies. Node hosts also require systemd.
 
 Download the command entrypoint on each Web or Node server:
 
 ```bash
 curl -fsSL --connect-timeout 10 --max-time 60 \
-  https://raw.githubusercontent.com/1linhao/trojanpanelnext/v0.1.0-rc.8/deploy/installer/tp.sh \
+  https://raw.githubusercontent.com/1linhao/trojanpanelnext/v0.1.0-rc.9/deploy/installer/tp.sh \
   -o tp.sh
 chmod +x tp.sh
 ./tp.sh --version
@@ -47,6 +47,22 @@ sudo ./tp.sh install --config ./node.yaml
 ```
 
 Set the Node domain, Web database/Redis addresses and credentials, and actual `node_server_id`. Copy only the public CA to Node; keep private keys and the Web client identity on Web. Restrict Node's gRPC port (default `8100`) and host maintenance HTTPS port (`grpc_port + 1`, default `8101`) to Web sources. Node must also reach Web HTTPS (TCP 443) to confirm removal results. See the [full installation guide](deploy/installer/README_EN.md) for network preparation. `validate` checks only YAML and fields.
+
+### Node with existing certificates
+
+If Nginx and Certbot already manage host certificates, select external certificate mode in your edited `node.yaml`:
+
+```bash
+yq -i '.trojanpanelnext.node_certificate_mode = "external" |
+  .trojanpanelnext.node_certificate_path = "/etc/letsencrypt/live/node.example.com/fullchain.pem" |
+  .trojanpanelnext.node_private_key_path = "/etc/letsencrypt/live/node.example.com/privkey.pem"' node.yaml
+./tp.sh validate --config ./node.yaml
+sudo ./tp.sh install --config ./node.yaml
+```
+
+Replace the paths with real PEM files covering the YAML `hostname`. This skips Node Caddy and issuance, leaving signing ports 80/8863 free. Read-only directory mounts support Certbot `live` → `archive` links and renewal updates. The host manages issuance, renewal, and Nginx routing. Both removal modes preserve external certificates.
+
+Use `--force` when changing an installed Node's certificate mode or paths to recreate mounts and migrate existing proxy certificate references. Default `node_certificate_mode: caddy` retains automatic issuance. See the [external certificate guide](deploy/installer/README_EN.md#use-existing-certificates-and-skip-node-caddy).
 
 Recreate application containers after updating their image configuration. When upgrading to this version, update all Nodes before Web:
 

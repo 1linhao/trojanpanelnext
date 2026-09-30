@@ -7,7 +7,12 @@ trojanpanelnext:
   email: admin@example.com
 
   caddy_image: caddy:2.8.4
-  core_image: ghcr.io/1linhao/trojanpanelnext-node-agent:0.1.0-rc.8
+  core_image: ghcr.io/1linhao/trojanpanelnext-node-agent:0.1.0-rc.9
+  # caddy (default) requests certificates; external uses existing host PEM files.
+  node_certificate_mode: caddy
+  # Required only in external mode. Use fullchain.pem and its unencrypted key.
+  node_certificate_path: ""
+  node_private_key_path: ""
   node_caddy_http_port: 80
   node_caddy_https_port: 8863
 

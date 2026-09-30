@@ -6,7 +6,7 @@ set -euo pipefail
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
 
 ECHO_TYPE="echo -e"
-INSTALLER_VERSION="0.1.0-rc.8"
+INSTALLER_VERSION="0.1.0-rc.9"
 SUPPORTED_SCHEMA_VERSION="1"
 GITHUB_RAW_BASE="https://raw.githubusercontent.com/1linhao/trojanpanelnext"
 DEFAULT_CONFIG_REF="v${INSTALLER_VERSION}"
@@ -51,6 +51,9 @@ GRPC_SERVER_CA_PATH="${GRPC_SERVER_CA_PATH:-}"
 KERNEL_RUNTIME_PATH="${KERNEL_RUNTIME_PATH:-${TP_DATA}/trojan-panel-core/runtime}"
 NODE_CADDY_HTTP_PORT="${NODE_CADDY_HTTP_PORT:-80}"
 NODE_CADDY_HTTPS_PORT="${NODE_CADDY_HTTPS_PORT:-8863}"
+NODE_CERTIFICATE_MODE="${NODE_CERTIFICATE_MODE:-caddy}"
+NODE_CERTIFICATE_PATH="${NODE_CERTIFICATE_PATH:-}"
+NODE_PRIVATE_KEY_PATH="${NODE_PRIVATE_KEY_PATH:-}"
 
 TP_FORCE="${TP_FORCE:-0}"
 TP_PURGE_DATA="${TP_PURGE_DATA:-0}"
@@ -281,6 +284,9 @@ load_config() {
   cfg_apply "${file}" TP_PKI_BUNDLE_DIR pki_bundle_dir
   cfg_apply "${file}" NODE_CADDY_HTTP_PORT node_caddy_http_port
   cfg_apply "${file}" NODE_CADDY_HTTPS_PORT node_caddy_https_port
+  cfg_apply "${file}" NODE_CERTIFICATE_MODE node_certificate_mode
+  cfg_apply "${file}" NODE_CERTIFICATE_PATH node_certificate_path
+  cfg_apply "${file}" NODE_PRIVATE_KEY_PATH node_private_key_path
   cfg_apply "${file}" TP_FORCE force
   cfg_apply "${file}" TP_PURGE_DATA purge_data
   case "${TP_PURPOSE}" in
@@ -334,6 +340,57 @@ require_port() {
   fi
 }
 
+resolve_node_certificate_paths() {
+  if [[ "${NODE_CERTIFICATE_MODE}" == caddy ]]; then
+    local base="${TP_DATA}/custom/node-caddy/data/caddy/certificates/acme-v02.api.letsencrypt.org-directory/${TP_NODE_DOMAIN}/${TP_NODE_DOMAIN}"
+    NODE_CERTIFICATE_PATH="${base}.crt"
+    NODE_PRIVATE_KEY_PATH="${base}.key"
+  fi
+}
+
+# Keep both the configured paths and each visible symlink target. Certbot's
+# live/name/*.pem links point into archive/name; mounting a PEM inode would
+# freeze the old certificate when Certbot replaces that link during renewal.
+external_certificate_references() {
+  local path current target count
+  for path in "${NODE_CERTIFICATE_PATH}" "${NODE_PRIVATE_KEY_PATH}"; do
+    current="$(realpath -ms -- "${path}")"
+    printf '%s\n' "${current}"
+    count=0
+    while [[ -L "${current}" ]]; do
+      count=$((count + 1))
+      if ((count > 40)); then
+        echo_content red "Too many certificate symlinks: ${path}" >&2
+        return 1
+      fi
+      target="$(readlink -- "${current}")"
+      if [[ "${target}" == *,* || "${target}" == *$'\n'* || "${target}" == *$'\r'* ]]; then
+        echo_content red "Certificate symlink targets must contain no commas or line breaks" >&2
+        return 1
+      fi
+      if [[ "${target}" != /* ]]; then target="$(dirname -- "${current}")/${target}"; fi
+      current="$(realpath -ms -- "${target}")"
+      printf '%s\n' "${current}"
+    done
+    realpath -m -- "${path}"
+  done
+}
+
+protect_external_certificates() {
+  [[ "${TP_PURPOSE}" == node && "${NODE_CERTIFICATE_MODE}" == external ]] || return 0
+  local references reference path resolved
+  references="$(external_certificate_references)" || return
+  for path in "$@"; do
+    resolved="$(realpath -m -- "${path}")"
+    while IFS= read -r reference; do
+      if [[ "${reference}" == "${resolved}" || "${reference}" == "${resolved}"/* ]]; then
+        echo_content red "External certificate overlaps a project removal path: ${path}. Store externally managed certificates outside project data and maintenance directories." >&2
+        return 1
+      fi
+    done <<<"${references}"
+  done
+}
+
 validate_config() {
   local purpose="${TP_PURPOSE}"
 
@@ -374,8 +431,26 @@ validate_config() {
       echo_content red "Node requires node_server_id >= 1 and grpc_port <= 65534 (host removal uses grpc_port + 1)" >&2
       exit 1
     fi
-    require_port NODE_CADDY_HTTP_PORT
-    require_port NODE_CADDY_HTTPS_PORT
+    require_one_of node_certificate_mode "${NODE_CERTIFICATE_MODE}" caddy external
+    if [[ "${NODE_CERTIFICATE_MODE}" == caddy ]]; then
+      require_port NODE_CADDY_HTTP_PORT
+      require_port NODE_CADDY_HTTPS_PORT
+    else
+      require_value NODE_CERTIFICATE_PATH
+      require_value NODE_PRIVATE_KEY_PATH
+      local path
+      for path in "${NODE_CERTIFICATE_PATH}" "${NODE_PRIVATE_KEY_PATH}"; do
+        if [[ "${path}" != /* || "${path}" == *$'\n'* || "${path}" == *$'\r'* || "${path}" == *,* ]]; then
+          echo_content red "External certificate paths must be absolute and contain no commas or line breaks" >&2
+          exit 1
+        fi
+      done
+      protect_external_certificates \
+        "${TP_DATA}/custom/node-caddy" "${TP_DATA}/custom/web-caddy" \
+        "${TP_DATA}/trojan-panel" "${TP_DATA}/trojan-panel-ui" "${TP_DATA}/trojan-panel-core" \
+        "${TP_DATA}/mariadb" "${TP_DATA}/redis" "${WEB_PATH}" "${KERNEL_RUNTIME_PATH}" "${TP_PKI_BUNDLE_DIR}" \
+        /etc/trojanpanelnext-host /usr/local/lib/trojanpanelnext-host
+    fi
     require_one_of grpc_tls_mode "${GRPC_TLS_MODE}" mtls
     require_value TP_PKI_BUNDLE_DIR
     if [[ "${GRPC_CLIENT_CA_PATH}" != /* ]]; then

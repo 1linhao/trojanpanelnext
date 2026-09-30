@@ -55,17 +55,17 @@ Omit `sudo` when logged in as root. Use the appropriate package manager on other
 
 ## Release binding and entrypoint download
 
-The current version is `0.1.0-rc.8`. Run on each Web or Node server:
+The current version is `0.1.0-rc.9`. Run on each Web or Node server:
 
 ```bash
 curl -fsSL --connect-timeout 10 --max-time 60 \
-  https://raw.githubusercontent.com/1linhao/trojanpanelnext/v0.1.0-rc.8/deploy/installer/tp.sh \
+  https://raw.githubusercontent.com/1linhao/trojanpanelnext/v0.1.0-rc.9/deploy/installer/tp.sh \
   -o tp.sh
 chmod +x tp.sh
 ./tp.sh --version
 ```
 
-By default, the entrypoint downloads the selected command and `common.sh` from GitHub Raw at `v0.1.0-rc.8`; installation additionally downloads `uninstall.sh`. Downloaded files undergo version matching and Bash syntax checks, run in a temporary directory, and are cleaned up afterwards. Templates default to the same tag. API, Web, and Node Agent images use `:0.1.0-rc.8`, without the Git tag's `v` prefix. No local checkout is needed.
+By default, the entrypoint downloads the selected command and `common.sh` from GitHub Raw at `v0.1.0-rc.9`; installation additionally downloads `uninstall.sh`. Downloaded files undergo version matching and Bash syntax checks, run in a temporary directory, and are cleaned up afterwards. Templates default to the same tag. API, Web, and Node Agent images use `:0.1.0-rc.9`, without the Git tag's `v` prefix. No local checkout is needed.
 
 `schema_version: 1` describes the YAML structure and is independent of the product version. Existing configurations should use `trojanpanelnext.purpose: web` or `node`; old deployment-type options are no longer supported.
 
@@ -140,9 +140,44 @@ Node installation provisions `trojanpanelnext-host.service` on the host. It prov
 
 `validate` checks only YAML and fields; it does not verify DNS, certificate files, connectivity, systemd status, or service health. Passing validation does not establish that the host is ready for deployment.
 
+### Use existing certificates and skip Node Caddy
+
+Issue the certificate with host Nginx and Certbot or another tool, then set these fields in your complete Node YAML:
+
+```yaml
+trojanpanelnext:
+  # Retain the remaining database, Redis, mTLS, and server ID configuration.
+  hostname: node.example.com
+  node_certificate_mode: external
+  node_certificate_path: /etc/letsencrypt/live/node.example.com/fullchain.pem
+  node_private_key_path: /etc/letsencrypt/live/node.example.com/privkey.pem
+```
+
+```bash
+./tp.sh validate --config ./node.yaml
+sudo ./tp.sh install --config ./node.yaml
+# Changing an installed Node's mode or paths:
+sudo ./tp.sh install --config ./node.yaml --force
+```
+
+| Field | Meaning |
+| --- | --- |
+| `node_certificate_mode: caddy` | Default: start Node Caddy and obtain/renew certificates. |
+| `node_certificate_mode: external` | Use existing PEM files; skip Node Caddy, issuance, and waiting. Node Caddy port fields are unused. |
+| `node_certificate_path` | Absolute host path to the full certificate chain, such as Certbot `fullchain.pem`. |
+| `node_private_key_path` | Absolute host path to its matching, unencrypted PEM private key. |
+
+Installation checks readability, validity dates, hostname coverage, and key pairing. Agent, proxies, and host maintenance share these paths; other proxy domains must also be covered, using a multi-domain SAN or wildcard certificate if needed. Signing ports 80/8863 are unnecessary. Host tools and the panel configure Nginx, Certbot, and proxy listeners; the installer does not configure SNI routing.
+
+Certificate directories and symlink target directories are mounted read-only, supporting Certbot's replacement file links in `live/<domain>` and new files in `archive/<domain>`. Keep paths and directories stable. Moving files or redirecting links to another directory requires installation with `--force` to update mounts. Use dedicated certificate directories: broad mounts such as `/`, `/etc`, and `/root`, and paths inside project data, PKI, camouflage content, or maintenance directories are rejected.
+
+After renewal, gRPC, host maintenance, and Hysteria2 read files for new TLS handshakes. NaiveProxy checks every minute and briefly restarts affected instances when certificates change. Xray uses file reload with a default one-hour interval; restart that proxy in the panel for immediate activation. Certbot's deploy hook must still validate and reload Nginx if it consumes the certificate.
+
+Migration updates saved proxy references matching the previous certificate/key pair, preserving accounts and other settings. Custom references to other certificates remain intact. Successful forced migration removes the old project Node Caddy container; its old data remains until project cleanup. Both local removal modes and remote Web removal preserve external certificates, Nginx, Certbot, and their configuration. Overlapping project cleanup paths are rejected.
+
 ## Recreate containers and upgrade
 
-Use `--force` to recreate API, UI, Agent, and Caddy containers after updating application images. To upgrade to `0.1.0-rc.8`, first set `core_image` to `:0.1.0-rc.8` in every Node YAML, then update `panel_image` and `ui_image` in Web YAML. Download this release's entrypoint on each host and run in this order:
+Use `--force` to recreate API, UI, Agent, and Caddy containers after updating application images. To upgrade to `0.1.0-rc.9`, first set `core_image` to `:0.1.0-rc.9` in every Node YAML, then update `panel_image` and `ui_image` in Web YAML. Download this release's entrypoint on each host and run in this order:
 
 ```bash
 # Run on every Node host first to provision the host maintenance service
@@ -210,7 +245,7 @@ Delete completely removes the retained configuration and data. Reconnection then
 
 ## Development verification
 
-`TP_SCRIPT_REF` defaults to `v0.1.0-rc.8`. Set it to a branch or full commit SHA that exists on GitHub to fetch scripts and templates from the same ref. The entrypoint still requires command versions to match its own version; when testing branch code, also download `tp.sh` from that branch. For example:
+`TP_SCRIPT_REF` defaults to `v0.1.0-rc.9`. Set it to a branch or full commit SHA that exists on GitHub to fetch scripts and templates from the same ref. The entrypoint still requires command versions to match its own version; when testing branch code, also download `tp.sh` from that branch. For example:
 
 ```bash
 TP_SCRIPT_REF=feat/installer-entrypoint ./tp.sh config web --output ./test-web.yaml
@@ -232,5 +267,5 @@ Run `node scripts/check-installer-release.mjs` before release. Publishing verifi
 - Every minute, the Agent checks NaiveProxy certificates. It validates the certificate/key pair, saves the live configuration including users, validates that configuration, and restarts only affected instances. Existing connections disconnect briefly and clients must reconnect. Failures are logged and retried on the next pass.
 - At startup and every 5 minutes, the Web API renews its internal mTLS client certificate when fewer than 90 days remain. Certificates last at most 825 days and never outlive their CA. CA private keys stay on Web.
 - With fewer than 365 days remaining, CA rotation distributes both CAs over existing authenticated mTLS connections. The client identity switches only after every registered mTLS Node acknowledges. The previous identity is retained for at least 24 hours, then retired after all nodes acknowledge removal of the old CA. Offline or older unsupported nodes block progress; retries run every 5 minutes.
-- Initial bootstrap still requires copying Web's current public `client-ca.crt`. Register new nodes before rotation and use the current bundle; unregistered nodes are outside the rotation inventory. Upgrade all Nodes before Web, update existing YAML image tags to `0.1.0-rc.8`, and run `./tp.sh install --config ... --force` to update mounts and provision Node host maintenance. Node reinstalls preserve the live CA file rather than replacing it with an old bootstrap copy. The Agent also updates the public bootstrap bundle for reinstalls after runtime data removal.
+- Initial bootstrap still requires copying Web's current public `client-ca.crt`. Register new nodes before rotation and use the current bundle; unregistered nodes are outside the rotation inventory. Upgrade all Nodes before Web, update existing YAML image tags to `0.1.0-rc.9`, and run `./tp.sh install --config ... --force` to update mounts and provision Node host maintenance. Node reinstalls preserve the live CA file rather than replacing it with an old bootstrap copy. The Agent also updates the public bootstrap bundle for reinstalls after runtime data removal.
 - The API mounts `pki_bundle_dir` with signing access; Nodes can write only their public trust file. Back up the entire Web PKI directory, including `state.json` and `generations`, rather than only the top-level symlinks. Inspect API / Agent logs for rotation failures. Nodes offline past the previous CA's expiry, or restored from expired backups, require manual trust bootstrap.

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
-INSTALLER_VERSION="0.1.0-rc.8"
+INSTALLER_VERSION="0.1.0-rc.9"
 GITHUB_RAW_BASE="https://raw.githubusercontent.com/1linhao/trojanpanelnext"
 DEFAULT_SCRIPT_REF="v${INSTALLER_VERSION}"
 TP_SCRIPT_REF="${TP_SCRIPT_REF:-${DEFAULT_SCRIPT_REF}}"
