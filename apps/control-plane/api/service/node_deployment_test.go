@@ -299,8 +299,8 @@ func TestNodeDeploymentRejectsUnsafeInputAndCA(t *testing.T) {
 	}
 }
 
-func TestNodeDeploymentInstallScriptPreservesTrust(t *testing.T) {
-	for _, scenario := range []string{"new", "same", "different", "symlink", "validate_failure"} {
+func TestNodeDeploymentInstallScriptDelegatesTrustImport(t *testing.T) {
+	for _, scenario := range []string{"new", "same", "different", "symlink_source", "missing_source", "directory_source", "symlink_config", "validate_failure", "install_failure"} {
 		t.Run(scenario, func(t *testing.T) {
 			server, request, config := deploymentFixture()
 			ca := deploymentCAFixture(t, 1, true, false)
@@ -310,7 +310,7 @@ func TestNodeDeploymentInstallScriptPreservesTrust(t *testing.T) {
 			}
 			files, _ := deploymentArchiveFiles(t, data)
 			dir := t.TempDir()
-			pkg := filepath.Join(dir, "bundle")
+			pkg := filepath.Join(dir, "bundle with spaces")
 			bin := filepath.Join(dir, "bin")
 			pki := filepath.Join(dir, "custom-pki")
 			for _, path := range []string{pkg, bin} {
@@ -326,10 +326,17 @@ func TestNodeDeploymentInstallScriptPreservesTrust(t *testing.T) {
 			version := strings.TrimPrefix(constant.TrojanPanelVersion, "v")
 			entry := filepath.Join(dir, "entry.sh")
 			events := filepath.Join(dir, "events")
+			args := filepath.Join(dir, "install-args")
+			// This boundary records the installer's actual authorization. It deliberately
+			// never imports a CA: replacement and backup belong to the real installer.
 			fakeEntry := `#!/usr/bin/env bash
 if [[ "$1" == --entry-version ]]; then printf '%s\n' "$TEST_VERSION"; exit; fi
 printf '%s\n' "$3" >> "$TEST_EVENTS"
-if [[ "$3" == validate && "$TEST_VALIDATE_FAIL" == 1 ]]; then exit 1; fi
+case "$3" in
+  validate) [[ "$TEST_VALIDATE_FAIL" == 0 ]];;
+  install) printf '%s\0' "$@" > "$TEST_INSTALL_ARGS"; exit "$TEST_INSTALL_EXIT";;
+  *) exit 2;;
+esac
 `
 			if err := os.WriteFile(entry, []byte(fakeEntry), 0700); err != nil {
 				t.Fatal(err)
@@ -357,61 +364,99 @@ esac
 				}
 			}
 			trust := filepath.Join(pki, "client-ca.crt")
-			if scenario != "new" && scenario != "validate_failure" {
+			var old []byte
+			if scenario == "same" || scenario == "different" || scenario == "install_failure" {
 				if err := os.Mkdir(pki, 0700); err != nil {
 					t.Fatal(err)
 				}
-				old := ca
-				if scenario == "different" {
+				old = ca
+				if scenario != "same" {
 					old = deploymentCAFixture(t, 2, true, false)
 				}
-				if scenario == "symlink" {
-					if err := os.Symlink(filepath.Join(pkg, "client-ca.crt"), trust); err != nil {
-						t.Fatal(err)
-					}
-				} else if err := os.WriteFile(trust, old, 0644); err != nil {
+				if err := os.WriteFile(trust, old, 0600); err != nil {
 					t.Fatal(err)
 				}
 			}
-			validationFail := "0"
+			caSource := filepath.Join(pkg, "client-ca.crt")
+			configPath := filepath.Join(pkg, "node.yaml")
+			if scenario == "symlink_source" || scenario == "symlink_config" {
+				unsafePath := caSource
+				if scenario == "symlink_config" {
+					unsafePath = configPath
+				}
+				target := unsafePath + ".original"
+				if err := os.Rename(unsafePath, target); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(target, unsafePath); err != nil {
+					t.Fatal(err)
+				}
+			} else if scenario == "missing_source" || scenario == "directory_source" {
+				if err := os.Remove(caSource); err != nil {
+					t.Fatal(err)
+				}
+				if scenario == "directory_source" {
+					if err := os.Mkdir(caSource, 0700); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			validationFail, installExit := "0", "0"
 			if scenario == "validate_failure" {
 				validationFail = "1"
 			}
+			if scenario == "install_failure" {
+				installExit = "1"
+			}
 			cmd := exec.Command("bash", filepath.Join(pkg, "install-node.sh"))
-			cmd.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "TEST_VERSION="+version, "TEST_ENTRY="+entry, "TEST_EVENTS="+events, "TEST_PKI="+pki, "TEST_VALIDATE_FAIL="+validationFail)
+			cmd.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "TEST_VERSION="+version, "TEST_ENTRY="+entry, "TEST_EVENTS="+events, "TEST_PKI="+pki, "TEST_VALIDATE_FAIL="+validationFail, "TEST_INSTALL_EXIT="+installExit, "TEST_INSTALL_ARGS="+args)
 			output, err := cmd.CombinedOutput()
-			shouldFail := scenario == "different" || scenario == "symlink" || scenario == "validate_failure"
+			unsafeSource := scenario == "symlink_source" || scenario == "missing_source" || scenario == "directory_source" || scenario == "symlink_config"
+			shouldFail := unsafeSource || scenario == "validate_failure" || scenario == "install_failure"
 			if (err != nil) != shouldFail {
 				t.Fatalf("script %s: %v %s", scenario, err, output)
 			}
 			eventData, _ := os.ReadFile(events)
-			if shouldFail {
-				if strings.Contains(string(eventData), "install") {
-					t.Fatal("unsafe bundle reached installation")
+			if unsafeSource {
+				if len(eventData) != 0 {
+					t.Fatalf("unsafe bundle reached the release entry: %q", eventData)
 				}
-				if scenario == "different" {
-					current, _ := os.ReadFile(trust)
-					if bytes.Equal(current, ca) {
-						t.Fatal("different existing trust was overwritten")
-					}
-				}
-				if scenario == "validate_failure" {
-					if _, err := os.Stat(pki); !os.IsNotExist(err) {
-						t.Fatal("CA directory written before configuration validation")
-					}
+			} else if scenario == "validate_failure" {
+				if string(eventData) != "validate\n" {
+					t.Fatalf("invalid configuration reached installation: %q", eventData)
 				}
 			} else {
-				current, err := os.ReadFile(trust)
-				if err != nil || !bytes.Equal(current, ca) {
-					t.Fatal("CA not copied to the configured custom directory")
-				}
 				if string(eventData) != "validate\ninstall\n" {
 					t.Fatalf("wrong action order: %q", eventData)
 				}
+				actualArgs, err := os.ReadFile(args)
+				if err != nil {
+					t.Fatal(err)
+				}
+				wantArgs := []string{"--version", "v" + version, "install", "--config", configPath, "--client-ca", caSource}
+				if got := strings.Split(strings.TrimSuffix(string(actualArgs), "\x00"), "\x00"); !reflect.DeepEqual(got, wantArgs) {
+					t.Fatalf("installer lacks explicit bundle trust authorization: got=%q want=%q", got, wantArgs)
+				}
 			}
-			info, err := os.Stat(filepath.Join(pkg, "node.yaml"))
-			if err != nil || info.Mode().Perm() != 0600 {
-				t.Fatal("configuration permissions are not private")
+			if old == nil {
+				if _, err := os.Stat(pki); !os.IsNotExist(err) {
+					t.Fatal("bundle wrote a CA directory instead of delegating import to the installer")
+				}
+			} else {
+				current, err := os.ReadFile(trust)
+				if err != nil || !bytes.Equal(current, old) {
+					t.Fatal("bundle modified retained trust before the installer accepted the import")
+				}
+				info, err := os.Stat(trust)
+				if err != nil || info.Mode().Perm() != 0600 {
+					t.Fatal("bundle modified retained trust permissions")
+				}
+			}
+			if !unsafeSource {
+				info, err := os.Stat(configPath)
+				if err != nil || info.Mode().Perm() != 0600 {
+					t.Fatal("configuration permissions are not private")
+				}
 			}
 		})
 	}

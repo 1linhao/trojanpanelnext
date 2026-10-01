@@ -2,7 +2,7 @@
 # Shared implementation for the Web and Node one-command deployments.
 # shellcheck disable=SC2034
 set -euo pipefail
-SCRIPT_VERSION="1.0.2-rc.5"
+SCRIPT_VERSION="1.0.2-rc.6"
 require_matching_version "${SCRIPT_VERSION}"
 QUICK_TEMP_DIR=""
 
@@ -64,39 +64,7 @@ quick_set() {
 }
 
 quick_validate_client_ca() {
-  local file="$1" line="" certificate="" constraints=""
-  local in_certificate=0 certificate_count=0
-  [[ -f "${file}" && -r "${file}" && -s "${file}" ]] || return 1
-  # Trust bundles may contain several public CAs during rotation. Check each
-  # complete PEM block and reject other material before copying the source.
-  while IFS= read -r line || [[ -n "${line}" ]]; do
-    line="${line%$'\r'}"
-    case "${line}" in
-    '-----BEGIN CERTIFICATE-----')
-      [[ "${in_certificate}" == 0 ]] || return 1
-      in_certificate=1
-      certificate="${line}"$'\n'
-      ;;
-    '-----END CERTIFICATE-----')
-      [[ "${in_certificate}" == 1 ]] || return 1
-      certificate+="${line}"$'\n'
-      if ! constraints="$(printf '%s' "${certificate}" | openssl x509 -noout -ext basicConstraints 2>/dev/null)" ||
-        [[ "${constraints}" != *'CA:TRUE'* ]] ||
-        ! printf '%s' "${certificate}" | openssl x509 -noout -checkend 0 >/dev/null 2>&1; then
-        return 1
-      fi
-      certificate_count=$((certificate_count + 1))
-      in_certificate=0
-      certificate=""
-      ;;
-    *)
-      if [[ "${line}" =~ ^[[:space:]]*$ ]]; then continue; fi
-      [[ "${in_certificate}" == 1 && "${line}" =~ ^[A-Za-z0-9+/=]+$ ]] || return 1
-      certificate+="${line}"$'\n'
-      ;;
-    esac
-  done <"${file}"
-  [[ "${in_certificate}" == 0 && "${certificate_count}" -gt 0 ]]
+  validate_public_client_ca "$1"
 }
 
 quick_deploy() {

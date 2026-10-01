@@ -64,7 +64,7 @@ test ! -e "${MOCK_REQUESTS}"
 assert_fails "${ENTRYPOINT}" unknown
 assert_fails "${ENTRYPOINT}" --version
 assert_fails "${ENTRYPOINT}" --version --help
-assert_fails "${ENTRYPOINT}" --version 1.0.2-rc.5 --version 1.0.2-rc.5 config web
+assert_fails "${ENTRYPOINT}" --version 1.0.2-rc.6 --version 1.0.2-rc.6 config web
 assert_fails "${ENTRYPOINT}" --version '../main' config web
 assert_fails "${ENTRYPOINT}" --version 1 config web
 assert_fails "${ENTRYPOINT}" update --config ignored.yaml

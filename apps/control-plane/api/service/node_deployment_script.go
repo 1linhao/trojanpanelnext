@@ -19,11 +19,7 @@ CA_SOURCE="${PACKAGE_DIR}/client-ca.crt"
 [[ -f "$CONFIG" && ! -L "$CONFIG" && -f "$CA_SOURCE" && ! -L "$CA_SOURCE" ]] || fail 'The bundle must contain regular node.yaml and client-ca.crt files.'
 chmod 600 -- "$CONFIG"
 TEMP_DIR="$(mktemp -d)"
-CA_TEMP=''
-cleanup() {
-  [[ -z "$CA_TEMP" ]] || rm -f -- "$CA_TEMP"
-  rm -rf -- "$TEMP_DIR"
-}
+cleanup() { rm -rf -- "$TEMP_DIR"; }
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
@@ -37,21 +33,6 @@ bash -n "$ENTRY" || fail 'Invalid release script entrypoint.'
 # The current release's validator checks purpose, version, images, paths and schema.
 bash "$ENTRY" --version 'v@@VERSION@@' validate --config "$CONFIG"
 [[ "$(yq -r '.trojanpanelnext.purpose' "$CONFIG")" == node && "$(yq -r '.trojanpanelnext.release' "$CONFIG")" == '@@VERSION@@' ]] || fail 'The configuration must match this Node deployment bundle.'
-PKI_DIR="$(yq -r '.trojanpanelnext.pki_bundle_dir' "$CONFIG")"
-[[ "$PKI_DIR" == /* && "$PKI_DIR" != *$'\n'* && "$PKI_DIR" != *$'\r'* && ! -L "$PKI_DIR" ]] || fail 'pki_bundle_dir must be an absolute directory without line breaks or symlinks.'
-PKI_DIR="$(readlink -m -- "$PKI_DIR")"
-CA_TARGET="${PKI_DIR}/client-ca.crt"
-if [[ -e "$CA_TARGET" || -L "$CA_TARGET" ]]; then
-  [[ -f "$CA_TARGET" && ! -L "$CA_TARGET" ]] || fail 'Refusing to replace an unsafe existing client CA path.'
-  cmp -s -- "$CA_SOURCE" "$CA_TARGET" || fail 'An existing different client CA was found. Its trust is preserved; review the CA configuration before installing.'
-else
-  mkdir -p -m 700 -- "$PKI_DIR"
-  CA_TEMP="$(mktemp -- "${PKI_DIR}/.client-ca.crt.XXXXXX")"
-  cp -- "$CA_SOURCE" "$CA_TEMP"
-  chmod 644 -- "$CA_TEMP"
-  ln -T -- "$CA_TEMP" "$CA_TARGET" || fail 'The client CA path changed during installation; no existing trust was overwritten.'
-  rm -f -- "$CA_TEMP"
-  CA_TEMP=''
-fi
-bash "$ENTRY" --version 'v@@VERSION@@' install --config "$CONFIG"
+# The installer validates and backs up retained trust before importing this Web CA.
+bash "$ENTRY" --version 'v@@VERSION@@' install --config "$CONFIG" --client-ca "$CA_SOURCE"
 `

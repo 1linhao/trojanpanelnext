@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_VERSION="1.0.2-rc.5"
+SCRIPT_VERSION="1.0.2-rc.6"
 TP_SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 if [[ ! -f "${TP_SCRIPT_DIR}/common.sh" ]]; then
   printf 'Missing common.sh. Use tp.sh to download the command and its dependencies.\n' >&2
@@ -14,9 +14,10 @@ require_matching_version "${SCRIPT_VERSION}"
 usage() {
   cat <<EOF
 TrojanPanel Next installation ${INSTALLER_VERSION}
-Usage: $0 --config <file> [--force]
+Usage: $0 --config <file> [--force] [--client-ca <file>]
   --config <file>  YAML deployment configuration; purpose selects web or node
   --force          Recreate API, UI, Agent and Caddy containers
+  --client-ca <file>  Node only: trust this Web public CA; back up replaced CAs
   -V, --version    Show version
   -h, --help       Show help
 Requires root, Docker, mikefarah/yq v4, curl, OpenSSL, tar,
@@ -183,6 +184,89 @@ EOF
   rm -rf -- "${temporary_pki}"
 }
 
+validate_node_client_ca_source() {
+  local source="$1"
+  if [[ -L "${source}" ]] || ! validate_public_client_ca "${source}"; then
+    echo_content red "Invalid public client CA certificate: ${source}; use a readable regular PEM file containing only valid CA certificates" >&2
+    return 1
+  fi
+}
+
+validate_node_client_ca_directories() {
+  local directory current
+  for directory in "${TP_PKI_BUNDLE_DIR}" "$(dirname -- "${GRPC_CLIENT_CA_PATH}")" "${TP_PKI_BUNDLE_DIR}/client-ca-backups"; do
+    if [[ "${directory}" != /* || "${directory}" == *$'\n'* || "${directory}" == *$'\r'* ]]; then
+      echo_content red "Client CA directory must be a regular directory without symlinks: ${directory}" >&2
+      return 1
+    fi
+    current="${directory}"
+    # Check every existing ancestor too, including a link above a not-yet-created
+    # PKI directory. Strip trailing slashes before lstat-style symlink checks.
+    while [[ "${current}" != / ]]; do
+      while [[ "${current}" == */ && "${current}" != / ]]; do current="${current%/}"; done
+      if [[ -L "${current}" || ( -e "${current}" && ! -d "${current}" ) ]]; then
+        echo_content red "Client CA directory must be a regular directory without symlinks: ${current}" >&2
+        return 1
+      fi
+      current="$(dirname -- "${current}")"
+    done
+  done
+}
+
+# An explicit deployment package CA denotes a new control-plane binding.
+# Snapshot and validate before changing either bootstrap or live trust, then
+# retain protected copies of every existing trust file that is replaced.
+replace_node_client_ca() (
+  local source="$1" snapshot="" backup_dir="" temporary="" destination
+  local bootstrap="${TP_PKI_BUNDLE_DIR}/client-ca.crt"
+  local -a destinations=("${GRPC_CLIENT_CA_PATH}") temporaries=()
+  validate_node_client_ca_source "${source}" || return 1
+  validate_node_client_ca_directories || return 1
+  if [[ "$(realpath -m -- "${GRPC_CLIENT_CA_PATH}")" != "$(realpath -m -- "${bootstrap}")" ]]; then
+    destinations+=("${bootstrap}")
+  fi
+  for destination in "${destinations[@]}"; do
+    if [[ -L "${destination}" || ( -e "${destination}" && ! -f "${destination}" ) ]]; then
+      echo_content red "Client CA destination must be a regular file: ${destination}" >&2
+      return 1
+    fi
+  done
+  snapshot="$(mktemp)" || return 1
+  trap 'rm -f -- "${snapshot}" "${temporaries[@]}"' EXIT
+  install -m 0600 -- "${source}" "${snapshot}" || return 1
+  validate_node_client_ca_source "${snapshot}" || return 1
+
+  local index=0 label
+  for destination in "${destinations[@]}"; do
+    if [[ -f "${destination}" ]] && ! cmp -s -- "${snapshot}" "${destination}"; then
+      if [[ -z "${backup_dir}" ]]; then
+        mkdir -p -- "${TP_PKI_BUNDLE_DIR}/client-ca-backups" || return 1
+        chmod 700 -- "${TP_PKI_BUNDLE_DIR}" "${TP_PKI_BUNDLE_DIR}/client-ca-backups" || return 1
+        backup_dir="$(mktemp -d "${TP_PKI_BUNDLE_DIR}/client-ca-backups/rebind.XXXXXX")" || return 1
+      fi
+      label=runtime
+      [[ "${index}" == 0 ]] || label=bootstrap
+      install -m 0600 -- "${destination}" "${backup_dir}/${label}-client-ca.crt" || return 1
+    fi
+    index=$((index + 1))
+  done
+
+  # Stage all replacements before publishing the first file.
+  for destination in "${destinations[@]}"; do
+    mkdir -p -- "$(dirname -- "${destination}")" || return 1
+    temporary="$(mktemp "${destination}.tmp.XXXXXX")" || return 1
+    temporaries+=("${temporary}")
+    install -m 0644 -- "${snapshot}" "${temporary}" || return 1
+  done
+  chmod 700 -- "${TP_PKI_BUNDLE_DIR}" || return 1
+  for index in "${!destinations[@]}"; do
+    mv -fT -- "${temporaries[${index}]}" "${destinations[${index}]}" || return 1
+  done
+  if [[ -n "${backup_dir}" ]]; then
+    echo_content skyBlue "---> Previous Node client CA trust saved: ${backup_dir}"
+  fi
+)
+
 install_pki_material() {
   local purpose="$1"
   case "${purpose}" in
@@ -193,6 +277,10 @@ install_pki_material() {
     install -m 0600 "${TP_PKI_BUNDLE_DIR}/client.key" "${GRPC_CLIENT_KEY_PATH}"
     ;;
   node)
+    if [[ -n "${TP_CLIENT_CA_SOURCE:-}" ]]; then
+      replace_node_client_ca "${TP_CLIENT_CA_SOURCE}"
+      return
+    fi
     # Preserve the live trust bundle maintained by the Agent during rotation.
     if [[ -f "${GRPC_CLIENT_CA_PATH}" ]]; then
       mkdir -p "${TP_PKI_BUNDLE_DIR}"
@@ -879,6 +967,11 @@ main() {
   validate_config
   echo_content skyBlue "Operation: install; purpose: ${TP_PURPOSE}; config: ${TP_CONFIG_FILE}; release: ${INSTALLER_VERSION}"
   require_commands docker curl openssl tar od sha256sum find seq awk realpath
+  if [[ -n "${TP_CLIENT_CA_SOURCE:-}" ]]; then
+    require_commands date
+    validate_node_client_ca_source "${TP_CLIENT_CA_SOURCE}" || return 1
+    validate_node_client_ca_directories || return 1
+  fi
   docker info >/dev/null
   case "${TP_PURPOSE}" in
   web) deploy_web ;;

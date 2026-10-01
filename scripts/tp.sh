@@ -2,7 +2,7 @@
 set -euo pipefail
 
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
-DEFAULT_VERSION="1.0.2-rc.5"
+DEFAULT_VERSION="1.0.2-rc.6"
 GITHUB_RAW_BASE="https://raw.githubusercontent.com/1linhao/trojanpanelnext"
 TP_DOWNLOAD_DIR=""
 
@@ -22,7 +22,7 @@ Usage:
   $0 [--version <release>] web|node [options]
   $0 [--version <release>] config web|node [--output <file>]
   $0 [--version <release>] validate --config <file>
-  $0 [--version <release>] install --config <file> [--force]
+  $0 [--version <release>] install --config <file> [--force] [--client-ca <file>]
   $0 --version <release> update --config <file>
   $0 [--version <release>] remove --config <file> [--keep-data | --purge-data]
   $0 <command> --help

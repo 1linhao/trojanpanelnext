@@ -6,7 +6,7 @@ set -euo pipefail
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
 
 ECHO_TYPE="echo -e"
-INSTALLER_VERSION="1.0.2-rc.5"
+INSTALLER_VERSION="1.0.2-rc.6"
 SUPPORTED_SCHEMA_VERSION="1"
 GITHUB_RAW_BASE="https://raw.githubusercontent.com/1linhao/trojanpanelnext"
 DEFAULT_CONFIG_REF="v${INSTALLER_VERSION}"
@@ -84,7 +84,7 @@ handle_metadata() {
 parse_config_options() {
   local action="$1"
   shift
-  local config_file="" force_override="" purge_override=""
+  local config_file="" force_override="" purge_override="" client_ca_source=""
   while (($#)); do
     case "$1" in
     --config)
@@ -99,6 +99,15 @@ parse_config_options() {
       fi
       force_override=1
       shift
+      ;;
+    --client-ca)
+      if [[ "${action}" != install ]]; then
+        echo_content red "--client-ca is only valid with Node install" >&2
+        exit 1
+      fi
+      require_option_value "$1" "${2:-}"
+      client_ca_source="$2"
+      shift 2
       ;;
     --purge-data | --purge)
       if [[ "${action}" != remove ]]; then
@@ -140,6 +149,11 @@ parse_config_options() {
   fi
   [[ "${action}" == validate ]] || require_root
   load_config "${config_file}"
+  if [[ -n "${client_ca_source}" && "${TP_PURPOSE}" != node ]]; then
+    echo_content red "--client-ca is only valid with Node install" >&2
+    exit 1
+  fi
+  TP_CLIENT_CA_SOURCE="${client_ca_source}"
   [[ -z "${force_override}" ]] || TP_FORCE="${force_override}"
   [[ -z "${purge_override}" ]] || TP_PURGE_DATA="${purge_override}"
 }
@@ -164,6 +178,47 @@ require_commands() {
     echo_content red "Missing dependencies: ${missing[*]}. Install them first; see docs/deployment.md." >&2
     exit 1
   fi
+}
+
+validate_public_client_ca() {
+  local file="$1" line="" certificate="" constraints="" key_usage="" not_before="" starts_at=""
+  local in_certificate=0 certificate_count=0
+  [[ -f "${file}" && -r "${file}" && -s "${file}" ]] || return 1
+  # Trust bundles may contain several public CAs during rotation. Check each
+  # complete PEM block and reject other material before copying the source.
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    line="${line%$'\r'}"
+    case "${line}" in
+    '-----BEGIN CERTIFICATE-----')
+      [[ "${in_certificate}" == 0 ]] || return 1
+      in_certificate=1
+      certificate="${line}"$'\n'
+      ;;
+    '-----END CERTIFICATE-----')
+      [[ "${in_certificate}" == 1 ]] || return 1
+      certificate+="${line}"$'\n'
+      if ! constraints="$(printf '%s' "${certificate}" | openssl x509 -noout -ext basicConstraints 2>/dev/null)" ||
+        [[ "${constraints}" != *'CA:TRUE'* ]] ||
+        ! key_usage="$(printf '%s' "${certificate}" | openssl x509 -noout -ext keyUsage 2>/dev/null)" ||
+        [[ -n "${key_usage}" && "${key_usage}" != *'Certificate Sign'* ]] ||
+        ! printf '%s' "${certificate}" | openssl x509 -noout -checkend 0 >/dev/null 2>&1; then
+        return 1
+      fi
+      not_before="$(printf '%s' "${certificate}" | openssl x509 -noout -startdate 2>/dev/null)" || return 1
+      starts_at="$(LC_ALL=C date -u -d "${not_before#notBefore=}" +%s 2>/dev/null)" || return 1
+      [[ "${starts_at}" -le "$(date -u +%s)" ]] || return 1
+      certificate_count=$((certificate_count + 1))
+      in_certificate=0
+      certificate=""
+      ;;
+    *)
+      if [[ "${line}" =~ ^[[:space:]]*$ ]]; then continue; fi
+      [[ "${in_certificate}" == 1 && "${line}" =~ ^[A-Za-z0-9+/=]+$ ]] || return 1
+      certificate+="${line}"$'\n'
+      ;;
+    esac
+  done <"${file}"
+  [[ "${in_certificate}" == 0 && "${certificate_count}" -gt 0 ]]
 }
 
 require_yq() {
