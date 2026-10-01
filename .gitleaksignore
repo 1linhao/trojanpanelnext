@@ -5,3 +5,6 @@
 7982cdbfafdd3371ffe681010f9bf0efdde89b22:apps/control-plane/api/dao/initial_admin_test.go:generic-api-key:114
 # Repeated hexadecimal owner-token fixture in an example using example.com domains.
 c4c661dccc98d2392d3c860ebf6cc1d79f7358d4:docs/entry-controller/examples/combined-caddy-v2.json:generic-api-key:6
+# Literal password fixture containing '=' in the isolated image-update test.
+# Mock containers only; this value has never been a deployment credential.
+8c37e6adc57639758a3e360f81eaaf903f36bfca:tests/deploy/update_test.sh:generic-api-key:155
