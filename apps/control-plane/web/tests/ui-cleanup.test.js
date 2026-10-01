@@ -784,21 +784,12 @@ test('tables render an empty state while async callers supply null, then render 
   table.$destroy()
 })
 
-test('dashboard registration targets the whole Node server form and requires sysadmin', () => {
-  let allowed = true
-  const component = loadModule(compiler.parse({ source: read('src/views/dashboard/admin/index.vue') }).script.content, new Proxy({}, {
-    has: () => true,
-    get: (_, name) => name === '@/utils/permission' ? () => allowed : {}
-  })).default
-  const routes = []
-  const instance = { $router: { push: (route) => routes.push(route) } }
-  component.methods.registerNodeServer.call(instance)
-  assert.equal(routes.length, 1)
-  assert.equal(routes[0].path, '/server-manage/server-list')
-  assert.equal(routes[0].query.action, 'create')
-  allowed = false
-  component.methods.registerNodeServer.call(instance)
-  assert.equal(routes.length, 1, 'admin and user roles cannot start registration')
+test('dashboard retains its existing panels without server onboarding or deployment instructions', () => {
+  const descriptor = compiler.parse({ source: read('src/views/dashboard/admin/index.vue') })
+  const keys = [...descriptor.template.content.matchAll(/motion-key="([^"]+)"/g)].map((match) => match[1])
+  assert.deepEqual(keys, ['account-count', 'node-count', 'server-resources', 'traffic-rank', 'server-traffic'])
+  assert.doesNotMatch(descriptor.template.content, /serverRegistration|node-deployment|node-registration/)
+  assert.doesNotMatch(descriptor.script.content, /registerNodeServer/)
 })
 
 test('Node server registration opens once, preserves unrelated query values and guards permissions', () => {
@@ -890,4 +881,170 @@ test('server API keeps Web deletion short and gives remote uninstall its own tim
   assert.equal(requests[0].timeout, 30000)
   assert.equal(requests[1].url, '/nodeServer/uninstallNodeServerById')
   assert.equal(requests[1].timeout, 240000)
+})
+
+test('server ID has a separate readable column and table empty states span every column', () => {
+  const descriptor = compiler.parse({ source: read('src/views/node-server/list/index.vue') })
+  const head = descriptor.template.content.match(/<thead>([\s\S]+?)<\/thead>/)[1]
+  const columns = [...head.matchAll(/<th(?:\s|>)/g)].length
+  assert.equal(columns, 9)
+  for (const match of descriptor.template.content.matchAll(/colspan="(\d+)"/g)) assert.equal(Number(match[1]), columns)
+  const idCell = descriptor.template.content.match(/<td class="server-id-cell">([\s\S]+?)<\/td>/)[1]
+  assert.match(idCell, /\{\{ row\.id \}\}/)
+  assert.doesNotMatch(idCell, /row\.ip|<small|muted/)
+  assert.match(descriptor.styles[0].content, /\.server-id-value\s*{[^}]*color: var\(--ink\);[^}]*font-size: 14px;/)
+  assert.doesNotMatch(descriptor.template.content, /serverRegistration\.description/)
+  assert.doesNotMatch(read('src/views/node-server/list/compoments/NodeServerForm.vue'), /serverRegistration\.formHint/)
+})
+
+test('server creation opens deployment with the returned numeric ID, never a guessed name match', async () => {
+  let result = { id: 42, name: 'Duplicate name', ip: 'new.example.com', grpcPort: 8100, grpcTlsServerName: 'tls.example.com' }
+  const events = [], notices = []
+  const form = loadModule(compiler.parse({ source: read('src/views/node-server/list/compoments/NodeServerForm.vue') }).script.content, {
+    '@/api/node-server': { createNodeServer: async () => ({ data: result }) }
+  }).default
+  let refreshes = 0
+  const context = { creating: false, $refs: { dataForm: { validate: async () => true } }, payload: () => ({ name: 'Duplicate name' }), getList: () => { refreshes++ }, $t: (key) => key, $emit: (...args) => events.push(args), $notify: (notice) => notices.push(notice) }
+  await form.methods.createData.call(context)
+  assert.equal(events.find(([event]) => event === 'created')[1].id, 42)
+  assert.equal(context.creating, false)
+  assert.equal(refreshes, 1)
+  for (result of [null, { id: '42' }, { id: 0 }]) {
+    events.length = 0
+    await form.methods.createData.call(context)
+    assert.equal(events.some(([event]) => event === 'created'), false)
+    assert.equal(notices.at(-1).type, 'warning')
+  }
+  result = { id: 44 }
+  const beforeRefresh = refreshes
+  await Promise.all([form.methods.createData.call(context), form.methods.createData.call(context)])
+  assert.equal(refreshes, beforeRefresh + 1, 'double submit while validation is pending cannot create duplicate servers')
+  let allowed = true
+  const list = loadModule(compiler.parse({ source: read('src/views/node-server/list/index.vue') }).script.content, new Proxy({}, {
+    has: () => true, get: (_, name) => name === '@/utils/permission' ? () => allowed : {}
+  })).default
+  const view = { deploymentServer: null, list: [{ id: 99, name: 'Duplicate name' }] }
+  list.methods.handleDeployment.call(view, { id: 42, name: 'Duplicate name' })
+  assert.equal(view.deploymentServer.id, 42)
+  allowed = false
+  view.deploymentServer = null
+  list.methods.handleDeployment.call(view, { id: 42 })
+  assert.equal(view.deploymentServer, null)
+})
+
+test('deployment download rejects JSON errors, including Blob errors on HTTP failure, before accepting gzip', async () => {
+  const requests = []
+  let response = { data: new Blob([JSON.stringify({ code: 50008, message: 'Session expired' })], { type: 'application/json' }) }
+  let rejectHTTP = false
+  const api = loadModule(read('src/api/node-server.js'), {
+    '@/utils/request': async (request) => { requests.push(request); if (rejectHTTP) throw { response }; return response }
+  }, { Blob })
+  await assert.rejects(api.downloadNodeDeployment({ id: 42 }), (error) => error.message === 'Session expired' && error.code === 50008)
+  rejectHTTP = true
+  await assert.rejects(api.downloadNodeDeployment({ id: 42 }), (error) => error.message === 'Session expired' && error.code === 50008)
+  rejectHTTP = false
+  response = { data: new Blob(['<html>Gateway error</html>'], { type: 'text/html' }) }
+  await assert.rejects(api.downloadNodeDeployment({ id: 42 }), /Invalid deployment archive/)
+  response = { data: new Blob([new Uint8Array([0x1f, 0x8b, 0x08])], { type: 'application/gzip' }) }
+  assert.equal(await api.downloadNodeDeployment({ id: 42 }), response)
+  assert.equal(requests.at(-1).responseType, 'blob')
+  assert.equal(requests.at(-1).url, '/nodeServer/downloadDeployment')
+  assert.equal(requests.at(-1).data.id, 42)
+})
+
+test('deployment form validates mode-specific inputs and preserves separate database hosts', async () => {
+  const deployment = loadModule(compiler.parse({ source: read('src/views/node-server/list/compoments/NodeServerDeployment.vue') }).script.content, {
+    'copy-to-clipboard': () => true, '@/api/node-server': {}
+  }).default
+  const { LiquidFormItem } = loadModule(read('src/components/LiquidStructural/index.js'), { vue: {} })
+  const context = { $t: (key) => key, form: { certificateMode: 'caddy', webHost: 'panel.example.com' }, metadata: { webHost: 'panel.example.com', mariadbHost: 'db.example.com', mariadbPort: 3307, redisHost: 'panel.example.com', redisPort: 6378 } }
+  const valid = async (rules, value) => LiquidFormItem.methods.validate.call({ appliedRules: rules, value, error: '' })
+  let rules = deployment.computed.rules.call(context)
+  assert.equal(await valid(rules.email, ''), false)
+  assert.equal(await valid(rules.email, 'not-an-email'), false)
+  assert.equal(await valid(rules.email, 'admin@example.com'), true)
+  assert.equal(await valid(rules.webHost, 'https://panel.example.com'), false)
+  assert.equal(await valid(rules.webHost, 'panel.example.com'), true)
+  context.form.certificateMode = 'external'
+  context.form.webHost = 'reachable.example.com'
+  rules = deployment.computed.rules.call(context)
+  assert.equal(await valid(rules.email, ''), true)
+  assert.equal(await valid(rules.certificatePath, ''), false)
+  assert.equal(await valid(rules.certificatePath, 'relative/fullchain.pem'), false)
+  assert.equal(await valid(rules.privateKeyPath, '/etc/certs/private,key.pem'), false)
+  assert.equal(await valid(rules.certificatePath, '/etc/certs/fullchain.pem'), true)
+  assert.equal(await valid(rules.privateKeyPath, '/etc/certs/privkey.pem'), true)
+  assert.equal(deployment.computed.databaseAddress.call(context), 'db.example.com:3307')
+  assert.equal(deployment.computed.redisAddress.call(context), 'reachable.example.com:6378')
+})
+
+test('deployment download cleans the temporary link and ignores stale form parameters', async () => {
+  const notices = [], requests = [], links = [], timers = new Map()
+  let resolveDownload, createdUrls = 0, revokedUrls = 0
+  const component = loadModule(compiler.parse({ source: read('src/views/node-server/list/compoments/NodeServerDeployment.vue') }).script.content, {
+    'copy-to-clipboard': () => true,
+    '@/api/node-server': { downloadNodeDeployment: (data) => { requests.push(data); return new Promise((resolve) => { resolveDownload = resolve }) } }
+  }, {
+    window: { setTimeout: (callback, delay) => { assert.equal(delay, 30000); const id = timers.size + 1; timers.set(id, callback); return id }, clearTimeout: (id) => timers.delete(id), URL: { createObjectURL: () => { createdUrls++; return 'blob:fixture' }, revokeObjectURL: () => { revokedUrls++ } } },
+    document: { body: { appendChild: () => {} }, createElement: () => { const link = { clicks: 0, removed: false, click() { this.clicks++ }, remove() { this.removed = true } }; links.push(link); return link } }
+  }).default
+  const context = { serverId: 42, archiveName: 'tpnext-node-42.tar.gz', form: { webHost: 'panel.example.com', email: 'admin@example.com', certificateMode: 'caddy', certificatePath: '/previous/certificate.pem', privateKeyPath: '/previous/key.pem' }, requestSequence: 1, downloading: false, downloaded: false, pendingDownloadUrls: [], $refs: { deploymentForm: { validate: async () => true } }, $t: (key) => key, $notify: (notice) => notices.push(notice) }
+  const promise = component.methods.downloadArchive.call(context)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(requests[0].id, 42)
+  assert.equal(requests[0].certificatePath, '', 'Caddy mode must not submit hidden external paths')
+  assert.equal(requests[0].privateKeyPath, '')
+  context.form.webHost = 'changed.example.com'
+  resolveDownload({ data: new Blob([new Uint8Array([0x1f, 0x8b])]) })
+  await promise
+  assert.equal(requests[0].webHost, 'panel.example.com', 'download request must own a submitted snapshot')
+  assert.equal(context.downloaded, false, 'old package cannot make modified parameters look downloaded')
+  assert.equal(context.downloading, false)
+  assert.equal(links[0].download, 'tpnext-node-42.tar.gz')
+  assert.equal(links[0].clicks, 1)
+  assert.equal(links[0].removed, true)
+  assert.equal(createdUrls, 1)
+  assert.equal(revokedUrls, 0, 'Blob URL must stay alive while the browser asynchronously starts the download')
+  const [firstTimerId, firstTimer] = timers.entries().next().value
+  timers.delete(firstTimerId)
+  firstTimer()
+  assert.equal(createdUrls, revokedUrls, 'timer releases the consumed Blob URL')
+  assert.equal(context.pendingDownloadUrls.length, 0)
+  assert.equal(notices.at(-1).type, 'warning')
+  context.form.certificateMode = 'external'
+  context.form.webHost = 'panel.example.com'
+  const externalPromise = component.methods.downloadArchive.call(context)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(requests[1].email, '', 'external mode must not submit hidden Caddy email')
+  assert.equal(requests[1].certificatePath, '/previous/certificate.pem')
+  assert.equal(requests[1].privateKeyPath, '/previous/key.pem')
+  resolveDownload({ data: new Blob([new Uint8Array([0x1f, 0x8b])]) })
+  await externalPromise
+  assert.equal(context.downloaded, true)
+  assert.equal(createdUrls, 2)
+  assert.equal(revokedUrls, 1)
+  component.beforeDestroy.call(context)
+  assert.equal(createdUrls, revokedUrls, 'dialog destruction releases outstanding URLs')
+  assert.equal(timers.size, 0, 'dialog destruction cancels outstanding timers')
+})
+
+test('deployment metadata must match the requested ID and trusted release format before commands appear', async () => {
+  let result = { id: 42, version: read('public/version').trim().replace(/^v/, ''), webHost: 'panel.example.com' }
+  const component = loadModule(compiler.parse({ source: read('src/views/node-server/list/compoments/NodeServerDeployment.vue') }).script.content, {
+    'copy-to-clipboard': () => true, '@/api/node-server': { nodeServerDeployment: async () => ({ data: result }) }
+  }).default
+  const context = { ...component.data(), serverId: 42, $t: (key) => key }
+  await component.methods.loadDeployment.call(context)
+  assert.equal(context.metadata.id, 42)
+  assert.equal(context.form.webHost, 'panel.example.com')
+  const commands = component.computed.installCommands.call({ metadata: result, archiveName: 'tpnext-node-42.tar.gz', $t: (key) => key })
+  assert.ok(commands[0].value.includes(`/v${result.version}/scripts/tp.sh) --version ${result.version} deps install`))
+  assert.equal(commands[1].value, 'tar -xzf tpnext-node-42.tar.gz')
+  assert.equal(commands[2].value, 'bash ./install-node.sh')
+  for (result of [{ id: 99, version: '1.0.2' }, { id: 42, version: 'main; printf secret' }]) {
+    const invalid = { ...component.data(), serverId: 42, $t: (key) => key }
+    await component.methods.loadDeployment.call(invalid)
+    assert.equal(invalid.metadata, null)
+    assert.equal(invalid.loadError, 'nodeDeployment.invalidMetadata')
+  }
 })

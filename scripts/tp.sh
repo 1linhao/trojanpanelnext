@@ -2,7 +2,7 @@
 set -euo pipefail
 
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
-DEFAULT_VERSION="1.0.2-rc.2"
+DEFAULT_VERSION="1.0.2-rc.3"
 GITHUB_RAW_BASE="https://raw.githubusercontent.com/1linhao/trojanpanelnext"
 TP_DOWNLOAD_DIR=""
 

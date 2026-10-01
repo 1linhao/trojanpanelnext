@@ -6,9 +6,6 @@
     custom-class="liquid-node-server-editor"
     @close="$emit('update:dialogVisible', false)"
   >
-    <p v-if="dialogStatus === 'create'" class="muted">
-      {{ $t('serverRegistration.formHint') }}
-    </p>
     <liquid-form
       ref="dataForm"
       :rules="dialogStatus === 'create' ? createRules : updateRules"
@@ -18,10 +15,10 @@
       label-position="left"
     >
       <liquid-form-item :label="$t('table.nodeServerName')" prop="name">
-        <liquid-input v-model="form.name" clearable />
+        <liquid-input v-model="form.name" :placeholder="$t('serverRegistration.namePlaceholder')" clearable />
       </liquid-form-item>
-      <liquid-form-item :label="$t('table.nodeServerIp')" prop="ip">
-        <liquid-input v-model="form.ip" clearable />
+      <liquid-form-item :label="$t('nodeDeployment.nodeAddress')" prop="ip">
+        <liquid-input v-model="form.ip" :placeholder="$t('serverRegistration.addressPlaceholder')" clearable />
       </liquid-form-item>
       <liquid-form-item :label="$t('table.nodeServerGrpcPort')" prop="grpcPort">
         <liquid-number-input
@@ -114,6 +111,7 @@
       </liquid-button>
       <liquid-button
         type="primary"
+        :loading="creating"
         @click="dialogStatus === 'create' ? createData() : updateData()"
       >
         {{ $t('table.confirm') }}
@@ -148,6 +146,7 @@ export default {
   data() {
     return {
       form: Object.assign({}, this.nodeServer),
+      creating: false,
       textMap: {
         update: this.$t('table.edit'),
         create: this.$t('serverRegistration.add')
@@ -294,21 +293,26 @@ export default {
         this.$refs['dataForm'].clearValidate()
       })
     },
-    createData() {
-      this.$refs['dataForm'].validate((valid) => {
-        if (valid) {
-          createNodeServer(this.payload()).then(() => {
-            this.getList()
-            this.$emit('update:dialogVisible', false)
-            this.$notify({
-              title: 'Success',
-              message: this.$t('confirm.createSuccess'),
-              type: 'success',
-              duration: 2000
-            })
-          })
-        }
-      })
+    async createData() {
+      if (this.creating) return
+      this.creating = true
+      try {
+        if (!await this.$refs.dataForm.validate()) return
+        const response = await createNodeServer(this.payload())
+        this.getList()
+        this.$emit('update:dialogVisible', false)
+        const server = response.data
+        const identified = server && Number.isSafeInteger(server.id) && server.id > 0
+        this.$notify({
+          title: this.$t(identified ? 'confirm.createSuccess' : 'nodeDeployment.missingId'),
+          message: this.$t(identified ? 'confirm.createSuccess' : 'nodeDeployment.missingId'),
+          type: identified ? 'success' : 'warning',
+          duration: identified ? 2000 : 6000
+        })
+        if (identified) this.$emit('created', server)
+      } finally {
+        this.creating = false
+      }
     },
     updateData() {
       this.$refs['dataForm'].validate((valid) => {

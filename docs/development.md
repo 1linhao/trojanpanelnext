@@ -81,6 +81,12 @@ npm run build
 
 `serve` 和 `build` 会先构建内部 UI 包，Web 构建输出在 `dist/`。UI 包为私有 workspace 包，使用各自 `package.json` 的版本；它们的版本与产品发布标签独立。依赖锁定来源是 `yarn.lock`。
 
+### 界面规范
+
+功能入口放在所属管理页。仪表盘新增面板需要明确的产品需求，不承担安装说明入口；Node 登记与部署操作放在服务器管理中。
+
+复用已有 `UiDialog` / Liquid 系列控件和 UI contracts 中的语义变量。说明采用结构化表单标签、标准帮助、弹窗或文档链接，不在业务页面堆积小字说明。关键数字 ID 与地址分列，使用正常字号和足够的对比度。
+
 <a id="browser-tests"></a>
 ## 浏览器测试
 

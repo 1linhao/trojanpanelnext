@@ -62,9 +62,20 @@ func CreateNodeServer(nodeServer *model.NodeServer) error {
 		logrus.Errorln(err.Error())
 		return errors.New(constant.SysError)
 	}
-	if _, err = db.Exec(buildInsert, values...); err != nil {
+	result, err := db.Exec(buildInsert, values...)
+	if err != nil {
 		logrus.Errorln(err.Error())
 		return errors.New(constant.SysError)
+	}
+	insertedID, err := result.LastInsertId()
+	if err != nil || insertedID <= 0 {
+		return errors.New(constant.SysError)
+	}
+	id := uint(insertedID)
+	nodeServer.Id = &id
+	if nodeServer.GrpcPort == nil || *nodeServer.GrpcPort == 0 {
+		port := uint(8100)
+		nodeServer.GrpcPort = &port
 	}
 	return nil
 }

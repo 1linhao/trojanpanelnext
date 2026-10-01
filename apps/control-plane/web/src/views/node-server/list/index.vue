@@ -1,9 +1,6 @@
 <template>
   <div class="prototype-page grid">
     <ui-panel motion-key="server-filters">
-      <p v-if="checkPermission(['sysadmin'])" class="muted">
-        {{ $t('serverRegistration.description') }}
-      </p>
       <div class="toolbar">
         <div class="search-box">
           <app-icon name="search" /><input
@@ -68,6 +65,7 @@
         <table class="tbl">
           <thead>
             <tr>
+              <th class="server-id-column">{{ $t('serverRegistration.serverId') }}</th>
               <th>服务器</th>
               <th>gRPC</th>
               <th>流量配额</th>
@@ -100,10 +98,19 @@
               <td colspan="9">暂无数据</td>
             </tr>
             <tr v-for="row in list" :key="row.id">
+              <td class="server-id-cell">
+                <span class="mono server-id-value">{{ row.id }}</span>
+                <liquid-button
+                  icon="document-copy"
+                  size="sm"
+                  :title="$t('nodeDeployment.copyId')"
+                  :aria-label="$t('nodeDeployment.copyId') + ': ' + row.id"
+                  @click="copyServerId(row.id)"
+                />
+              </td>
               <td class="primary-cell">
-                <strong>{{ row.name }}</strong
-                ><small class="mono">{{ $t('serverRegistration.serverId') }}: {{ row.id }}</small>
-                <small class="mono">{{ row.ip }}</small>
+                <strong>{{ row.name }}</strong>
+                <span class="mono server-address">{{ row.ip }}</span>
               </td>
               <td>
                 <span class="mono muted">:{{ row.grpcPort }}</span
@@ -181,6 +188,12 @@
               </td>
               <td>
                 <div class="row-actions">
+                  <liquid-button
+                    v-if="checkPermission(['sysadmin'])"
+                    icon="download"
+                    size="sm"
+                    @click="handleDeployment(row)"
+                  >{{ $t('nodeDeployment.title') }}</liquid-button>
                   <button
                     class="icon-btn"
                     type="button"
@@ -354,6 +367,13 @@
       :dialog-status="dialogStatus"
       :dialog-visible.sync="dialogFormVisible"
       :get-list="getList"
+      @created="handleDeployment"
+    />
+    <node-server-deployment
+      v-if="deploymentServer"
+      :server-id="deploymentServer.id"
+      :dialog-visible="true"
+      @update:dialogVisible="deploymentServer = null"
     />
     <import-tip
       ref="importTip"
@@ -372,6 +392,7 @@ import ImportTip from '@/components/ImportTip'
 import latestListRequest from '@/mixins/latest-list-request'
 import { MessageBox } from '@/utils/liquid-feedback'
 import checkPermission from '@/utils/permission'
+import copy from 'copy-to-clipboard'
 import {
   deleteNodeServerById,
   uninstallNodeServerById,
@@ -382,12 +403,13 @@ import {
   resetNodeServerTraffic
 } from '@/api/node-server'
 import NodeServerForm from '@/views/node-server/list/compoments/NodeServerForm'
+import NodeServerDeployment from '@/views/node-server/list/compoments/NodeServerDeployment'
 import { downloadTemplate } from '@/api/file-task'
 import { getFlow } from '@/utils/account'
 
 export default {
   name: 'NodeServer',
-  components: { NodeServerForm, Pagination, ImportTip },
+  components: { NodeServerForm, NodeServerDeployment, Pagination, ImportTip },
   mixins: [latestListRequest],
   data() {
     return {
@@ -427,6 +449,7 @@ export default {
       resettingServerId: 0,
       deletingServerId: 0,
       deleteServer: null,
+      deploymentServer: null,
       detailServer: null,
       detailState: { cpuUsed: 0, memUsed: 0, diskUsed: 0 }
     }
@@ -534,6 +557,20 @@ export default {
       this.dialogStatus = 'create'
       this.dialogFormVisible = true
       this.$refs.nodeServerForm.clearValidate()
+    },
+    handleDeployment(server) {
+      if (!checkPermission(['sysadmin']) || !server || !Number.isSafeInteger(server.id) || server.id <= 0) return
+      this.deploymentServer = { id: server.id }
+    },
+    copyServerId(id) {
+      if (!Number.isSafeInteger(id) || id <= 0) return
+      const success = copy(String(id))
+      this.$notify({
+        title: this.$t(success ? 'nodeDeployment.copySuccess' : 'nodeDeployment.copyFailed'),
+        message: this.$t(success ? 'nodeDeployment.copySuccess' : 'nodeDeployment.copyFailed'),
+        type: success ? 'success' : 'error',
+        duration: 2000
+      })
     },
     openRegistrationFromRoute() {
       if (this.$route.query.action !== 'create' || !checkPermission(['sysadmin'])) return
@@ -721,6 +758,31 @@ export default {
   color: var(--bad-fg);
 }
 .server-delete-actions .liquid-button {
+  margin-left: 0;
+}
+.server-id-column {
+  color: var(--ink);
+  font-size: 14px;
+  letter-spacing: normal;
+  text-transform: none;
+}
+.server-id-cell {
+  white-space: nowrap;
+}
+.server-id-value {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 650;
+}
+.server-id-cell .liquid-button {
+  margin-left: 8px;
+}
+.server-address {
+  display: block;
+  color: var(--ink);
+  font-size: 14px;
+}
+.row-actions .liquid-button {
   margin-left: 0;
 }
 </style>

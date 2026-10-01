@@ -40,7 +40,7 @@ NaiveProxy 会拒绝无效的替换证书，维护失败会重试。续签工具
 <a id="mtls"></a>
 ## Web 与 Node 的 mTLS
 
-Web API 维护内部 CA 与客户端身份。CA 私钥和 Web 客户端私钥只保留在 Web，Node 首次部署仅接收公开 `client-ca.crt`。CA 与客户端身份以完整 generation 保存，`state.json` 记录当前状态，新握手读取同一 generation 的证书和私钥。
+Web API 维护内部 CA 与客户端身份。CA 私钥和 Web 客户端私钥只保留在 Web，Node 首次部署仅接收公开 `client-ca.crt`。[Web 部署包](deployment.md#node-deployment-package)包含该公开 CA，并由包内入口准备 Node 的引导信任；手工配置时可按[CA 准备](deployment.md#configuration-node-ca)传输公开文件。CA 与客户端身份以完整 generation 保存，`state.json` 记录当前状态，新握手读取同一 generation 的证书和私钥。
 
 Web 每 5 分钟检查证书。客户端身份剩余有效期不足 90 天时续签，最多有效 825 天且不超过 CA。CA 剩余不足 365 天时准备新 CA，通过已认证的 mTLS 通道向全部登记的 mTLS Node 分发双 CA；全部确认后才切换客户端身份。
 

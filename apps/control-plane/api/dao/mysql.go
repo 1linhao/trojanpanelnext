@@ -81,6 +81,9 @@ func InitMySQL() {
 	if err = migrateNodeServerRemovalPermissions(); err != nil {
 		panic(err)
 	}
+	if err = migrateNodeDeploymentPermissions(); err != nil {
+		panic(err)
+	}
 }
 
 func migrateTrafficAccountingSchema() error {

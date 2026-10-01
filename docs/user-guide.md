@@ -21,7 +21,7 @@
 <a id="servers"></a>
 ## 节点服务器
 
-使用具有 `sysadmin` 角色的系统管理员账号登录，点击首页的“新增 Node 服务器”，或左侧“服务器管理”中的同名按钮。首页入口会直接打开登记表单，也可访问 `https://你的Web域名/#/server-manage/server-list`。
+以系统管理员（`sysadmin` 角色）登录，打开左侧 **服务器管理**，点击 **新增 Node 服务器**。也可访问 `https://panel.example.com/#/server-manage/server-list`，将示例域名替换成实际 Web 域名。
 
 登记时至少填写以下内容：
 
@@ -32,7 +32,19 @@
 | gRPC端口 | 默认 `8100`，与 Node 配置中的 `grpc_port` 一致 |
 | gRPC 证书域名 | 与 Node 配置中的 `grpc_tls_server_name` 一致，并被 Node 证书覆盖 |
 
-确认后在服务器名称下方查看“服务器 ID”，将真实 ID 填入 Node 配置的 `node_server_id`。Node 尚未安装时显示离线是正常的。将 Web 当前公开 `client-ca.crt` 复制到 Node，再按[配置文件下载](deployment.md#configuration-download)、[Node 最少编辑项](deployment.md#configuration-node-minimum)和[CA 准备](deployment.md#configuration-node-ca)完成校验与安装。详细步骤见[登记 Node 服务器](deployment.md#node-registration)。
+### 数字 ID 与服务器地址
+
+列表 **ID** 列是 Web 数据库生成的大于或等于 `1` 的整数，与 **IP / 域名** 地址分列。例如服务器地址为 `node.example.com`、ID 为 `3` 时，`node_server_id` 填 `3`。服务器 ID 不是 IP、域名、服务器名称或代理实例 ID。
+
+### 下载并安装 Node 部署包
+
+新增保存后自动打开 **部署 Node**；列表中每台服务器的同名按钮可重新打开。确认 Node 可达的 Web 地址，选择 Caddy 并填写邮箱，或选择 **使用宿主机现有证书** 并填写目标 Node 上的 fullchain / 私钥绝对路径，然后下载部署包。
+
+包包含已填实际 ID 与数据库 / Redis 凭据的 `node.yaml`、Web 公开 `client-ca.crt`、`install-node.sh` 和包内说明。只有 `sysadmin` 可生成该含凭据包；部署包和 YAML 应以 `0600` 权限保存在私有目录，只安全传到目标 Node，不提交公开仓库。包不包含任何 Web 私钥或 Node TLS 私钥，外部证书与私钥须在 Node 预先准备。
+
+在 Node 准备依赖、解压后执行 `bash ./install-node.sh`，脚本自动准备公开 CA 并按配置安装，不覆盖不同的现有信任，也不强制重建服务。安装后保留原 `node.yaml` 用于更新与卸载。Node 尚未安装时显示离线是正常的；完整流程见[部署包安装](deployment.md#node-deployment-package)。
+
+手工配置部署为备选，模板下载、最少编辑和 CA 操作分别见[配置文件下载](deployment.md#configuration-download)、[Node 最少编辑项](deployment.md#configuration-node-minimum)和[CA 准备](deployment.md#configuration-node-ca)。
 
 一台节点服务器可承载多个代理节点。服务器在线后再添加代理；地址、证书服务名、CA 与防火墙配置必须一致。
 

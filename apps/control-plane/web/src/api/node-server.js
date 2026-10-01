@@ -26,6 +26,48 @@ export function createNodeServer(data) {
   })
 }
 
+export function nodeServerDeployment(id) {
+  return request({
+    url: '/nodeServer/deployment',
+    method: 'get',
+    params: { id }
+  })
+}
+
+// Axios decodes all responses to Blob in download mode, including JSON errors.
+// Verify the archive signature before allowing a browser download.
+export async function decodeNodeDeploymentDownload(response) {
+  const blob = response && response.data
+  if (!(blob instanceof Blob) || !blob.size) throw new Error('Empty deployment archive')
+  const prefix = new Uint8Array(await blob.slice(0, 2).arrayBuffer())
+  if (prefix[0] === 0x1f && prefix[1] === 0x8b) return response
+  let payload
+  if (blob.size <= 1048576) {
+    try { payload = JSON.parse(await blob.text()) } catch (_) { /* Not JSON. */ }
+  }
+  const error = new Error(payload && payload.message ? payload.message : 'Invalid deployment archive')
+  if (payload && payload.code !== undefined) error.code = payload.code
+  throw error
+}
+
+export async function downloadNodeDeployment(data) {
+  try {
+    const response = await request({
+      url: '/nodeServer/downloadDeployment',
+      method: 'post',
+      responseType: 'blob',
+      timeout: 30000,
+      data
+    })
+    return await decodeNodeDeploymentDownload(response)
+  } catch (error) {
+    if (error.response && error.response.data instanceof Blob) {
+      await decodeNodeDeploymentDownload(error.response)
+    }
+    throw error
+  }
+}
+
 /**
  * 分页查询服务器
  * @param data

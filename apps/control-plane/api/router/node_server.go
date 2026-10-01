@@ -12,6 +12,9 @@ func initNodeServerRouter(trojanApi *gin.RouterGroup) {
 		nodeServer.GET("/selectNodeServerById", api.SelectNodeServerById)
 		// 创建服务器
 		nodeServer.POST("/createNodeServer", api.CreateNodeServer)
+		// 读取部署引导信息和下载受保护的 Node 部署包
+		nodeServer.GET("/deployment", api.NodeServerDeployment)
+		nodeServer.POST("/downloadDeployment", api.DownloadNodeDeployment)
 		// 分页查询服务器
 		nodeServer.GET("/selectNodeServerPage", api.SelectNodeServerPage)
 		// 仅删除 Web 中的服务器记录

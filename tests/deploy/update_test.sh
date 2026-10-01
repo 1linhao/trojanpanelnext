@@ -152,7 +152,7 @@ setup_deployment() {
   TP_PKI_BUNDLE_DIR="${TP_DATA}/pki-bundle"
   cp "${SCRIPT_DIR}/templates/${purpose}.yaml" "${TEST_DIR}/original.yaml"
   TP_TEST_PKI="${TP_PKI_BUNDLE_DIR}" TP_TEST_CA="${GRPC_CLIENT_CA_PATH}" TP_TEST_CERT="${GRPC_CLIENT_CERT_PATH}" TP_TEST_KEY="${GRPC_CLIENT_KEY_PATH}" TP_TEST_RUNTIME="${KERNEL_RUNTIME_PATH}" \
-    yq -i '.trojanpanelnext.mariadb_password = "retain-secret-with=equals" | .trojanpanelnext.redis_password = "redis-secret" | .trojanpanelnext.pki_bundle_dir = strenv(TP_TEST_PKI) | .trojanpanelnext.grpc_client_ca_path = strenv(TP_TEST_CA) | .trojanpanelnext.grpc_client_cert_path = strenv(TP_TEST_CERT) | .trojanpanelnext.grpc_client_key_path = strenv(TP_TEST_KEY) | .trojanpanelnext.kernel_runtime_path = strenv(TP_TEST_RUNTIME)' "${TEST_DIR}/original.yaml"
+    yq -i '.trojanpanelnext.mariadb_password = "mock=p" | .trojanpanelnext.redis_password = "redis-secret" | .trojanpanelnext.pki_bundle_dir = strenv(TP_TEST_PKI) | .trojanpanelnext.grpc_client_ca_path = strenv(TP_TEST_CA) | .trojanpanelnext.grpc_client_cert_path = strenv(TP_TEST_CERT) | .trojanpanelnext.grpc_client_key_path = strenv(TP_TEST_KEY) | .trojanpanelnext.kernel_runtime_path = strenv(TP_TEST_RUNTIME)' "${TEST_DIR}/original.yaml"
   load_config "${TEST_DIR}/original.yaml"
   prepare_dirs
   if [[ "${purpose}" == web ]]; then
@@ -325,5 +325,5 @@ test "$(yq -r '.trojanpanelnext.node_certificate_mode' "${TEST_DIR}/original.yam
 test "$(yq -r '.trojanpanelnext.node_certificate_path' "${TEST_DIR}/original.yaml")" = "${NODE_CERTIFICATE_PATH}"
 
 # Version ordering includes RC -> RC, RC -> stable and rejects stable -> RC.
-bash -c 'source "$1"; version_can_update 1.0 1.0.1; version_can_update 1.0.2-rc.1 1.0.2-rc.2; version_can_update 1.0.2-rc.9 1.0.2-rc.10; version_can_update 1.0.2-rc.2 1.0.2; ! version_can_update 1.0.2 1.0.2-rc.2; ! version_can_update 1.1 1.0.2; ! version_can_update 0.9 1.0' test "${UPDATE}"
+bash -c 'source "$1"; version_can_update 1.0 1.0.1; version_can_update 1.0.2-rc.1 1.0.2-rc.3; version_can_update 1.0.2-rc.9 1.0.2-rc.10; version_can_update 1.0.2-rc.3 1.0.2; ! version_can_update 1.0.2 1.0.2-rc.3; ! version_can_update 1.1 1.0.2; ! version_can_update 0.9 1.0' test "${UPDATE}"
 printf 'PASS product-only image updates, protected config backup, source guards, pull safety, readiness/rename/create recovery and Node helper refresh\n'

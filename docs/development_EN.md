@@ -81,6 +81,12 @@ npm run build
 
 `serve` and `build` build internal UI packages first. The Web output is written to `dist/`. Private workspace package versions follow their own `package.json` and are independent of product release tags. `yarn.lock` is the dependency lock source.
 
+### UI conventions
+
+Place actions on the page that owns the feature. Dashboard panels require an explicit product need and do not serve as installation instructions. Node registration and deployment belong in Server management.
+
+Reuse existing `UiDialog` / Liquid components and semantic variables from UI contracts. Explain inputs through structured form labels, standard help, dialogs, or documentation links instead of accumulating small explanatory text on business pages. Display key numeric IDs and addresses in separate columns with normal font sizes and adequate contrast.
+
 <a id="browser-tests"></a>
 ## Browser tests
 

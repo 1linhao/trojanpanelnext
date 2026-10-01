@@ -1,4 +1,8 @@
 const http = require('http')
+const fs = require('fs')
+const pathModule = require('path')
+const zlib = require('zlib')
+const productVersion = fs.readFileSync(pathModule.join(__dirname, '../public/version'), 'utf8').trim().replace(/^v/, '')
 
 const ok = (data) =>
   JSON.stringify({ code: 20000, type: 'success', message: '', data })
@@ -147,6 +151,52 @@ const serverTrafficStatus = (server) => {
   }
 }
 
+const deploymentInfo = (server) => ({
+  id: server.id,
+  name: server.name,
+  ip: server.ip,
+  grpcPort: server.grpcPort,
+  grpcTlsServerName: server.grpcTlsServerName || server.grpcTLSServerName,
+  version: productVersion,
+  webHost: 'panel.example.com',
+  mariadbHost: 'panel.example.com',
+  mariadbPort: 9507,
+  redisHost: 'panel.example.com',
+  redisPort: 6378,
+  docsUrl: `https://github.com/1linhao/trojanpanelnext/blob/v${productVersion}/docs/deployment.md#node-deployment-package`
+})
+
+// A real gzip/tar fixture keeps downloads and archive checks exercisable. All
+// credentials/CA contents are fixture-only and never copied from live hosts.
+const deploymentArchive = (nodeServer, options) => {
+  const info = deploymentInfo(nodeServer)
+  const entries = {
+    'node.yaml': `trojanpanelnext:\n  release: "${productVersion}"\n  schema_version: 1\n  purpose: node\n  hostname: ${info.grpcTlsServerName}\n  node_server_id: ${info.id}\n  mariadb_host: ${options.webHost}\n  mariadb_password: fixture-only-database-password\n  redis_host: ${options.webHost}\n  redis_password: fixture-only-redis-password\n  node_certificate_mode: ${options.certificateMode}\n`,
+    'client-ca.crt': '-----BEGIN CERTIFICATE-----\nfixture-only-public-CA\n-----END CERTIFICATE-----\n',
+    'install-node.sh': '#!/usr/bin/env bash\nprintf "Mock fixture: no host installation is performed.\\n"\n',
+    'README.md': '# Local UI fixture\nThis archive is for UI tests. Do not deploy it.\n'
+  }
+  const chunks = []
+  for (const [name, text] of Object.entries(entries)) {
+    const content = Buffer.from(text)
+    const header = Buffer.alloc(512)
+    header.write(name, 0, 100)
+    header.write('0000600\0', 100, 8)
+    header.write('0000000\0', 108, 8)
+    header.write('0000000\0', 116, 8)
+    header.write(content.length.toString(8).padStart(11, '0') + '\0', 124, 12)
+    header.write('00000000000\0', 136, 12)
+    header.fill(32, 148, 156)
+    header.write('0', 156, 1)
+    header.write('ustar\0', 257, 6)
+    header.write('00', 263, 2)
+    const checksum = header.reduce((sum, byte) => sum + byte, 0)
+    header.write(checksum.toString(8).padStart(6, '0') + '\0 ', 148, 8)
+    chunks.push(header, content, Buffer.alloc((512 - content.length % 512) % 512))
+  }
+  return zlib.gzipSync(Buffer.concat([...chunks, Buffer.alloc(1024)]))
+}
+
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://127.0.0.1')
   const path = url.pathname.replace(/^\/api/, '')
@@ -163,6 +213,42 @@ const server = http.createServer((req, res) => {
     return
   }
   res.setHeader('Content-Type', 'application/json; charset=utf-8')
+
+  if (path === '/nodeServer/createNodeServer' || path === '/nodeServer/downloadDeployment') {
+    let body = ''
+    req.on('data', (chunk) => { body += chunk })
+    req.on('end', () => {
+      let params
+      try { params = JSON.parse(body || '{}') } catch (_) {
+        res.end(JSON.stringify({ code: 50000, message: 'Invalid request JSON' })); return
+      }
+      if (isUserSession) { res.end(JSON.stringify({ code: 50401, message: 'System administrator required' })); return }
+      if (path === '/nodeServer/createNodeServer') {
+        const created = { ...params, id: Math.max(0, ...nodeServers.map((server) => server.id)) + 1, status: 0, grpcTlsMode: 'mtls' }
+        nodeServers.push(created)
+        res.end(ok({ id: created.id, name: created.name, ip: created.ip, grpcPort: created.grpcPort, grpcTlsServerName: created.grpcTlsServerName }))
+        return
+      }
+      const nodeServer = nodeServers.find((server) => server.id === params.id)
+      if (!nodeServer) { res.end(JSON.stringify({ code: 50000, message: 'Node server not found' })); return }
+      if (process.env.MOCK_DEPLOYMENT_DOWNLOAD_ERROR) {
+        res.end(JSON.stringify({ code: 50000, message: process.env.MOCK_DEPLOYMENT_DOWNLOAD_ERROR })); return
+      }
+      const archive = deploymentArchive(nodeServer, params)
+      res.setHeader('Content-Type', 'application/gzip')
+      res.setHeader('Content-Disposition', `attachment; filename=tpnext-node-${nodeServer.id}.tar.gz`)
+      res.setHeader('Content-Length', archive.length)
+      res.end(archive)
+    })
+    return
+  }
+  if (path === '/nodeServer/deployment') {
+    if (isUserSession) { res.end(JSON.stringify({ code: 50401, message: 'System administrator required' })); return }
+    const nodeServer = nodeServers.find((server) => server.id === Number(url.searchParams.get('id')))
+    if (!nodeServer) { res.end(JSON.stringify({ code: 50000, message: 'Node server not found' })); return }
+    res.end(ok(deploymentInfo(nodeServer)))
+    return
+  }
 
   const responses = {
     '/auth/setting': {

@@ -59,15 +59,15 @@ sed 's/schema_version: 1/schema_version: 2/' "${TEMPLATES}/web.yaml" >"${TEST_DI
 assert_error 'Unsupported schema version: 2' "${VALIDATOR}" --config "${TEST_DIR}/schema.yaml"
 sed '/release:/d' "${TEMPLATES}/web.yaml" >"${TEST_DIR}/missing-release.yaml"
 assert_error 'Configuration release <missing> does not match script release' "${VALIDATOR}" --config "${TEST_DIR}/missing-release.yaml"
-sed 's/release: "1.0.2-rc.2"/release: "2.0"/' "${TEMPLATES}/web.yaml" >"${TEST_DIR}/wrong-release.yaml"
+sed 's/release: "1.0.2-rc.3"/release: "2.0"/' "${TEMPLATES}/web.yaml" >"${TEST_DIR}/wrong-release.yaml"
 assert_error 'Configuration release 2.0 does not match script release' "${VALIDATOR}" --config "${TEST_DIR}/wrong-release.yaml"
-sed 's/trojanpanelnext-api:1.0.2-rc.2/trojanpanelnext-api:0.9/' "${TEMPLATES}/web.yaml" >"${TEST_DIR}/wrong-api.yaml"
-assert_error 'PANEL_IMAGE must be ghcr.io/1linhao/trojanpanelnext-api:1.0.2-rc.2' "${VALIDATOR}" --config "${TEST_DIR}/wrong-api.yaml"
-sed 's/trojanpanelnext-web:1.0.2-rc.2/trojanpanelnext-web:latest/' "${TEMPLATES}/web.yaml" >"${TEST_DIR}/wrong-ui.yaml"
-assert_error 'UI_IMAGE must be ghcr.io/1linhao/trojanpanelnext-web:1.0.2-rc.2' "${VALIDATOR}" --config "${TEST_DIR}/wrong-ui.yaml"
-sed 's/trojanpanelnext-node-agent:1.0.2-rc.2/trojanpanelnext-node-agent:2.0/' "${TEMPLATES}/node.yaml" >"${TEST_DIR}/wrong-agent.yaml"
-assert_error 'CORE_IMAGE must be ghcr.io/1linhao/trojanpanelnext-node-agent:1.0.2-rc.2' "${VALIDATOR}" --config "${TEST_DIR}/wrong-agent.yaml"
-assert_error 'Release ref must be v1.0.2-rc.2' env TP_RELEASE_REF=main "${VALIDATOR}" --config "${TEMPLATES}/web.yaml"
+sed 's/trojanpanelnext-api:1.0.2-rc.3/trojanpanelnext-api:0.9/' "${TEMPLATES}/web.yaml" >"${TEST_DIR}/wrong-api.yaml"
+assert_error 'PANEL_IMAGE must be ghcr.io/1linhao/trojanpanelnext-api:1.0.2-rc.3' "${VALIDATOR}" --config "${TEST_DIR}/wrong-api.yaml"
+sed 's/trojanpanelnext-web:1.0.2-rc.3/trojanpanelnext-web:latest/' "${TEMPLATES}/web.yaml" >"${TEST_DIR}/wrong-ui.yaml"
+assert_error 'UI_IMAGE must be ghcr.io/1linhao/trojanpanelnext-web:1.0.2-rc.3' "${VALIDATOR}" --config "${TEST_DIR}/wrong-ui.yaml"
+sed 's/trojanpanelnext-node-agent:1.0.2-rc.3/trojanpanelnext-node-agent:2.0/' "${TEMPLATES}/node.yaml" >"${TEST_DIR}/wrong-agent.yaml"
+assert_error 'CORE_IMAGE must be ghcr.io/1linhao/trojanpanelnext-node-agent:1.0.2-rc.3' "${VALIDATOR}" --config "${TEST_DIR}/wrong-agent.yaml"
+assert_error 'Release ref must be v1.0.2-rc.3' env TP_RELEASE_REF=main "${VALIDATOR}" --config "${TEMPLATES}/web.yaml"
 printf 'trojanpanelnext: [\n' >"${TEST_DIR}/malformed.yaml"
 assert_error "Configuration must contain a 'trojanpanelnext' root object" "${VALIDATOR}" --config "${TEST_DIR}/malformed.yaml"
 sed 's/grpc_tls_mode: mtls/grpc_tls_mode: legacy/' "${TEMPLATES}/node.yaml" >"${TEST_DIR}/legacy.yaml"
@@ -104,7 +104,7 @@ curl() {
   fail) printf 'partial' >"${destination}"; return 22 ;;
   empty) : >"${destination}" ;;
   html) printf '<!doctype html><html>error</html>\n' >"${destination}" ;;
-  version) sed 's/release: "1.0.2-rc.2"/release: "9.9"/' "${MOCK_TEMPLATE}" >"${destination}" ;;
+  version) sed 's/release: "1.0.2-rc.3"/release: "9.9"/' "${MOCK_TEMPLATE}" >"${destination}" ;;
   purpose) sed 's/purpose: web/purpose: node/' "${MOCK_TEMPLATE}" >"${destination}" ;;
   race) cp "${MOCK_TEMPLATE}" "${destination}"; printf 'existing-secrets\n' >"${MOCK_OUTPUT}" ;;
   term) printf 'partial' >"${destination}"; kill -TERM "${BASHPID}" ;;

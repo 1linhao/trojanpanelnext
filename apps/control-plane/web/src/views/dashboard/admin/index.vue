@@ -1,16 +1,5 @@
 <template>
   <div class="prototype-page grid">
-    <ui-panel v-if="checkPermission(['sysadmin'])" motion-key="node-registration">
-      <div class="card-head">
-        <div>
-          <h2>{{ $t('serverRegistration.title') }}</h2>
-          <p class="muted">{{ $t('serverRegistration.description') }}</p>
-        </div>
-        <button class="cap primary" type="button" @click="registerNodeServer">
-          <app-icon name="plus" />{{ $t('serverRegistration.add') }}
-        </button>
-      </div>
-    </ui-panel>
     <div class="grid cols-4">
       <ui-panel variant="metric" class="stat-tile" motion-key="account-count">
         <span class="icon-wrap tone-blue"><app-icon name="user-solid" /></span>
@@ -66,7 +55,6 @@
 import TrafficTable from '@/views/dashboard/admin/compoments/TrafficTable'
 import ServerTrafficTable from '@/views/dashboard/admin/compoments/ServerTrafficTable'
 import { panelGroup } from '@/api/dashboard'
-import checkPermission from '@/utils/permission'
 
 export default {
   name: 'AdminDashboard',
@@ -110,14 +98,6 @@ export default {
     })
   },
   methods: {
-    checkPermission,
-    registerNodeServer() {
-      if (!checkPermission(['sysadmin'])) return
-      this.$router.push({
-        path: '/server-manage/server-list',
-        query: { action: 'create' }
-      })
-    },
     percent(value) {
       return Math.max(0, Math.min(100, Math.round(Number(value) || 0)))
     }

@@ -1,4 +1,4 @@
-# TrojanPanel Next v1.0.2-rc.2 deployment guide
+# TrojanPanel Next v1.0.2-rc.3 deployment guide
 
 [简体中文](deployment.md) | English
 
@@ -12,7 +12,9 @@
 - [DNS, ports, and networking](#network)
 - [One-command Web installation](#web)
 - [Register a node server](#node-registration)
-- [One-command Node installation](#node)
+- [Install Node](#node)
+  - [Web deployment package](#node-deployment-package)
+  - [Interactive command-line installation](#node-interactive)
 - [Existing Node certificates](#external-certificates)
 - [Configuration deployment and fields](#configuration)
   - [Download and edit templates](#configuration-download)
@@ -53,7 +55,7 @@ Supported systems are **Debian 12/13 and Ubuntu 22.04/24.04** on `amd64` or `arm
 Run in a root Bash session:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) deps install
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.3/scripts/tp.sh) deps install
 ```
 
 The command prepares Bash, curl, CA certificates, grep, coreutils, OpenSSL, tar, findutils, awk (installing gawk if awk is missing), and the distribution's Docker Engine packages (`docker.io`, `containerd`, and `runc`; Debian 13 also needs `docker-cli`), then starts Docker. If compatible yq is missing, it downloads the architecture-specific **mikefarah/yq v4.53.6** binary and installs it after SHA256 verification. Existing compatible Docker and mikefarah/yq v4 are reused without replacing the original tools.
@@ -68,7 +70,7 @@ apt-get install -y bash curl ca-certificates grep coreutils util-linux
 Dependency commands use the same release entrypoint as deployment commands. Select a release explicitly with:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) --version 1.0.2-rc.2 deps install
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.3/scripts/tp.sh) --version 1.0.2-rc.3 deps install
 ```
 
 Installation records are stored in `/var/lib/trojanpanelnext-dependencies` (directory mode `0700`). They track Docker packages added by this command and the installed yq file's SHA256 for [dependency removal](#dependency-removal). Repeated installation checks and fills missing dependencies. If installation was interrupted, rerun `deps install` to repair it before removal.
@@ -102,7 +104,7 @@ openssl version
 First [remove the project](#removal) on that host and remove containers belonging to other Docker services. After uninstalling a Node from Web, also wait for host maintenance cleanup. Deleting only Web records leaves the Node host running; remove it locally first. Then run:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) deps remove
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.3/scripts/tp.sh) deps remove
 ```
 
 | Target | Behavior |
@@ -118,13 +120,13 @@ Without an installation record, removal is a no-op. If dependency installation w
 <a id="versions"></a>
 ## Release binding and entrypoint
 
-This guide covers pre-release **v1.0.2-rc.2 (Pre-release)**. Version `1.0.2-rc.2` maps to Git tag `v1.0.2-rc.2`, configuration field `trojanpanelnext.release: "1.0.2-rc.2"`, and these product images:
+This guide covers pre-release **v1.0.2-rc.3 (Pre-release)**. Version `1.0.2-rc.3` maps to Git tag `v1.0.2-rc.3`, configuration field `trojanpanelnext.release: "1.0.2-rc.3"`, and these product images:
 
 | Component | Image |
 | --- | --- |
-| Web API | `ghcr.io/1linhao/trojanpanelnext-api:1.0.2-rc.2` |
-| Web interface | `ghcr.io/1linhao/trojanpanelnext-web:1.0.2-rc.2` |
-| Node Agent | `ghcr.io/1linhao/trojanpanelnext-node-agent:1.0.2-rc.2` |
+| Web API | `ghcr.io/1linhao/trojanpanelnext-api:1.0.2-rc.3` |
+| Web interface | `ghcr.io/1linhao/trojanpanelnext-web:1.0.2-rc.3` |
+| Node Agent | `ghcr.io/1linhao/trojanpanelnext-node-agent:1.0.2-rc.3` |
 
 All product images provide `linux/amd64` and `linux/arm64`. Caddy, MariaDB, and Redis use the separate upstream versions in the templates.
 
@@ -133,7 +135,7 @@ The shared entrypoint, `scripts/tp.sh`, fetches the script library and templates
 Select a version explicitly when installing Web:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) --version 1.0.2-rc.2 web
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.3/scripts/tp.sh) --version 1.0.2-rc.3 web
 ```
 
 `--version <version>` is accepted before or after the command. `--entry-version` prints the entrypoint's default release. Use `--help` or `<command> --help` for usage. `--version` without a value does not query the version.
@@ -160,7 +162,7 @@ One-command deployment reads terminal input; database and Redis passwords are no
 | `--config <file>` | Install using completed configuration |
 | `--force` | Recreate application containers, retaining service data |
 | `--web-host <host>` | Node Web database/Redis address; use YAML for separate addresses |
-| `--node-id <id>` | Node server ID already registered in Web |
+| `--node-id <id>` | Integer Web server ID (≥ `1`), not an IP / domain or proxy ID |
 | `--client-ca <file>` | Local Web public CA file for Node |
 | `--certificate-mode caddy\|external` | Node certificate mode; defaults to `caddy` |
 | `--certificate <file>`, `--private-key <file>` | Node external fullchain and private key paths |
@@ -191,13 +193,13 @@ When changing ports, update configuration, Web server registration, and firewall
 Run on the Web host:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) web
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.3/scripts/tp.sh) web
 ```
 
 Enter the Web domain and certificate contact email when prompted. Public parameters can also be supplied directly:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) web --hostname panel.example.com --email admin@example.com --output ./web.yaml
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.3/scripts/tp.sh) web --hostname panel.example.com --email admin@example.com --output ./web.yaml
 ```
 
 The default output is `./web.yaml`. First installation generates MariaDB and Redis passwords and writes them to the configuration, creates internal Web mTLS credentials, and deploys MariaDB, Redis, API, UI, and Web Caddy.
@@ -209,23 +211,95 @@ Back up `web.yaml` and the complete `pki_bundle_dir`. Configuration contains sen
 <a id="node-registration"></a>
 ## Register a node server
 
-Sign into Web with the `sysadmin` role and click **Add Node server** on the dashboard, or open **Server management** in the sidebar and click **Add Node server**. This registers the entire Node host. Create individual proxy nodes separately after Node installation. Only the `sysadmin` role can add servers; ordinary users and the `admin` role do not see the add action.
+### 1. Open Server management
 
-You can also open [Server management](https://panel.example.com/#/server-manage/server-list) directly, replacing `panel.example.com` with the actual Web domain.
+Sign in with the `sysadmin` role, open **Server management** in the sidebar, and click **Add Node server**. You can also open `https://panel.example.com/#/server-manage/server-list`, replacing the example domain with your actual Web domain. Only `sysadmin` can add servers or generate deployment packages containing credentials.
 
-Enter a server name (2–20 characters), the Node address reachable from Web, its gRPC port (default `8100`), and TLS server name (the Node certificate domain, such as `node.example.com`). Save and note the actual **Server ID** shown below the server name in each row. Set Node YAML's `node_server_id` to this ID rather than the template example. Offline status is expected before Node is installed; check its online status after installation and connectivity are established.
+This registers an entire Node host. Create individual proxy instances separately in Node management after installation.
+
+### 2. Enter connection settings
+
+| Field | Requirement |
+| --- | --- |
+| Server name | 2–20 characters identifying the host |
+| Node address | IP or domain reachable from Web, such as `203.0.113.10` or `node.example.com` |
+| gRPC port | Default `8100`; must match Node configuration and firewall rules |
+| gRPC certificate domain | Domain covered by the Node certificate, such as `node.example.com`; must match `grpc_tls_server_name` |
+
+### 3. Distinguish numeric ID from address
+
+Saving assigns a Web database ID that is an **integer greater than or equal to `1`**. The list shows **ID** and **IP / domain** in separate columns. For ID `3` and address `node.example.com`, Node configuration uses `node_server_id: 3`.
+
+The server ID is not its IP, domain, name, or the ID of a proxy instance on that host. Do not put an address in `node_server_id`, or retain the template example ID.
+
+Saving opens **Deploy Node** automatically. Its action on the corresponding server row reopens it later. Deployment packages fill in this numeric server ID automatically. Offline status is expected before Node installation.
 
 <a id="node"></a>
-## One-command Node installation
+## Install Node
 
-Deploy Web first, [register the node server](#node-registration), and record its actual ID, at least `1`.
+<a id="node-deployment-package"></a>
+### Option 1: Download a deployment package from Web
+
+[Register the server](#node-registration), then use **Deploy Node** to complete these steps.
+
+#### 1. Confirm connectivity and certificate mode
+
+The Web hostname or IP must be reachable from Node; enter a host such as `panel.example.com`, without `https://` or a path. Generated configuration uses Web’s actual database / Redis ports and credentials. Select **Caddy** and enter a certificate email, or select **Existing host certificates** and enter fullchain / private-key absolute paths already present on Node. Certificates must cover the Node and gRPC certificate domains; external tools renew external certificates.
+
+Web does not generate Node external TLS certificates or private keys. See [external certificate mode](#external-certificates) for path requirements. Before installation, check database, Redis, gRPC, and the `grpc_port + 1` maintenance port against the [network rules](#network).
+
+#### 2. Download and securely transfer the package
+
+From **Deployment parameters**, click **Next** to open **Download and install**, then click **Download deployment package**. The filename is `tpnext-node-<server ID>.tar.gz`. The package contains:
+
+| File | Content |
+| --- | --- |
+| `node.yaml` | Current-release Node configuration with actual numeric server ID, database / Redis settings, and credentials |
+| `client-ca.crt` | Web’s current public client CA, used by Node to verify Web management connections |
+| `install-node.sh` | Prepare the public CA, then invoke the matching installation entrypoint with the included YAML |
+| `README.md` | Package contents and installation instructions |
+
+Only `sysadmin` can generate this credential-bearing package. Keep the package and YAML in an administrator’s private directory with `0600` permissions, transfer them securely only to the target Node, and never commit them to a public repository. The package contains neither CA / Web client private keys nor a Node TLS private key.
+
+#### 3. Prepare dependencies on Node
+
+Run in a root Bash session on Node:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.3/scripts/tp.sh) deps install
+```
+
+See [dependencies](#dependencies) for supported systems and manual preparation.
+
+#### 4. Extract and run the included entrypoint
+
+This example uses `tpnext-node-3.tar.gz` for server ID `3`; substitute the actual filename. Run in a private working directory on Node:
+
+```bash
+tar -xzf ./tpnext-node-3.tar.gz
+```
+
+From the extracted directory containing `node.yaml` and `install-node.sh`, run:
+
+```bash
+bash ./install-node.sh
+```
+
+The script prepares the included public CA at the configured bootstrap trust location and installs using the included `node.yaml`. A different existing trust file causes refusal and cannot be overwritten by a deployment package; use [certificate maintenance](certificates.md) for trust rotation. This entrypoint does not force recreation of existing services.
+
+Retain the actual deployment `node.yaml` for [image updates](#updates), [recreation](#recreate), and [removal](#removal) on this host. Check the server is online in Web before creating proxy instances.
+
+<a id="node-interactive"></a>
+### Option 2: Interactive command-line installation
+
+Deploy Web first, [register the node server](#node-registration), and record the integer greater than or equal to `1` in the **ID** column. This is not a Node address or proxy ID.
 
 Securely transfer Web's current public `client-ca.crt` to the Node host, for example `/root/client-ca.crt`. Its default Web location is `/tpdata/trojanpanelnext-pki/client-ca.crt`. Transfer only the public CA. Keep `client-ca.key`, `client.key`, and `client.crt` on Web.
 
 Run on the Node host:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) node
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.3/scripts/tp.sh) node
 ```
 
 Provide the Node domain, Web address, registered server ID, local public CA path, and Web database/Redis credentials. Caddy mode also asks for a certificate email. Administrators can obtain connection passwords from Web YAML; sensitive input is not echoed to the terminal.
@@ -233,7 +307,7 @@ Provide the Node domain, Web address, registered server ID, local public CA path
 Public parameters can be supplied directly, with remaining fields requested interactively:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) node --hostname node.example.com --email admin@example.com --web-host panel.example.com --node-id 1 --client-ca /root/client-ca.crt
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.3/scripts/tp.sh) node --hostname node.example.com --email admin@example.com --web-host panel.example.com --node-id 1 --client-ca /root/client-ca.crt
 ```
 
 `--client-ca` points to a public PEM CA already securely transferred to this host. The file must contain only unexpired CA certificates; multiple old/new CAs are accepted during rotation. Leaf certificates, expired CAs, private keys, and other mixed content are rejected before new YAML or CA files are published. After validation, the script copies it to `/tpdata/trojanpanelnext-pki/client-ca.crt`. Omit the option if that default file already exists. The same CA can be reused; a different existing trust file is not overwritten. Follow [certificate maintenance](certificates.md) for trust changes.
@@ -250,13 +324,13 @@ After installation, check that the server is online in Web, then create the requ
 If Nginx and Certbot or another tool manage host certificates, issue a valid certificate first and select external mode:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) node --certificate-mode external
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.3/scripts/tp.sh) node --certificate-mode external
 ```
 
 Enter absolute paths to the full chain and its unencrypted PEM private key. Paths can also be supplied directly:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) node --certificate-mode external --certificate /etc/letsencrypt/live/node.example.com/fullchain.pem --private-key /etc/letsencrypt/live/node.example.com/privkey.pem
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.3/scripts/tp.sh) node --certificate-mode external --certificate /etc/letsencrypt/live/node.example.com/fullchain.pem --private-key /etc/letsencrypt/live/node.example.com/privkey.pem
 ```
 
 | Field | Meaning |
@@ -293,13 +367,13 @@ For configuration deployment, follow: download a template → edit required fiel
 Download the Web template on the Web host:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) config web --output ./web.yaml
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.3/scripts/tp.sh) config web --output ./web.yaml
 ```
 
 Download the Node template on the Node host:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) config node --output ./node.yaml
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.3/scripts/tp.sh) config node --output ./node.yaml
 ```
 
 Templates are saved with `0600` permissions. Existing files and symbolic links are never overwritten. Edit the original configuration for an existing deployment; use a different `--output` path if another file is needed for a new deployment.
@@ -339,7 +413,7 @@ In the default Caddy certificate mode, edit or confirm at least the following fi
 | `email` | A real contact email for Caddy certificate issuance |
 | `mariadb_host`, `redis_host` | Addresses of Web's database and Redis reachable from Node; these may share a domain or use trusted private addresses |
 | `mariadb_password`, `redis_password` | The current actual database and Redis passwords from Web's `web.yaml` |
-| `node_server_id` | The actual ID shown after [registration in Web](#node-registration), at least `1` |
+| `node_server_id` | Integer in the ID column after [Web registration](#node-registration) (≥ `1`), not an IP / domain or proxy ID |
 | `grpc_tls_server_name` | A domain covered by Node's server certificate, matching the TLS server name registered in Web |
 
 Edit the corresponding values in the original template:
@@ -370,7 +444,7 @@ trojanpanelnext:
 These absolute paths must already exist and be readable. The certificate must cover `hostname` and `grpc_tls_server_name`; its matching PEM private key must be unencrypted. External mode does not require `email` and does not run Node Caddy. All other required Node settings and public CA preparation still apply. See [external certificates](#external-certificates) for directory requirements and renewal.
 
 <a id="configuration-node-ca"></a>
-### Prepare Web's public CA before installing Node
+### Prepare Web public CA for manual configuration installation
 
 From the Web host, securely copy the current public `client-ca.crt` from its configured `pki_bundle_dir` to Node. The default source is `/tpdata/trojanpanelnext-pki/client-ca.crt`. For example, run this on Web, substituting the Node SSH address, user, and port as needed:
 
@@ -395,25 +469,25 @@ After editing and preparation, validate on each corresponding host.
 Validate Web:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) validate --config ./web.yaml
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.3/scripts/tp.sh) validate --config ./web.yaml
 ```
 
 Install Web:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) install --config ./web.yaml
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.3/scripts/tp.sh) install --config ./web.yaml
 ```
 
 Validate Node:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) validate --config ./node.yaml
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.3/scripts/tp.sh) validate --config ./node.yaml
 ```
 
 Install Node:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) install --config ./node.yaml
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.3/scripts/tp.sh) install --config ./node.yaml
 ```
 
 Alternatively, use `web --config ./web.yaml` or `node --config ./node.yaml` to check the purpose and install. `validate` checks YAML, the release, and fields; it does not verify DNS, certificate contents, network connections, or service health. After installation, check Node's status in [Server management](#node-registration).
@@ -425,7 +499,7 @@ Complete editable templates: [Web](../scripts/deploy/templates/web.yaml) · [Nod
 
 | Shared field | Description |
 | --- | --- |
-| `release` | Required string; currently `"1.0.2-rc.2"`, matching the selected scripts |
+| `release` | Required string; currently `"1.0.2-rc.3"`, matching the selected scripts |
 | `schema_version` | Configuration structure version; currently `1` |
 | `purpose` | `web` or `node`; determines deployment and removal targets |
 | `hostname`, `email` | Server domain and certificate email; Node external mode does not require email |
@@ -450,7 +524,7 @@ Complete editable templates: [Web](../scripts/deploy/templates/web.yaml) · [Nod
 | `mariadb_host`, `mariadb_port`, `mariadb_user`, `mariadb_password` | Web database connection; must match actual Web settings |
 | `database`, `account_table` | Database/account table; defaults `trojan_panel_db`, `account` |
 | `redis_host`, `redis_port`, `redis_password` | Web Redis connection |
-| `node_server_id` | Actual registered Web server ID, at least `1` |
+| `node_server_id` | Integer Web database server ID (≥ `1`), not an IP / domain or proxy ID |
 | `grpc_port`, `core_port` | Agent gRPC/API ports; defaults `8100`, `8082` |
 | `grpc_tls_mode` | Must be `mtls` |
 | `grpc_tls_server_name` | Node certificate domain; must match Web registration |
@@ -467,7 +541,7 @@ Node template passwords and server ID are placeholders to replace, rather than a
 After changing the current release's domain, application ports, or certificate mounts, recreate the corresponding host using its configuration:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) install --config ./node.yaml --force
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.3/scripts/tp.sh) install --config ./node.yaml --force
 ```
 
 Use `./web.yaml` for Web. `--force` pulls configured images and recreates API, UI, Agent, or Caddy containers. Existing MariaDB and Redis containers are retained. Changing an initialized database password requires updating the database itself and all clients; editing YAML alone is insufficient.
@@ -482,13 +556,13 @@ Run in a root Bash session on the corresponding host, using the **actual existin
 Web:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) --version 1.0.2-rc.2 update --config ./web.yaml
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.3/scripts/tp.sh) --version 1.0.2-rc.3 update --config ./web.yaml
 ```
 
 Node:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) --version 1.0.2-rc.2 update --config ./node.yaml
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.3/scripts/tp.sh) --version 1.0.2-rc.3 update --config ./node.yaml
 ```
 
 YAML `purpose` selects the deployment to update. Do not change `release` or image fields beforehand, or replace existing configuration with an empty template. Updates accept versions `1.0` and newer with `schema_version: 1` and a supported container layout, and support upgrades or repairs of the same version. There is no automatic downgrade, and `latest` is not used. Prepare other configuration schemas according to the target release’s instructions.
@@ -499,6 +573,7 @@ YAML `purpose` selects the deployment to update. Do not change `release` or imag
 | Node product image | Update Node Agent and its associated host maintenance service |
 | Deployment YAML | Change only `release` and official product image fields for the deployment; retain credentials, server ID, domains, ports, and paths |
 | Data, PKI, certificates, and proxy runtime configuration | Retained; certificates are not reissued |
+| API / Agent `config.ini` and UI Nginx configuration | Existing contents remain, including custom settings outside YAML; connection, port, and identity settings must match the original YAML |
 | MariaDB, Redis, and Caddy | Existing containers and versions remain; product updates do not upgrade them |
 | Previous product images | Retained for recovery; no Docker prune runs |
 
@@ -514,13 +589,13 @@ Update Web and Node separately on their respective hosts. The command does not r
 Run on the corresponding host. Retain data:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) remove --config ./node.yaml --keep-data
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.3/scripts/tp.sh) remove --config ./node.yaml --keep-data
 ```
 
 Delete project data:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) remove --config ./node.yaml --purge-data
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.3/scripts/tp.sh) remove --config ./node.yaml --purge-data
 ```
 
 Use `./web.yaml` for Web. `--keep-data` and `--purge-data` are mutually exclusive. Without either, YAML `purge_data` selects the mode; templates retain data by default.
@@ -591,7 +666,7 @@ In Caddy mode, each Web/Node Caddy issues and renews public certificates. Preser
 
 Web API checks internal mTLS identity every five minutes and reissues client certificates when fewer than 90 days remain. With fewer than 365 days remaining on the CA, it distributes old/new trust and switches identity after every registered mTLS Node acknowledges. The previous identity remains for at least 24 hours. Offline Nodes block rotation progress, which retries when connectivity recovers.
 
-First connection still requires manual transfer of the current public CA. Back up the complete Web PKI directory, including `state.json`, `generations`, and symlinks. Nodes offline beyond their original trust validity or restored from expired backups need trust bootstrap again. See [certificate maintenance](certificates.md) for the complete mechanism.
+First connection requires securely transferring the current public CA to Node. [Web deployment packages](#node-deployment-package) include it and prepare it through the bundled script; manual configuration follows [CA preparation](#configuration-node-ca). Back up the complete Web PKI directory, including `state.json`, `generations`, and symlinks. Nodes offline beyond their original trust validity or restored from expired backups need trust bootstrap again. See [certificate maintenance](certificates.md) for the complete mechanism.
 
 <a id="operations"></a>
 ## Operations

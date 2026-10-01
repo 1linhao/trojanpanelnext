@@ -2,7 +2,7 @@
 
 [简体中文](README.md) | English
 
-These guides describe TrojanPanel Next **v1.0.2-rc.2**.
+These guides describe TrojanPanel Next **v1.0.2-rc.3**.
 
 | Topic | Guide |
 | --- | --- |
@@ -12,6 +12,7 @@ These guides describe TrojanPanel Next **v1.0.2-rc.2**.
 | Version selection and template download | [Release binding](deployment_EN.md#versions) · [Download and edit templates](deployment_EN.md#configuration-download) |
 | Minimum configuration edits and installation | [Web](deployment_EN.md#configuration-web-minimum) · [Node](deployment_EN.md#configuration-node-minimum) · [Public CA](deployment_EN.md#configuration-node-ca) · [Validation and installation](deployment_EN.md#configuration-validation) |
 | Register Node in Web | [Server management and server ID](deployment_EN.md#node-registration) |
+| Generate and install a Node deployment package | [Credential-bearing package, public CA, and installation](deployment_EN.md#node-deployment-package) |
 | Existing host certificates | [External certificate mode](deployment_EN.md#external-certificates) |
 | Product image updates | [Web and Node updates](deployment_EN.md#updates) |
 | Local removal and Web server removal | [Removal](deployment_EN.md#removal) · [Uninstall or delete Web records only](deployment_EN.md#web-removal) |

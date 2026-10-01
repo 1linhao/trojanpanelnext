@@ -101,7 +101,10 @@ func CreateNodeServer(c *gin.Context) {
 		vo.Fail(err.Error(), c)
 		return
 	}
-	vo.Success(nil, c)
+	vo.Success(vo.NodeServerRegistrationVo{
+		Id: *nodeServer.Id, Name: *nodeServer.Name, Ip: *nodeServer.Ip,
+		GrpcPort: *nodeServer.GrpcPort, GrpcTLSServerName: *nodeServer.GrpcTLSServerName,
+	}, c)
 }
 
 func SelectNodeServerPage(c *gin.Context) {
