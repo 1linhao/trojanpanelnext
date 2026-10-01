@@ -156,11 +156,11 @@ export default {
     },
     archiveName() { return `tpnext-node-${this.serverId}.tar.gz` },
     databaseAddress() {
-      const host = this.metadata.mariadbHost === this.metadata.webHost ? this.form.webHost : this.metadata.mariadbHost
+      const host = this.metadata.mariadbUsesWebHost === true ? this.form.webHost : this.metadata.mariadbHost
       return `${host}:${this.metadata.mariadbPort}`
     },
     redisAddress() {
-      const host = this.metadata.redisHost === this.metadata.webHost ? this.form.webHost : this.metadata.redisHost
+      const host = this.metadata.redisUsesWebHost === true ? this.form.webHost : this.metadata.redisHost
       return `${host}:${this.metadata.redisPort}`
     },
     installCommands() {

@@ -160,8 +160,10 @@ const deploymentInfo = (server) => ({
   version: productVersion,
   webHost: 'panel.example.com',
   mariadbHost: 'panel.example.com',
+  mariadbUsesWebHost: true,
   mariadbPort: 9507,
   redisHost: 'panel.example.com',
+  redisUsesWebHost: true,
   redisPort: 6378,
   docsUrl: `https://github.com/1linhao/trojanpanelnext/blob/v${productVersion}/docs/deployment.md#node-deployment-package`
 })

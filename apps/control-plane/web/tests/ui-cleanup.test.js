@@ -957,7 +957,7 @@ test('deployment form validates mode-specific inputs and preserves separate data
     'copy-to-clipboard': () => true, '@/api/node-server': {}
   }).default
   const { LiquidFormItem } = loadModule(read('src/components/LiquidStructural/index.js'), { vue: {} })
-  const context = { $t: (key) => key, form: { certificateMode: 'caddy', webHost: 'panel.example.com' }, metadata: { webHost: 'panel.example.com', mariadbHost: 'db.example.com', mariadbPort: 3307, redisHost: 'panel.example.com', redisPort: 6378 } }
+  const context = { $t: (key) => key, form: { certificateMode: 'caddy', webHost: 'panel.example.com' }, metadata: { webHost: 'panel.example.com', mariadbHost: 'db.example.com', mariadbUsesWebHost: false, mariadbPort: 3307, redisHost: 'panel.example.com', redisUsesWebHost: true, redisPort: 6378 } }
   const valid = async (rules, value) => LiquidFormItem.methods.validate.call({ appliedRules: rules, value, error: '' })
   let rules = deployment.computed.rules.call(context)
   assert.equal(await valid(rules.email, ''), false)
@@ -975,6 +975,14 @@ test('deployment form validates mode-specific inputs and preserves separate data
   assert.equal(await valid(rules.certificatePath, '/etc/certs/fullchain.pem'), true)
   assert.equal(await valid(rules.privateKeyPath, '/etc/certs/privkey.pem'), true)
   assert.equal(deployment.computed.databaseAddress.call(context), 'db.example.com:3307')
+  assert.equal(deployment.computed.redisAddress.call(context), 'reachable.example.com:6378')
+  context.metadata.mariadbHost = context.metadata.webHost
+  context.metadata.redisUsesWebHost = false
+  assert.equal(deployment.computed.databaseAddress.call(context), 'panel.example.com:3307', 'matching hostnames must not imply a database fallback')
+  assert.equal(deployment.computed.redisAddress.call(context), 'panel.example.com:6378', 'matching hostnames must not imply a Redis fallback')
+  context.metadata.mariadbUsesWebHost = true
+  context.metadata.redisUsesWebHost = true
+  assert.equal(deployment.computed.databaseAddress.call(context), 'reachable.example.com:3307')
   assert.equal(deployment.computed.redisAddress.call(context), 'reachable.example.com:6378')
 })
 

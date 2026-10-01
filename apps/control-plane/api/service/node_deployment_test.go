@@ -158,6 +158,69 @@ func TestNodeDeploymentArchiveAndSafeMetadata(t *testing.T) {
 	}
 }
 
+func TestNodeDeploymentConnectionHostFlagsMatchArchive(t *testing.T) {
+	server, request, config := deploymentFixture()
+	ca := deploymentCAFixture(t, 1, true, false)
+	for _, test := range []struct {
+		name                                 string
+		mariadbHost, redisHost               string
+		mariadbUsesWebHost, redisUsesWebHost bool
+	}{
+		{"same_public_domain", request.WebHost, request.WebHost, false, false},
+		{"other_public_hosts", "db.example.test", "192.0.2.10", false, false},
+		{"localhost", "localhost", "LOCALHOST.", true, true},
+		{"ipv4_loopback", "127.0.0.1", "127.2.3.4", true, true},
+		{"ipv6_loopback", "::1", "::1", true, true},
+		{"unspecified", "0.0.0.0", "::", true, true},
+		{"mysql_only", "localhost", request.WebHost, true, false},
+		{"redis_only", request.WebHost, "::1", false, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			selectedConfig := config
+			selectedConfig.MySQLConfig.Host, selectedConfig.RedisConfig.Host = test.mariadbHost, test.redisHost
+			metadata, err := deploymentMetadata(server, request.WebHost, selectedConfig)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if metadata.MariaDBUsesWebHost != test.mariadbUsesWebHost || metadata.RedisUsesWebHost != test.redisUsesWebHost {
+				t.Fatalf("connection source flags changed: %#v", metadata)
+			}
+			data, err := json.Marshal(metadata)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var response map[string]interface{}
+			if err := json.Unmarshal(data, &response); err != nil {
+				t.Fatal(err)
+			}
+			if response["mariadbUsesWebHost"] != test.mariadbUsesWebHost || response["redisUsesWebHost"] != test.redisUsesWebHost {
+				t.Fatal("metadata JSON must explicitly include both boolean flags")
+			}
+			selectedRequest := request
+			selectedRequest.WebHost = "new-panel.example.test"
+			archive, err := buildNodeDeploymentArchive(server, selectedRequest, selectedConfig, ca)
+			if err != nil {
+				t.Fatal(err)
+			}
+			files, _ := deploymentArchiveFiles(t, archive)
+			var document map[string]map[string]interface{}
+			if err := yaml.Unmarshal(files["node.yaml"], &document); err != nil {
+				t.Fatal(err)
+			}
+			mysqlPreview, redisPreview := metadata.MariaDBHost, metadata.RedisHost
+			if metadata.MariaDBUsesWebHost {
+				mysqlPreview = selectedRequest.WebHost
+			}
+			if metadata.RedisUsesWebHost {
+				redisPreview = selectedRequest.WebHost
+			}
+			if document["trojanpanelnext"]["mariadb_host"] != mysqlPreview || document["trojanpanelnext"]["redis_host"] != redisPreview {
+				t.Fatalf("edited Web hostname preview differs from YAML: %v", document["trojanpanelnext"])
+			}
+		})
+	}
+}
+
 func TestNodeDeploymentRejectsUnsafeInputAndCA(t *testing.T) {
 	_, request, _ := deploymentFixture()
 	for _, host := range []string{"", "localhost", "127.0.0.1", "::1", "0.0.0.0", "https://panel.example.test", "panel.example.test:443", "user@panel.example.test", "panel.example.test\nother"} {

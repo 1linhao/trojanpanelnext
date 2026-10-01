@@ -116,14 +116,14 @@ func validDeploymentHost(host string) bool {
 	return validator.New().Var(host, "fqdn") == nil
 }
 
-func deploymentConnectionHost(host, webHost string) string {
+func deploymentConnectionHost(host, webHost string) (string, bool) {
 	if strings.EqualFold(strings.TrimSuffix(host, "."), "localhost") {
-		return webHost
+		return webHost, true
 	}
 	if ip := net.ParseIP(host); ip != nil && (ip.IsLoopback() || ip.IsUnspecified()) {
-		return webHost
+		return webHost, true
 	}
-	return host
+	return host, false
 }
 
 func deploymentMetadata(server *model.NodeServer, webHost string, config core.AppConfig) (*vo.NodeDeploymentVo, error) {
@@ -137,10 +137,12 @@ func deploymentMetadata(server *model.NodeServer, webHost string, config core.Ap
 	if config.MySQLConfig.Host == "" || config.RedisConfig.Host == "" || config.MySQLConfig.Port < 1 || config.MySQLConfig.Port > 65535 || config.RedisConfig.Port < 1 || config.RedisConfig.Port > 65535 {
 		return nil, errors.New("Web database connection configuration is unavailable")
 	}
+	mariadbHost, mariadbUsesWebHost := deploymentConnectionHost(config.MySQLConfig.Host, webHost)
+	redisHost, redisUsesWebHost := deploymentConnectionHost(config.RedisConfig.Host, webHost)
 	return &vo.NodeDeploymentVo{
 		NodeServerRegistrationVo: vo.NodeServerRegistrationVo{Id: *server.Id, Name: *server.Name, Ip: *server.Ip, GrpcPort: *server.GrpcPort, GrpcTLSServerName: *server.GrpcTLSServerName},
-		Version:                  version, WebHost: webHost, MariaDBHost: deploymentConnectionHost(config.MySQLConfig.Host, webHost), MariaDBPort: config.MySQLConfig.Port,
-		RedisHost: deploymentConnectionHost(config.RedisConfig.Host, webHost), RedisPort: config.RedisConfig.Port,
+		Version:                  version, WebHost: webHost, MariaDBHost: mariadbHost, MariaDBPort: config.MySQLConfig.Port, MariaDBUsesWebHost: mariadbUsesWebHost,
+		RedisHost: redisHost, RedisPort: config.RedisConfig.Port, RedisUsesWebHost: redisUsesWebHost,
 		DocsURL: "https://github.com/1linhao/trojanpanelnext/blob/v" + version + "/docs/deployment.md#node-deployment-package",
 	}, nil
 }

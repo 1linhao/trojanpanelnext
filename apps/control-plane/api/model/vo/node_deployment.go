@@ -12,11 +12,13 @@ type NodeServerRegistrationVo struct {
 // NodeDeploymentVo never includes database passwords, Redis passwords or keys.
 type NodeDeploymentVo struct {
 	NodeServerRegistrationVo
-	Version     string `json:"version"`
-	WebHost     string `json:"webHost"`
-	MariaDBHost string `json:"mariadbHost"`
-	MariaDBPort int    `json:"mariadbPort"`
-	RedisHost   string `json:"redisHost"`
-	RedisPort   int    `json:"redisPort"`
-	DocsURL     string `json:"docsUrl"`
+	Version            string `json:"version"`
+	WebHost            string `json:"webHost"`
+	MariaDBHost        string `json:"mariadbHost"`
+	MariaDBPort        int    `json:"mariadbPort"`
+	MariaDBUsesWebHost bool   `json:"mariadbUsesWebHost"`
+	RedisHost          string `json:"redisHost"`
+	RedisPort          int    `json:"redisPort"`
+	RedisUsesWebHost   bool   `json:"redisUsesWebHost"`
+	DocsURL            string `json:"docsUrl"`
 }
