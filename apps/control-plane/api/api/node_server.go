@@ -119,8 +119,37 @@ func SelectNodeServerPage(c *gin.Context) {
 	vo.Success(nodeServerPageVo, c)
 }
 
+// DeleteNodeServerById deletes Web records without contacting the target host.
 func DeleteNodeServerById(c *gin.Context) {
-	var nodeServerRequireIdDto dto.NodeServerRemovalDto
+	var request dto.RequiredIdDto
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 4096)
+	decoder := json.NewDecoder(c.Request.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil {
+		vo.Fail(constant.ValidateFailed, c)
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		vo.Fail(constant.ValidateFailed, c)
+		return
+	}
+	if request.Id == nil || *request.Id == 0 {
+		vo.Fail(constant.ValidateFailed, c)
+		return
+	}
+	if err := validate.Struct(&request); err != nil {
+		vo.Fail(constant.ValidateFailed, c)
+		return
+	}
+	if err := service.DeleteNodeServerById(request.Id); err != nil {
+		vo.Fail(err.Error(), c)
+		return
+	}
+	vo.Success(nil, c)
+}
+
+func UninstallNodeServerById(c *gin.Context) {
+	var nodeServerRequireIdDto dto.NodeServerUninstallDto
 	if err := c.ShouldBindJSON(&nodeServerRequireIdDto); err != nil {
 		vo.Fail(constant.ValidateFailed, c)
 		return
@@ -129,7 +158,7 @@ func DeleteNodeServerById(c *gin.Context) {
 		vo.Fail(constant.ValidateFailed, c)
 		return
 	}
-	result, err := service.DeleteNodeServerById(nodeServerRequireIdDto.Id, nodeServerRequireIdDto.Purge)
+	result, err := service.UninstallNodeServerById(nodeServerRequireIdDto.Id, nodeServerRequireIdDto.Purge)
 	if err != nil {
 		vo.Fail(err.Error(), c)
 		return

@@ -8,13 +8,13 @@ TrojanPanel Next 的响应式 Web 管理界面，提供管理员与普通用户�
 
 - 管理用户、节点服务器、Xray / Hysteria2 / NaiveProxy 代理节点和订阅。
 - 查看用户及服务器流量，管理 Xray 与 Hysteria2 内核任务。
-- 通过服务器删除弹窗选择“取消”“删除”“彻底删除”。
+- 通过服务器移除弹窗选择“删除”（仅清 Web 记录）、“卸载”（保留 Node 数据）或“彻底卸载”；失联服务器也可仅删除 Web 记录。
 - 亮色、暗色主题跟随浏览器，支持海蓝、紫罗兰、翡翠和琥珀调色板。
 - 桌面侧栏、移动导航、表格、表单、弹窗和加载状态使用统一控件。
 
 ## 部署
 
-使用 [v1.0.2-rc.1 脚本入口](../../../scripts/README.md)安装 Web。完整操作见[部署指南](../../../docs/deployment.md#web)。
+使用 [v1.0.2-rc.2 脚本入口](../../../scripts/README.md)安装 Web。完整操作见[部署指南](../../../docs/deployment.md#web)，已有部署通过[镜像更新命令](../../../docs/deployment.md#updates)更新。
 
 ## 界面
 

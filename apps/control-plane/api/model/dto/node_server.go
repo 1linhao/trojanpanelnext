@@ -1,6 +1,6 @@
 package dto
 
-type NodeServerRemovalDto struct {
+type NodeServerUninstallDto struct {
 	RequiredIdDto
 	Purge bool `json:"purge"`
 }

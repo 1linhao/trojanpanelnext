@@ -56,23 +56,23 @@ async function waitFor(check, label) {
 }
 const fixture = http.createServer((req, res) => {
   const path = new URL(req.url, webUrl).pathname
-  if (path === '/api/nodeServer/deleteNodeServerById') {
+  if (['/api/nodeServer/deleteNodeServerById', '/api/nodeServer/uninstallNodeServerById'].includes(path)) {
     let body = ''
     req.on('data', (chunk) => {
       body += chunk
     })
     req.on('end', () => {
       const data = JSON.parse(body)
-      deletions.push(data)
+      deletions.push({ path, data })
       setTimeout(() => {
-        const failed = data.id === 4
+        const failed = path.endsWith('/uninstallNodeServerById') && data.id === 4
         if (!failed) removed.add(data.id)
         res.setHeader('Content-Type', 'application/json')
         res.end(
           JSON.stringify(
             failed
               ? { code: 50000, message: '模拟目标机器卸载失败', data: null }
-              : { code: 20000, data: { cleanupPending: true } }
+              : { code: 20000, data: path.endsWith('/uninstallNodeServerById') ? { cleanupPending: true } : null }
           )
         )
       }, 600)
@@ -212,7 +212,7 @@ async function main() {
     )
     assert.equal(
       await execute(
-        "return [...document.querySelectorAll('.row-actions button')].some(b => /无痕|彻底删除/.test(b.textContent + b.title))"
+        "return [...document.querySelectorAll('.row-actions button')].some(b => /无痕|彻底卸载/.test(b.textContent + b.title))"
       ),
       false
     )
@@ -221,7 +221,7 @@ async function main() {
       await execute(
         `return [...document.querySelectorAll('${dialog} .dialog-footer button')].map(b => b.textContent.trim())`
       ),
-      ['取消', '删除', '彻底删除']
+      ['取消', '删除', '卸载', '彻底卸载']
     )
     assert.equal(
       await execute('return document.activeElement.textContent.trim()'),
@@ -229,7 +229,7 @@ async function main() {
     )
     assert.match(
       await execute(`return document.querySelector('${dialog}').textContent`),
-      /此操作无法恢复/
+      /删除的记录和数据无法恢复/
     )
     await screenshot('desktop.png')
     await click(`${dialog} .dialog-footer button:first-child`)
@@ -270,9 +270,9 @@ async function main() {
     assert.equal(deletions.length, 0)
     console.log('PASS cancel, Escape, close icon and backdrop send no deletion')
     await open('Tokyo')
-    await click(`${dialog} .dialog-footer button:nth-child(2)`)
+    await click(`${dialog} .dialog-footer button:nth-child(3)`)
     await waitFor(() => deletions.length === 1, 'ordinary request')
-    assert.deepEqual(deletions[0], { id: 1, purge: false })
+    assert.deepEqual(deletions[0], { path: '/api/nodeServer/uninstallNodeServerById', data: { id: 1, purge: false } })
     assert.equal(
       await execute(
         "return [...document.querySelectorAll('.row-actions button[title=删除]')].every(b => b.disabled)"
@@ -287,12 +287,12 @@ async function main() {
       'removed row'
     )
     console.log(
-      'PASS 删除 sends purge=false; row actions disabled during request'
+      'PASS 卸载 sends purge=false; row actions disabled during request'
     )
     await open('Singapore')
-    await click(`${dialog} .dialog-footer button:nth-child(3)`)
+    await click(`${dialog} .dialog-footer button:nth-child(4)`)
     await waitFor(() => deletions.length === 2, 'purge request')
-    assert.deepEqual(deletions[1], { id: 2, purge: true })
+    assert.deepEqual(deletions[1], { path: '/api/nodeServer/uninstallNodeServerById', data: { id: 2, purge: true } })
     await waitFor(
       () =>
         execute(
@@ -300,9 +300,9 @@ async function main() {
         ),
       'purged row'
     )
-    console.log('PASS 彻底删除 sends purge=true')
+    console.log('PASS 彻底卸载 sends purge=true')
     await open('San Francisco')
-    await click(`${dialog} .dialog-footer button:nth-child(2)`)
+    await click(`${dialog} .dialog-footer button:nth-child(3)`)
     await waitFor(
       () =>
         execute(
@@ -324,6 +324,16 @@ async function main() {
       'retry enabled'
     )
     console.log('PASS failure keeps server row and enables retry')
+    assert.equal(deletions.length, 3, 'failed uninstall cannot fall back to Web deletion')
+    await open('San Francisco')
+    await click(`${dialog} .dialog-footer button:nth-child(2)`)
+    await waitFor(() => deletions.length === 4, 'Web-only delete request')
+    assert.deepEqual(deletions[3], { path: '/api/nodeServer/deleteNodeServerById', data: { id: 4 } })
+    await waitFor(
+      () => execute("return ![...document.querySelectorAll('td strong')].some(e => e.textContent === 'San Francisco')"),
+      'offline server removed locally'
+    )
+    console.log('PASS 删除 removes an offline server using only its Web ID')
     await waitFor(
       () => execute("return !document.querySelector('.liquid-message')"),
       'notifications dismissed'
@@ -333,7 +343,7 @@ async function main() {
     await waitFor(
       () =>
         execute(
-          "return document.querySelectorAll('.row-actions button[title=删除]').length === 3"
+          "return document.querySelectorAll('.row-actions button[title=删除]').length === 2"
         ),
       'mobile server rows'
     )
@@ -354,7 +364,7 @@ async function main() {
       ),
       []
     )
-    assert.equal(deletions.length, 3)
+    assert.equal(deletions.length, 4)
     console.log('PASS mobile buttons visible; no browser errors')
     console.log(`Screenshots: ${artifacts}`)
   } finally {

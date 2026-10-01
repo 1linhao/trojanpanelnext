@@ -39,6 +39,14 @@ go test ./...
 go build ./...
 ```
 
+API server-removal integration tests require a disposable MySQL/MariaDB instance. Set `TP_REMOVAL_TEST_DSN` in the current shell, then run in `apps/control-plane/api/`:
+
+```bash
+go test ./dao -run '^TestNodeRemovalIntegration$' -count=1
+```
+
+The DSN user needs permission to create and drop test databases. Each subtest uses and cleans up its own database, leaving the database named in the DSN unchanged. Tests skip when the variable is unset. These DAO tests share a connection and must not run in parallel. Coverage includes Web-only deletion, both remote uninstallation data modes, transaction rollback, repeated deletion, and isolation of shared records across servers.
+
 The host maintenance entrypoint is `apps/node-agent/cmd/host-agent/`. Running services requires databases, Redis, configuration, and certificates; see the [deployment guide](deployment_EN.md).
 
 <a id="web-ui"></a>
@@ -78,7 +86,9 @@ npm run build
 
 Install Chromium and ChromeDriver before running browser checks.
 
-`npm run test:server-delete:e2e` starts isolated mock API, UI, and ChromeDriver services using ports `18081`, `18082`, `18888`, and `9518`. It checks server removal actions, cancellation, retry, and mobile layout. Artifacts go to `.local/server-delete-dialog/`.
+`npm run test:server-delete:e2e` starts isolated mock API, UI, and ChromeDriver services using ports `18081`, `18082`, `18888`, and `9518`. It checks Cancel, Delete, Uninstall, and Uninstall completely; API dispatch for Web-only deletion and remote uninstallation; cancellation without a request; failed offline uninstallation retaining the row followed by explicit deletion; and desktop/mobile layout. Artifacts go to `.local/server-delete-dialog/`.
+
+This browser test uses a mock API request recorder. It verifies UI behavior and request parameters without performing real Node host uninstallation or SQL cleanup. API `dao/node_removal_integration_test.go` covers transactional cleanup, protocol configuration removal, and isolation of other servers’ data; see [API and Node Agent](#go-services) for running it.
 
 `npm run test:live-stack:e2e` uses the mock API and UI at port `18888` to check login, settings, subscription templates, and mobile navigation. Preview a production build with `MOCK_API_TARGET=http://127.0.0.1:18081 npm run preview -- --port 18889`, then run the same test with `LIVE_WEB_URL=http://127.0.0.1:18889`.
 
@@ -106,6 +116,7 @@ node tools/check-readme-languages.mjs
 node tools/check-installer-release.mjs
 bash tests/deploy/installer_cli_test.sh
 bash tests/deploy/entrypoint_test.sh
+bash tests/deploy/update_test.sh
 bash tests/deploy/uninstall_test.sh
 bash tests/deploy/persistence_test.sh
 bash tests/deploy/external_certificate_test.sh

@@ -48,6 +48,18 @@ export function deleteNodeServerById(data) {
   return request({
     url: '/nodeServer/deleteNodeServerById',
     method: 'post',
+    timeout: 30000,
+    data
+  })
+}
+
+/**
+ * 卸载目标 Node 宿主机，再移除 Web 记录
+ */
+export function uninstallNodeServerById(data) {
+  return request({
+    url: '/nodeServer/uninstallNodeServerById',
+    method: 'post',
     timeout: 240000,
     data
   })

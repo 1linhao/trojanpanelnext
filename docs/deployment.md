@@ -1,4 +1,4 @@
-# TrojanPanel Next v1.0.2-rc.1 部署指南
+# TrojanPanel Next v1.0.2-rc.2 部署指南
 
 简体中文 | [English](deployment_EN.md)
 
@@ -22,9 +22,10 @@
   - [校验并安装](#configuration-validation)
   - [配置字段参考](#configuration-fields)
 - [重建当前版本服务](#recreate)
+- [更新 Web 与 Node 镜像](#updates)
 - [本地卸载](#removal)
-- [从 Web 删除节点服务器](#web-removal)
-- [删除后重新接入](#reconnect)
+- [从 Web 卸载或删除节点服务器](#web-removal)
+- [移除后重新接入](#reconnect)
 - [证书自动维护](#certificate-maintenance)
 - [日常维护](#operations)
 - [故障排查](#troubleshooting)
@@ -32,7 +33,7 @@
 <a id="dependencies"></a>
 ## 系统与软件依赖
 
-支持 Linux `amd64` 和 `arm64`。使用 Bash 执行命令，安装、重建和卸载需要 root；Node 宿主机必须运行 systemd。建议每台服务器至少有 1 GiB 内存。Web 与 Node 可部署在不同服务器，通过受控网络连接。
+支持 Linux `amd64` 和 `arm64`。使用 Bash 执行命令，安装、更新、重建和卸载需要 root；Node 宿主机必须运行 systemd。建议每台服务器至少有 1 GiB 内存。Web 与 Node 可部署在不同服务器，通过受控网络连接。
 
 `web`、`node` 和 `install` 部署命令只检查依赖。可先单独执行 `deps install` 一键安装所需软件，或手动准备：
 
@@ -41,7 +42,7 @@
 | 入口、帮助、模板下载 | Bash、curl、CA 证书、grep、coreutils |
 | 自动依赖安装与卸载 | 上述入口依赖、util-linux（`flock`）、root、受支持的 Debian/Ubuntu、systemd、apt-get、dpkg、dpkg-query |
 | 一键部署与配置校验 | 入口依赖及 **mikefarah/yq v4** |
-| 安装、重建 | 入口依赖、yq、运行中的 Docker Engine、OpenSSL、tar、findutils、awk；Node 还需 systemd |
+| 安装、更新与重建 | 入口依赖、yq、运行中的 Docker Engine、OpenSSL、tar、findutils、awk；Node 还需 systemd |
 | 卸载 | Bash、curl、CA 证书、grep、coreutils（含 realpath、rmdir）、Docker Engine、yq；Node 维护服务清理需要 systemctl |
 
 <a id="dependency-install"></a>
@@ -52,7 +53,7 @@
 在 root Bash 会话中执行：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) deps install
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) deps install
 ```
 
 命令准备 Bash、curl、CA 证书、grep、coreutils、OpenSSL、tar、findutils、awk（缺少时安装 gawk），以及发行版提供的 Docker Engine 软件包（`docker.io`、`containerd`、`runc`；Debian 13 另需 `docker-cli`），并启动 Docker。缺少兼容 yq 时，下载对应架构的 **mikefarah/yq v4.53.6** 二进制，通过 SHA256 校验后安装。已有兼容的 Docker 和 mikefarah/yq v4 会复用，不替换原有工具。
@@ -67,7 +68,7 @@ apt-get install -y bash curl ca-certificates grep coreutils util-linux
 依赖命令与部署命令使用同一个版本入口，也可显式选择版本：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) --version 1.0.2-rc.1 deps install
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) --version 1.0.2-rc.2 deps install
 ```
 
 安装记录保存在 `/var/lib/trojanpanelnext-dependencies`（目录权限 `0700`），记录本命令新增的 Docker 软件包以及所安装 yq 文件的 SHA256，供[依赖卸载](#dependency-removal)使用。重复执行会检查并补齐缺少的依赖。安装中断时先重跑 `deps install` 修复，再执行卸载。
@@ -98,10 +99,10 @@ openssl version
 <a id="dependency-removal"></a>
 ### 卸载依赖
 
-先在对应主机完成[项目卸载](#removal)，并移除其他 Docker 服务的容器；从 Web 删除 Node 后还需等待宿主机维护服务清理完成。然后执行：
+先在对应主机完成[项目卸载](#removal)，并移除其他 Docker 服务的容器；从 Web 卸载 Node 后还需等待宿主机维护服务清理完成；只删除 Web 记录时，Node 主机仍需自行本地卸载。然后执行：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) deps remove
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) deps remove
 ```
 
 | 对象 | 处理 |
@@ -117,22 +118,22 @@ bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0
 <a id="versions"></a>
 ## 版本绑定与命令入口
 
-本指南对应预发布版本 **v1.0.2-rc.1（Pre-release）**。版本号 `1.0.2-rc.1` 对应 Git 标签 `v1.0.2-rc.1`、配置 `trojanpanelnext.release: "1.0.2-rc.1"`，以及以下产品镜像：
+本指南对应预发布版本 **v1.0.2-rc.2（Pre-release）**。版本号 `1.0.2-rc.2` 对应 Git 标签 `v1.0.2-rc.2`、配置 `trojanpanelnext.release: "1.0.2-rc.2"`，以及以下产品镜像：
 
 | 组件 | 镜像 |
 | --- | --- |
-| Web API | `ghcr.io/1linhao/trojanpanelnext-api:1.0.2-rc.1` |
-| Web 界面 | `ghcr.io/1linhao/trojanpanelnext-web:1.0.2-rc.1` |
-| Node Agent | `ghcr.io/1linhao/trojanpanelnext-node-agent:1.0.2-rc.1` |
+| Web API | `ghcr.io/1linhao/trojanpanelnext-api:1.0.2-rc.2` |
+| Web 界面 | `ghcr.io/1linhao/trojanpanelnext-web:1.0.2-rc.2` |
+| Node Agent | `ghcr.io/1linhao/trojanpanelnext-node-agent:1.0.2-rc.2` |
 
 所有产品镜像提供 `linux/amd64` 和 `linux/arm64`。Caddy、MariaDB、Redis 使用配置模板中的独立上游版本。
 
-统一入口 `scripts/tp.sh` 按选定版本获取该标签下的脚本库及模板，检查脚本版本并执行对应命令；下载的临时脚本在命令结束后清理。配置和产品镜像必须匹配所选版本。脚本不转换其他版本的配置，仅维护当前发布版本。
+统一入口 `scripts/tp.sh` 按选定版本获取该标签下的脚本库及模板，检查脚本版本并执行对应命令；下载的临时脚本在命令结束后清理。安装与校验要求配置和产品镜像匹配所选版本；[更新命令](#updates)使用现有受支持配置，并将发布版本与产品镜像绑定到目标版本。脚本不推断其他配置规范的字段迁移，仅维护当前发布版本。
 
 显式指定版本安装 Web：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) --version 1.0.2-rc.1 web
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) --version 1.0.2-rc.2 web
 ```
 
 `--version <版本号>` 可放在命令前或后；`--entry-version` 显示入口的默认版本；`--help` 或 `<命令> --help` 查看用法。只传 `--version` 不用于查询版本。
@@ -146,6 +147,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0
 | `config web\|node [--output <文件>]` | 下载对应版本配置模板 |
 | `validate --config <文件>` | 校验 YAML、发布版本和字段 |
 | `install --config <文件> [--force]` | 按 YAML 部署对应用途 |
+| `--version <目标版本> update --config <文件>` | 使用现有配置更新 Web 或 Node 产品镜像 |
 | `remove --config <文件> [--keep-data\|--purge-data]` | 按 YAML 卸载对应用途 |
 
 一键部署读取终端输入，数据库和 Redis 密码不会作为命令行参数传入。`--config` 使用已有配置立即安装，不再提示填写。配置模板、生成配置均以 `0600` 权限保存；目标文件已存在或是符号链接时不会覆盖。`--config` 仅能与 `--force` 组合，其他值在 YAML 中设置。
@@ -189,13 +191,13 @@ API 8081、UI 8888 和 Node API 8082 使用宿主机网络监听。按来源控�
 在 Web 主机执行：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) web
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) web
 ```
 
 按提示输入 Web 域名和证书邮箱。也可直接提供公开参数：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) web --hostname panel.example.com --email admin@example.com --output ./web.yaml
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) web --hostname panel.example.com --email admin@example.com --output ./web.yaml
 ```
 
 默认输出 `./web.yaml`。首次安装生成 MariaDB 与 Redis 密码并写入配置，创建 Web 内部 mTLS 身份，部署 MariaDB、Redis、API、UI 和 Web Caddy。
@@ -223,7 +225,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0
 在 Node 主机执行：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) node
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) node
 ```
 
 按提示输入 Node 域名、Web 地址、节点服务器 ID、公开 CA 路径，以及 Web 的数据库和 Redis 凭据；Caddy 模式还需输入证书邮箱。这些连接密码可由管理员读取 Web YAML 获取，敏感输入不显示在终端。
@@ -231,7 +233,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0
 也可提供公开参数，剩余字段仍按提示填写：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) node --hostname node.example.com --email admin@example.com --web-host panel.example.com --node-id 1 --client-ca /root/client-ca.crt
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) node --hostname node.example.com --email admin@example.com --web-host panel.example.com --node-id 1 --client-ca /root/client-ca.crt
 ```
 
 `--client-ca` 指向已安全传输到本机的 PEM 公开 CA。文件只应包含未过期的 CA 证书，可包含轮换期间的新旧 CA；叶证书、过期 CA、私钥和其他混入内容会被拒绝，校验通过前不会保存新 YAML 或发布 CA 文件。脚本校验后将其复制到 `/tpdata/trojanpanelnext-pki/client-ca.crt`；该默认文件已存在时可省略此选项。同一份 CA 可重复使用，不会覆盖不同的现有信任文件；信任更新遵循[证书维护](certificates.md)流程。
@@ -248,13 +250,13 @@ bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0
 宿主机由 Nginx＋Certbot 或其他工具管理证书时，先签发有效证书，再使用外部模式：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) node --certificate-mode external
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) node --certificate-mode external
 ```
 
 按提示输入 fullchain 和未加密 PEM 私钥的绝对路径。也可直接提供路径：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) node --certificate-mode external --certificate /etc/letsencrypt/live/node.example.com/fullchain.pem --private-key /etc/letsencrypt/live/node.example.com/privkey.pem
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) node --certificate-mode external --certificate /etc/letsencrypt/live/node.example.com/fullchain.pem --private-key /etc/letsencrypt/live/node.example.com/privkey.pem
 ```
 
 | 字段 | 含义 |
@@ -291,13 +293,13 @@ certbot renew --cert-name node.example.com --dry-run --no-random-sleep-on-renew
 在 Web 主机下载 Web 模板：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) config web --output ./web.yaml
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) config web --output ./web.yaml
 ```
 
 在 Node 主机下载 Node 模板：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) config node --output ./node.yaml
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) config node --output ./node.yaml
 ```
 
 模板以 `0600` 权限保存；目标文件已存在或是符号链接时不会覆盖。已有部署请直接编辑原配置，首次部署需要另一个文件时使用新的 `--output` 路径。
@@ -393,25 +395,25 @@ install -m 0644 /root/client-ca.crt /tpdata/trojanpanelnext-pki/client-ca.crt
 Web 校验：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) validate --config ./web.yaml
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) validate --config ./web.yaml
 ```
 
 Web 安装：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) install --config ./web.yaml
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) install --config ./web.yaml
 ```
 
 Node 校验：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) validate --config ./node.yaml
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) validate --config ./node.yaml
 ```
 
 Node 安装：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) install --config ./node.yaml
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) install --config ./node.yaml
 ```
 
 也可使用 `web --config ./web.yaml`、`node --config ./node.yaml`，命令会检查配置用途。`validate` 仅校验 YAML、版本与字段，不验证 DNS、证书内容、网络连接或服务健康。安装完成后在[服务器管理](#node-registration)检查 Node 状态。
@@ -423,7 +425,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0
 
 | 通用字段 | 说明 |
 | --- | --- |
-| `release` | 必填字符串，当前为 `"1.0.2-rc.1"`，必须匹配选定脚本版本 |
+| `release` | 必填字符串，当前为 `"1.0.2-rc.2"`，必须匹配选定脚本版本 |
 | `schema_version` | 配置结构版本，当前为 `1` |
 | `purpose` | `web` 或 `node`，决定部署和卸载对象 |
 | `hostname`、`email` | 当前服务器域名与证书联系邮箱；Node 外部模式不要求邮箱 |
@@ -465,12 +467,46 @@ Node 模板中的密码和服务器 ID 是待填写示例，不能直接作为�
 修改当前版本的域名、应用端口或证书挂载后，用已有配置重建相应主机：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) install --config ./node.yaml --force
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) install --config ./node.yaml --force
 ```
 
 Web 使用 `./web.yaml`。`--force` 会拉取配置指定的镜像并重建 API、UI、Agent 或 Caddy 容器，不重建已有 MariaDB、Redis 容器。调整已初始化的数据库密码需要同时正确更新数据库本身及所有连接方，不能仅改 YAML。
 
-跨发布版本的操作必须使用目标发布的脚本、配置规范和镜像；入口不会推断或转换其他版本配置。维护前备份数据与 PKI。
+跨版本更新使用[镜像更新命令](#updates)和目标发布版本。安装、校验与重建使用匹配版本的配置和镜像；维护前备份数据与 PKI。
+
+<a id="updates"></a>
+## 更新 Web 与 Node 镜像
+
+在对应主机的 root Bash 会话执行，使用**现有的实际部署 YAML**。`--version` 必须显式指定目标发布版本；同一入口会获取目标版本的更新脚本和产品镜像。
+
+Web：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) --version 1.0.2-rc.2 update --config ./web.yaml
+```
+
+Node：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) --version 1.0.2-rc.2 update --config ./node.yaml
+```
+
+YAML 中的 `purpose` 决定更新对象。无需先手工替换 `release` 或镜像，也不要用空白模板覆盖已有配置。更新接受 `1.0` 及以上版本、`schema_version: 1` 且采用受支持容器布局的配置；仅升级或同版本修复，不提供自动降级，也不使用 `latest`。其他配置规范需按目标版本说明准备。
+
+| 内容 | 更新行为 |
+| --- | --- |
+| Web 产品镜像 | 更新 API 和 Web UI |
+| Node 产品镜像 | 更新 Node Agent，并更新配套宿主机维护服务 |
+| 部署 YAML | 仅修改 `release` 和对应用途的官方产品镜像字段；凭据、服务器 ID、域名、端口、路径沿用原配置 |
+| 数据、PKI、证书、代理运行配置 | 保留；不重新申请证书 |
+| MariaDB、Redis、Caddy | 保留已有容器与版本，不随产品更新升级 |
+| 旧产品镜像 | 保留，便于恢复；不执行 Docker prune |
+
+执行前先备份业务数据和 PKI，并确认原 YAML 与运行中的容器设置一致。原配置的 `release` 必须与正在运行的官方 GHCR 产品镜像标签一致；不一致时先恢复实际部署配置，不能用新模板代替。更新脚本检查容器环境、挂载、网络与端口后预拉取全部目标产品镜像；预拉取失败不停止旧容器，也不修改原配置。
+
+切换前在原 YAML 旁生成权限为 `0600` 的备份，名称为 `<配置文件>.backup-<原版本>-<时间>-<随机>`。切换产品容器会短暂中断 Web 或 Node 服务。切换或健康检查失败时，脚本尝试恢复原配置、旧产品容器、运行配置及 Node 维护服务；恢复过程失败时保留恢复文件并输出目录，需按错误修复部署。该恢复只针对部署；新版本写入或迁移的业务数据库不会自动回滚，恢复数据库需使用升级前的数据备份。
+
+Web 与 Node 分别在各自主机更新。命令不替换宿主机 Nginx、Certbot，也不更新 Xray / Hysteria2 的独立内核修订；内核升级在 Web 内核管理中操作。
 
 <a id="removal"></a>
 ## 本地卸载
@@ -478,13 +514,13 @@ Web 使用 `./web.yaml`。`--force` 会拉取配置指定的镜像并重建 API�
 在对应主机执行。保留数据：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) remove --config ./node.yaml --keep-data
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) remove --config ./node.yaml --keep-data
 ```
 
 删除项目数据：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) remove --config ./node.yaml --purge-data
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) remove --config ./node.yaml --purge-data
 ```
 
 Web 使用 `./web.yaml`。`--keep-data` 和 `--purge-data` 不能同时使用；不传选项时使用 YAML `purge_data`，模板默认保留数据。
@@ -505,34 +541,41 @@ Web 卸载 MariaDB、Redis、API、UI、Web Caddy；Node 卸载 Agent 和 Caddy 
 
 彻底卸载清理项目服务目录、`pki_bundle_dir`、伪装站、自定义 `kernel_runtime_path`、配置的身份文件和原始 YAML。维护服务目录为 `/etc/trojanpanelnext-host`、`/usr/local/lib/trojanpanelnext-host`，systemd 单元为 `/etc/systemd/system/trojanpanelnext-host.service`。同一主机仍运行另一用途的项目容器时，脚本会拒绝彻底卸载以保护共享数据。外部证书路径与清理范围重叠时也会拒绝操作。
 
-本地卸载不删除 Web 的服务器登记；需要协调卸载和登记清理时，在 Web 删除节点服务器。
+本地卸载不删除 Web 的服务器登记；需要协调卸载和登记清理时，在 Web 选择“卸载”或“彻底卸载”。主机已自行清理或失联时，可仅“删除”Web 记录。
 
 <a id="web-removal"></a>
-## 从 Web 删除节点服务器
+## 从 Web 卸载或删除节点服务器
 
-节点服务器页面的删除弹窗提供“取消”“删除”“彻底删除”：
+节点服务器页面的移除弹窗提供“取消”“删除”“卸载”“彻底卸载”：
 
 | 操作 | Node 主机 | Web |
 | --- | --- | --- |
 | 取消 | 不执行 | 不执行 |
-| 删除 | 保留数据模式卸载 | 删除服务器及关联代理配置，保留流量与任务历史 |
-| 彻底删除 | 删除项目数据模式卸载 | 删除服务器、关联代理配置及对应流量和任务历史 |
+| 删除 | 不联系 Node，不停止或清理主机服务 | 清理该服务器及关联代理、协议配置、流量、任务和连接记录 |
+| 卸载 | 保留数据模式卸载项目容器和可清理的镜像 | 删除服务器及关联代理配置，保留流量与任务历史 |
+| 彻底卸载 | 删除项目数据模式卸载 | 清理该服务器及关联代理、协议配置、流量、任务和连接记录 |
 
-Web 先调用 Node 宿主机维护服务，收到成功结果后再提交删除。节点离线、mTLS/网络连接失败或卸载失败时，服务器登记及关联代理配置保留，并返回错误。涉及其他服务器的共享任务记录保留。删除单个代理节点仅删除该代理。
+**删除**不需要 Node 在线，可用于主机失联或不再管理的服务器。这只清理 Web 数据，Node 上仍运行的 Agent、代理、容器、镜像和宿主机维护服务不会停止或删除。需要清理主机时，在 Node 执行[本地卸载](#removal)。同一服务器已有卸载或删除请求正在处理时，会明确提示忙碌，请等待该操作结束后重试；其他服务器的失联卸载不会阻塞此服务器的纯 Web 删除。
+
+**卸载**和**彻底卸载**先调用 Node 宿主机维护服务，收到成功结果后再清理 Web 登记。Node 离线、mTLS/网络连接失败或卸载失败时返回错误，保留服务器及关联代理配置；可排查连接后重试，或选择仅删除 Web 记录。
+
+清理 Web 数据按服务器 ID 定向执行：共享任务保留其他服务器的任务项，空的该服务器专有任务会清理，指向该服务器的灰度目标会清除。账户全局流量累计、日排名、JWT、系统设置和共享缓存保留，因为这些数据属于跨服务器的账户或系统状态。删除单个代理节点仅删除该代理。
 
 远程卸载会暂存 TLS 身份和卸载回执，待 Web 提交完成并确认结果后，再清理维护服务及文件。界面显示“清理待完成”（`cleanupPending`）时，主服务和 Web 记录已清理，维护文件仍等待确认。失败的确认和清理在后台重试，并能在重启后恢复；保持 Web 到 Node 维护端口及 Node 到 Web HTTPS 连通，直至完成。
 
 <a id="reconnect"></a>
-## 删除后重新接入
+## 移除后重新接入
 
-使用“删除”后，Node 数据、PKI、证书和 YAML 保留，服务器与代理登记已移除。重新接入步骤：
+使用“卸载”后，Node 数据、PKI、证书和 YAML 保留，服务器与代理登记已移除。重新接入步骤：
 
 1. 等待宿主机维护服务清理完成，在 Web 重新添加服务器，可复用名称和地址，取得新 ID。
 2. 在保留的 `node.yaml` 更新 `node_server_id`，并核对数据库、Redis、TLS 设置。
 3. 使用 `install --config ./node.yaml` 重新部署 Node。
 4. 在 Web 检查服务器在线，并重新创建所需代理节点。
 
-保留的历史仍属于原服务器 ID，不会自动迁移到新 ID。使用“彻底删除”后，按首次安装步骤重新准备 YAML 和公开 CA；外部证书仍由宿主机保留和维护。
+保留的历史仍属于原服务器 ID，不会自动迁移到新 ID。使用“彻底卸载”后，按首次安装步骤重新准备 YAML 和公开 CA；外部证书仍由宿主机保留和维护。
+
+如果只使用“删除”，Node 主机可能仍在运行旧配置，Web 中的关联记录与服务器专属历史已清理。重新接入前先在主机保留数据卸载，再登记新 ID 并按上述步骤重新部署；不要继续沿用已删除的服务器 ID。
 
 <a id="certificate-maintenance"></a>
 ## 证书自动维护
@@ -581,7 +624,7 @@ journalctl -u trojanpanelnext-host.service -n 100 --no-pager
 | Node 不在线 | 核对实际服务器 ID、Web 数据库/Redis连接、gRPC 防火墙、证书域名与公开 CA |
 | 外部证书安装失败 | 检查绝对路径、完整链、未加密私钥、有效期、域名覆盖和独立目录 |
 | 续签后仍显示原证书 | 按服务加载周期等待或重启相应代理，检查证书链接目标与 Nginx reload |
-| Web 删除服务器失败 | 检查 Node 维护服务、Web 到 `grpc_port + 1` 的 mTLS 连接和 Node 到 Web HTTPS 回调 |
+| Web 卸载服务器失败 | 检查 Node 维护服务、Web 到 `grpc_port + 1` 的 mTLS 连接和 Node 到 Web HTTPS 回调；失联且只需清 Web 数据时选“删除” |
 | 卸载显示共享镜像保留 | 该镜像仍由其他容器使用，确认使用方后再自行处理 |
 
 提交问题时提供所用发布版本、操作命令（移除敏感参数）、错误信息和已脱敏日志。不要上传实际部署 YAML、私钥、数据库密码或访问令牌。

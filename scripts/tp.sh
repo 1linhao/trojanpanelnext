@@ -2,7 +2,7 @@
 set -euo pipefail
 
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
-DEFAULT_VERSION="1.0.2-rc.1"
+DEFAULT_VERSION="1.0.2-rc.2"
 GITHUB_RAW_BASE="https://raw.githubusercontent.com/1linhao/trojanpanelnext"
 TP_DOWNLOAD_DIR=""
 
@@ -23,6 +23,7 @@ Usage:
   $0 [--version <release>] config web|node [--output <file>]
   $0 [--version <release>] validate --config <file>
   $0 [--version <release>] install --config <file> [--force]
+  $0 --version <release> update --config <file>
   $0 [--version <release>] remove --config <file> [--keep-data | --purge-data]
   $0 <command> --help
   $0 --entry-version
@@ -97,6 +98,14 @@ main() {
   config) script=config.sh ;;
   validate) script=validate.sh ;;
   install) script=install.sh ;;
+  update)
+    if [[ "${selected_version}" != 1 ]] &&
+       ! { [[ "${#args[@]}" == 1 ]] && [[ "${args[0]}" == --help || "${args[0]}" == -h ]]; }; then
+      printf '%s\n' 'update requires an explicit --version target release' >&2
+      return 1
+    fi
+    script=update.sh
+    ;;
   remove) script=uninstall.sh ;;
   *) printf 'Unknown command: %s\n' "${command}" >&2; usage >&2; return 1 ;;
   esac
@@ -114,6 +123,10 @@ main() {
   download_script "${script}" SCRIPT_VERSION "${version}"
   case "${command}" in
   install) download_script uninstall.sh SCRIPT_VERSION "${version}" ;;
+  update)
+    download_script install.sh SCRIPT_VERSION "${version}"
+    download_script uninstall.sh SCRIPT_VERSION "${version}"
+    ;;
   web | node)
     for dependency in quick.sh config.sh install.sh uninstall.sh; do
       download_script "${dependency}" SCRIPT_VERSION "${version}"

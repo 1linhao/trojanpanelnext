@@ -125,21 +125,19 @@ func SelectNodeServerPage(queryName *string, queryIp *string, pageNum *uint, pag
 	return &nodeServers, total, nil
 }
 
-func DeleteNodeServerById(id *uint) error {
-	buildDelete, values, err := builder.BuildDelete("node_server", map[string]interface{}{"id": *id})
-	if err != nil {
-		logrus.Errorln(err.Error())
-		return errors.New(constant.SysError)
-	}
-
-	if _, err = db.Exec(buildDelete, values...); err != nil {
-		logrus.Errorln(err.Error())
-		return errors.New(constant.SysError)
-	}
-	return nil
-}
-
 func UpdateNodeServerById(nodeServer *model.NodeServer) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var removing uint
+	if err = tx.QueryRow(`SELECT removing FROM node_server WHERE id=? FOR UPDATE`, *nodeServer.Id).Scan(&removing); err != nil {
+		return err
+	}
+	if removing != 0 {
+		return errors.New("node server is being removed; retry removal or delete its Web registration")
+	}
 	where := map[string]interface{}{"id": *nodeServer.Id}
 	update := map[string]interface{}{}
 	if nodeServer.Name != nil {
@@ -176,12 +174,12 @@ func UpdateNodeServerById(nodeServer *model.NodeServer) error {
 			return errors.New(constant.SysError)
 		}
 
-		if _, err = db.Exec(buildUpdate, values...); err != nil {
+		if _, err = tx.Exec(buildUpdate, values...); err != nil {
 			logrus.Errorln(err.Error())
 			return errors.New(constant.SysError)
 		}
 	}
-	return nil
+	return tx.Commit()
 }
 
 func CountNodeServer() (int, error) {
@@ -299,7 +297,7 @@ func SelectNodeServerAll() ([]vo.NodeServerExportVo, error) {
 }
 
 func EnableNodeServerMTLS(id uint, serverName string) error {
-	result, err := db.Exec("UPDATE node_server SET grpc_tls_mode='mtls', grpc_tls_server_name=? WHERE id=?", serverName, id)
+	result, err := db.Exec("UPDATE node_server SET grpc_tls_mode='mtls', grpc_tls_server_name=? WHERE id=? AND removing=0", serverName, id)
 	if err != nil {
 		return err
 	}
@@ -325,30 +323,12 @@ func CreateOrUpdateNodeServer(nodeServerModule model.NodeServer, cover uint) err
 	}
 
 	if nodeServer != nil && cover == 1 {
-		// 如果存在则更新，不存在则忽略
-		accountWhere := map[string]interface{}{
-			"name": *nodeServerModule.Name,
-		}
-
-		accountUpdate := map[string]interface{}{}
-		if nodeServerModule.Ip != nil && *nodeServerModule.Ip != "" {
-			accountUpdate["ip"] = *nodeServerModule.Ip
-		}
-		if nodeServerModule.GrpcPort != nil && *nodeServerModule.GrpcPort != 0 {
-			accountUpdate["grpc_port"] = *nodeServerModule.GrpcPort
-		}
-		accountUpdate["grpc_tls_server_name"] = *nodeServerModule.GrpcTLSServerName
-		if len(accountUpdate) > 0 {
-			buildInsert, values, err := builder.BuildUpdate("node_server", accountWhere, accountUpdate)
-			if err != nil {
-				logrus.Errorln(err.Error())
-				return errors.New(constant.SysError)
-			}
-			if _, err = db.Exec(buildInsert, values...); err != nil {
-				logrus.Errorln(err.Error())
-				return errors.New(constant.SysError)
-			}
-		}
+		// Cover the row selected by its IP. The transactional update also
+		// protects an uninstalling server from imported endpoint changes.
+		return UpdateNodeServerById(&model.NodeServer{
+			Id: nodeServer.Id, Ip: nodeServerModule.Ip, GrpcPort: nodeServerModule.GrpcPort,
+			GrpcTLSServerName: nodeServerModule.GrpcTLSServerName,
+		})
 	} else {
 		if nodeServer == nil {
 			// 如果存在则忽略，不存在则添加

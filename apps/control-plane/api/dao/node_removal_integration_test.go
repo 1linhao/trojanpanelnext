@@ -160,6 +160,121 @@ func TestNodeRemovalIntegration(t *testing.T) {
 		assertRemovalRows(t, testDB, `SELECT node_server_id,name FROM node WHERE id=21`, [][]string{{"13", "updated-fixture"}})
 	})
 
+	t.Run("server_update_and_import_cover_cannot_change_uninstall_endpoint", func(t *testing.T) {
+		testDB := newNodeRemovalTestDB(t, dsn)
+		seedNodeRemovalTestDB(t, testDB)
+		if err := BeginNodeServerRemoval(11); err != nil {
+			t.Fatal(err)
+		}
+		id, port := uint(11), uint(9999)
+		name, ip, tlsName := "remove-me", "203.0.113.11", "replacement.example.test"
+		before := nodeRemovalRows(t, testDB, `SELECT * FROM node_server ORDER BY id`)
+		if err := UpdateNodeServerById(&model.NodeServer{Id: &id, GrpcPort: &port, GrpcTLSServerName: &tlsName}); err == nil || !strings.Contains(err.Error(), "being removed") {
+			t.Fatalf("update changed an uninstall endpoint: %v", err)
+		}
+		if err := CreateOrUpdateNodeServer(model.NodeServer{Name: &name, Ip: &ip, GrpcPort: &port, GrpcTLSServerName: &tlsName}, 1); err == nil || !strings.Contains(err.Error(), "being removed") {
+			t.Fatalf("import changed an uninstall endpoint: %v", err)
+		}
+		assertRemovalRows(t, testDB, `SELECT * FROM node_server ORDER BY id`, before)
+		id = 12
+		if err := UpdateNodeServerById(&model.NodeServer{Id: &id, GrpcPort: &port}); err != nil {
+			t.Fatalf("uninstalling another server blocked this update: %v", err)
+		}
+		assertRemovalRows(t, testDB, `SELECT grpc_port FROM node_server WHERE id=12`, [][]string{{"9999"}})
+	})
+
+	t.Run("web_only_delete_offline_and_active_tasks_preserves_other_servers", func(t *testing.T) {
+		testDB := newNodeRemovalTestDB(t, dsn)
+		seedNodeRemovalTestDB(t, testDB)
+		// The local action accepts missing/invalid connection details and does
+		// not require the remote uninstall or kernel-operation preconditions.
+		removalExec(t, testDB, `UPDATE node_server SET ip='',grpc_port=0,grpc_tls_server_name='',removing=1 WHERE id=11`)
+		removalExec(t, testDB, `UPDATE kernel_upgrade_task_item SET result='' WHERE id IN (1,3)`)
+		for _, id := range []uint{11, 12} {
+			removalExec(t, testDB, `INSERT INTO node_removal_cleanup (node_server_id,ip,port,server_name,purge_data,receipt) VALUES (?,'203.0.113.1',8101,'fixture.test',0,?)`, id, strings.Repeat("a", 64))
+		}
+		keptQueries := []string{
+			`SELECT * FROM node_server WHERE id=12`,
+			`SELECT * FROM node WHERE node_server_id=12 ORDER BY id`,
+			`SELECT * FROM account_server_traffic_daily WHERE node_server_id=12 ORDER BY account_id`,
+			`SELECT * FROM kernel_upgrade_task_item WHERE node_server_id=12 ORDER BY id`,
+			`SELECT * FROM node_removal_cleanup WHERE node_server_id=12`,
+			`SELECT * FROM account_traffic_total ORDER BY account_id`,
+			`SELECT * FROM account_traffic_daily ORDER BY account_id`,
+			`SELECT * FROM node_xray WHERE id<>101 ORDER BY id`,
+			`SELECT * FROM node_trojan_go WHERE id<>102 ORDER BY id`,
+			`SELECT * FROM node_hysteria WHERE id<>103 ORDER BY id`,
+			`SELECT * FROM node_hysteria2 WHERE id<>105 ORDER BY id`,
+		}
+		before := make([][][]string, len(keptQueries))
+		for i, query := range keptQueries {
+			before[i] = nodeRemovalRows(t, testDB, query)
+		}
+		if err := DeleteNodeServerRecords(11); err != nil {
+			t.Fatalf("Web-only deletion required an online endpoint or completed task: %v", err)
+		}
+		for i, query := range keptQueries {
+			assertRemovalRows(t, testDB, query, before[i])
+		}
+		for _, table := range []string{"node_server", "node", "account_server_traffic_daily", "kernel_upgrade_task_item", "node_removal_cleanup"} {
+			column := "node_server_id"
+			if table == "node_server" {
+				column = "id"
+			}
+			assertRemovalRows(t, testDB, `SELECT COUNT(*) FROM `+table+` WHERE `+column+`=11`, [][]string{{"0"}})
+		}
+		for _, detail := range []struct {
+			table string
+			id    uint
+		}{{"node_xray", 101}, {"node_trojan_go", 102}, {"node_hysteria", 103}, {"node_hysteria2", 105}} {
+			assertRemovalRows(t, testDB, `SELECT COUNT(*) FROM `+detail.table+` WHERE id=?`, [][]string{{"0"}}, detail.id)
+		}
+		assertRemovalRows(t, testDB, `SELECT id,canary_node_id FROM kernel_upgrade_task ORDER BY id`, [][]string{{"502", "0"}, {"503", "12"}, {"504", "12"}, {"505", "0"}})
+		exists, err := RemovalCleanupExists(11, strings.Repeat("a", 64))
+		if err != nil || exists {
+			t.Fatalf("deleted receipt can still trigger a host finalizer: exists=%v err=%v", exists, err)
+		}
+		exists, err = RemovalCleanupExists(12, strings.Repeat("a", 64))
+		if err != nil || !exists {
+			t.Fatalf("another server's receipt was removed: exists=%v err=%v", exists, err)
+		}
+	})
+
+	t.Run("web_only_delete_failure_rolls_back_every_related_record", func(t *testing.T) {
+		testDB := newNodeRemovalTestDB(t, dsn)
+		seedNodeRemovalTestDB(t, testDB)
+		removalExec(t, testDB, `CREATE TRIGGER fail_server_delete BEFORE DELETE ON node_server FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='fixture failure'`)
+		queries := []string{
+			`SELECT * FROM node_server ORDER BY id`, `SELECT * FROM node ORDER BY id`,
+			`SELECT * FROM node_xray ORDER BY id`, `SELECT * FROM node_trojan_go ORDER BY id`,
+			`SELECT * FROM node_hysteria ORDER BY id`, `SELECT * FROM node_hysteria2 ORDER BY id`,
+			`SELECT * FROM account_server_traffic_daily ORDER BY node_server_id,account_id`,
+			`SELECT * FROM kernel_upgrade_task ORDER BY id`, `SELECT * FROM kernel_upgrade_task_item ORDER BY id`,
+			`SELECT * FROM node_removal_cleanup ORDER BY node_server_id`,
+		}
+		before := make([][][]string, len(queries))
+		for i, query := range queries {
+			before[i] = nodeRemovalRows(t, testDB, query)
+		}
+		if err := DeleteNodeServerRecords(11); err == nil {
+			t.Fatal("failed delete returned success")
+		}
+		for i, query := range queries {
+			assertRemovalRows(t, testDB, query, before[i])
+		}
+	})
+
+	t.Run("removal_permissions_are_sysadmin_only_and_idempotent", func(t *testing.T) {
+		testDB := newNodeRemovalTestDB(t, dsn)
+		removalExec(t, testDB, `CREATE TABLE casbin_rule (p_type varchar(32),v0 varchar(255),v1 varchar(255),v2 varchar(255),v3 varchar(255),v4 varchar(255),v5 varchar(255))`)
+		for i := 0; i < 2; i++ {
+			if err := migrateNodeServerRemovalPermissions(); err != nil {
+				t.Fatal(err)
+			}
+		}
+		assertRemovalRows(t, testDB, `SELECT v0,v1,v2 FROM casbin_rule ORDER BY v1`, [][]string{{"sysadmin", "/api/nodeServer/deleteNodeServerById", "POST"}, {"sysadmin", "/api/nodeServer/uninstallNodeServerById", "POST"}})
+	})
+
 	for _, purge := range []bool{false, true} {
 		name := "ordinary_preserves_history"
 		if purge {
@@ -358,7 +473,11 @@ func seedNodeRemovalTestDB(t *testing.T, testDB *sql.DB) {
 	statements := []string{
 		`CREATE TABLE node_server (
 			id bigint unsigned PRIMARY KEY, name varchar(64) NOT NULL, ip varchar(253) NOT NULL,
-			grpc_port int unsigned NOT NULL, grpc_tls_server_name varchar(253) NOT NULL
+			grpc_port int unsigned NOT NULL, grpc_tls_server_name varchar(253) NOT NULL,
+			grpc_tls_mode varchar(16) NOT NULL DEFAULT 'mtls', traffic_period varchar(8) NOT NULL DEFAULT 'none',
+			traffic_limit_mode varchar(8) NOT NULL DEFAULT 'combined', traffic_total_limit bigint unsigned NOT NULL DEFAULT 0,
+			traffic_upload_limit bigint unsigned NOT NULL DEFAULT 0, traffic_download_limit bigint unsigned NOT NULL DEFAULT 0,
+			create_time datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
 		) ENGINE=InnoDB`,
 		`CREATE TABLE node (
 			id bigint unsigned PRIMARY KEY AUTO_INCREMENT, node_server_id bigint unsigned NOT NULL,
@@ -393,7 +512,7 @@ func seedNodeRemovalTestDB(t *testing.T, testDB *sql.DB) {
 			update_time datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 			UNIQUE KEY uk_kernel_item_idempotency (idempotency_key)
 		) ENGINE=InnoDB`,
-		`INSERT INTO node_server VALUES (11,'remove-me','203.0.113.11',18100,'remove-me.example.test'),(12,'keep-me','203.0.113.12',18101,'keep-me.example.test')`,
+		`INSERT INTO node_server (id,name,ip,grpc_port,grpc_tls_server_name) VALUES (11,'remove-me','203.0.113.11',18100,'remove-me.example.test'),(12,'keep-me','203.0.113.12',18101,'keep-me.example.test')`,
 		`INSERT INTO node (id,node_server_id,node_sub_id,node_type_id,name,node_server_ip,domain) VALUES
 			(11,11,101,1,'remove-xray','203.0.113.11','remove-me.example.test'),
 			(12,11,102,2,'remove-trojan','203.0.113.11','remove-me.example.test'),

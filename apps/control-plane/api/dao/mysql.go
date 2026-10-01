@@ -78,6 +78,9 @@ func InitMySQL() {
 	if err = migrateNodeRemovalSchema(); err != nil {
 		panic(err)
 	}
+	if err = migrateNodeServerRemovalPermissions(); err != nil {
+		panic(err)
+	}
 }
 
 func migrateTrafficAccountingSchema() error {

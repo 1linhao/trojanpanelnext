@@ -1,4 +1,4 @@
-# TrojanPanel Next v1.0.2-rc.1 deployment guide
+# TrojanPanel Next v1.0.2-rc.2 deployment guide
 
 [简体中文](deployment.md) | English
 
@@ -22,9 +22,10 @@
   - [Validate and install](#configuration-validation)
   - [Configuration field reference](#configuration-fields)
 - [Recreate current-release services](#recreate)
+- [Update Web and Node images](#updates)
 - [Local removal](#removal)
-- [Delete a node server from Web](#web-removal)
-- [Reconnect after deletion](#reconnect)
+- [Uninstall or delete a node server from Web](#web-removal)
+- [Reconnect after removal](#reconnect)
 - [Automatic certificate maintenance](#certificate-maintenance)
 - [Operations](#operations)
 - [Troubleshooting](#troubleshooting)
@@ -32,7 +33,7 @@
 <a id="dependencies"></a>
 ## System and software dependencies
 
-Linux `amd64` and `arm64` are supported. Run commands in Bash; installation, recreation, and removal require root. Node hosts must run systemd. At least 1 GiB of memory per server is recommended. Web and Node can run on separate servers connected through controlled network access.
+Linux `amd64` and `arm64` are supported. Run commands in Bash; installation, updates, recreation, and removal require root. Node hosts must run systemd. At least 1 GiB of memory per server is recommended. Web and Node can run on separate servers connected through controlled network access.
 
 The `web`, `node`, and `install` deployment commands only check dependencies. Run `deps install` separately to prepare the required software, or install it manually:
 
@@ -41,7 +42,7 @@ The `web`, `node`, and `install` deployment commands only check dependencies. Ru
 | Entrypoint, help, template download | Bash, curl, CA certificates, grep, coreutils |
 | Automatic dependency installation and removal | Entrypoint dependencies, util-linux (`flock`), root, supported Debian/Ubuntu, systemd, apt-get, dpkg, dpkg-query |
 | One-command deployment and validation | Entrypoint dependencies and **mikefarah/yq v4** |
-| Installation and recreation | Entrypoint dependencies, yq, a running Docker Engine, OpenSSL, tar, findutils, awk; Node also needs systemd |
+| Installation, updates, and recreation | Entrypoint dependencies, yq, a running Docker Engine, OpenSSL, tar, findutils, awk; Node also needs systemd |
 | Removal | Bash, curl, CA certificates, grep, coreutils including realpath/rmdir, Docker Engine, yq; Node maintenance cleanup needs systemctl |
 
 <a id="dependency-install"></a>
@@ -52,7 +53,7 @@ Supported systems are **Debian 12/13 and Ubuntu 22.04/24.04** on `amd64` or `arm
 Run in a root Bash session:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) deps install
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) deps install
 ```
 
 The command prepares Bash, curl, CA certificates, grep, coreutils, OpenSSL, tar, findutils, awk (installing gawk if awk is missing), and the distribution's Docker Engine packages (`docker.io`, `containerd`, and `runc`; Debian 13 also needs `docker-cli`), then starts Docker. If compatible yq is missing, it downloads the architecture-specific **mikefarah/yq v4.53.6** binary and installs it after SHA256 verification. Existing compatible Docker and mikefarah/yq v4 are reused without replacing the original tools.
@@ -67,7 +68,7 @@ apt-get install -y bash curl ca-certificates grep coreutils util-linux
 Dependency commands use the same release entrypoint as deployment commands. Select a release explicitly with:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) --version 1.0.2-rc.1 deps install
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) --version 1.0.2-rc.2 deps install
 ```
 
 Installation records are stored in `/var/lib/trojanpanelnext-dependencies` (directory mode `0700`). They track Docker packages added by this command and the installed yq file's SHA256 for [dependency removal](#dependency-removal). Repeated installation checks and fills missing dependencies. If installation was interrupted, rerun `deps install` to repair it before removal.
@@ -98,10 +99,10 @@ openssl version
 <a id="dependency-removal"></a>
 ### Remove dependencies
 
-First [remove the project](#removal) on that host and remove containers belonging to other Docker services. After deleting a Node from Web, also wait for host maintenance cleanup. Then run:
+First [remove the project](#removal) on that host and remove containers belonging to other Docker services. After uninstalling a Node from Web, also wait for host maintenance cleanup. Deleting only Web records leaves the Node host running; remove it locally first. Then run:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) deps remove
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) deps remove
 ```
 
 | Target | Behavior |
@@ -117,22 +118,22 @@ Without an installation record, removal is a no-op. If dependency installation w
 <a id="versions"></a>
 ## Release binding and entrypoint
 
-This guide covers pre-release **v1.0.2-rc.1 (Pre-release)**. Version `1.0.2-rc.1` maps to Git tag `v1.0.2-rc.1`, configuration field `trojanpanelnext.release: "1.0.2-rc.1"`, and these product images:
+This guide covers pre-release **v1.0.2-rc.2 (Pre-release)**. Version `1.0.2-rc.2` maps to Git tag `v1.0.2-rc.2`, configuration field `trojanpanelnext.release: "1.0.2-rc.2"`, and these product images:
 
 | Component | Image |
 | --- | --- |
-| Web API | `ghcr.io/1linhao/trojanpanelnext-api:1.0.2-rc.1` |
-| Web interface | `ghcr.io/1linhao/trojanpanelnext-web:1.0.2-rc.1` |
-| Node Agent | `ghcr.io/1linhao/trojanpanelnext-node-agent:1.0.2-rc.1` |
+| Web API | `ghcr.io/1linhao/trojanpanelnext-api:1.0.2-rc.2` |
+| Web interface | `ghcr.io/1linhao/trojanpanelnext-web:1.0.2-rc.2` |
+| Node Agent | `ghcr.io/1linhao/trojanpanelnext-node-agent:1.0.2-rc.2` |
 
 All product images provide `linux/amd64` and `linux/arm64`. Caddy, MariaDB, and Redis use the separate upstream versions in the templates.
 
-The shared entrypoint, `scripts/tp.sh`, fetches the script library and templates from the selected release tag, checks script versions, and executes the selected command. Temporary downloaded scripts are removed when the command ends. Configuration and product images must match the selected release. Scripts do not convert configuration from other versions; only the current release is maintained.
+The shared entrypoint, `scripts/tp.sh`, fetches the script library and templates from the selected release tag, checks script versions, and executes the selected command. Temporary downloaded scripts are removed when the command ends. Installation and validation require configuration and product images matching the selected release. The [update command](#updates) uses existing supported configuration and binds its release and product images to the target version. Scripts do not infer migrations between different configuration schemas; only the current release is maintained.
 
 Select a version explicitly when installing Web:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) --version 1.0.2-rc.1 web
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) --version 1.0.2-rc.2 web
 ```
 
 `--version <version>` is accepted before or after the command. `--entry-version` prints the entrypoint's default release. Use `--help` or `<command> --help` for usage. `--version` without a value does not query the version.
@@ -146,6 +147,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0
 | `config web\|node [--output <file>]` | Download a release-specific configuration template |
 | `validate --config <file>` | Validate YAML, release, and fields |
 | `install --config <file> [--force]` | Deploy the purpose defined in YAML |
+| `--version <target> update --config <file>` | Update Web or Node product images using existing configuration |
 | `remove --config <file> [--keep-data\|--purge-data]` | Remove the purpose defined in YAML |
 
 One-command deployment reads terminal input; database and Redis passwords are not supplied as command-line arguments. `--config` immediately installs using an existing configuration without prompting. Templates and generated configuration use mode `0600`; existing paths and symlinks are never overwritten. `--config` can be combined only with `--force`; set all other values in YAML.
@@ -189,13 +191,13 @@ When changing ports, update configuration, Web server registration, and firewall
 Run on the Web host:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) web
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) web
 ```
 
 Enter the Web domain and certificate contact email when prompted. Public parameters can also be supplied directly:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) web --hostname panel.example.com --email admin@example.com --output ./web.yaml
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) web --hostname panel.example.com --email admin@example.com --output ./web.yaml
 ```
 
 The default output is `./web.yaml`. First installation generates MariaDB and Redis passwords and writes them to the configuration, creates internal Web mTLS credentials, and deploys MariaDB, Redis, API, UI, and Web Caddy.
@@ -223,7 +225,7 @@ Securely transfer Web's current public `client-ca.crt` to the Node host, for exa
 Run on the Node host:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) node
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) node
 ```
 
 Provide the Node domain, Web address, registered server ID, local public CA path, and Web database/Redis credentials. Caddy mode also asks for a certificate email. Administrators can obtain connection passwords from Web YAML; sensitive input is not echoed to the terminal.
@@ -231,7 +233,7 @@ Provide the Node domain, Web address, registered server ID, local public CA path
 Public parameters can be supplied directly, with remaining fields requested interactively:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) node --hostname node.example.com --email admin@example.com --web-host panel.example.com --node-id 1 --client-ca /root/client-ca.crt
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) node --hostname node.example.com --email admin@example.com --web-host panel.example.com --node-id 1 --client-ca /root/client-ca.crt
 ```
 
 `--client-ca` points to a public PEM CA already securely transferred to this host. The file must contain only unexpired CA certificates; multiple old/new CAs are accepted during rotation. Leaf certificates, expired CAs, private keys, and other mixed content are rejected before new YAML or CA files are published. After validation, the script copies it to `/tpdata/trojanpanelnext-pki/client-ca.crt`. Omit the option if that default file already exists. The same CA can be reused; a different existing trust file is not overwritten. Follow [certificate maintenance](certificates.md) for trust changes.
@@ -248,13 +250,13 @@ After installation, check that the server is online in Web, then create the requ
 If Nginx and Certbot or another tool manage host certificates, issue a valid certificate first and select external mode:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) node --certificate-mode external
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) node --certificate-mode external
 ```
 
 Enter absolute paths to the full chain and its unencrypted PEM private key. Paths can also be supplied directly:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) node --certificate-mode external --certificate /etc/letsencrypt/live/node.example.com/fullchain.pem --private-key /etc/letsencrypt/live/node.example.com/privkey.pem
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) node --certificate-mode external --certificate /etc/letsencrypt/live/node.example.com/fullchain.pem --private-key /etc/letsencrypt/live/node.example.com/privkey.pem
 ```
 
 | Field | Meaning |
@@ -291,13 +293,13 @@ For configuration deployment, follow: download a template → edit required fiel
 Download the Web template on the Web host:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) config web --output ./web.yaml
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) config web --output ./web.yaml
 ```
 
 Download the Node template on the Node host:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) config node --output ./node.yaml
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) config node --output ./node.yaml
 ```
 
 Templates are saved with `0600` permissions. Existing files and symbolic links are never overwritten. Edit the original configuration for an existing deployment; use a different `--output` path if another file is needed for a new deployment.
@@ -393,25 +395,25 @@ After editing and preparation, validate on each corresponding host.
 Validate Web:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) validate --config ./web.yaml
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) validate --config ./web.yaml
 ```
 
 Install Web:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) install --config ./web.yaml
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) install --config ./web.yaml
 ```
 
 Validate Node:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) validate --config ./node.yaml
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) validate --config ./node.yaml
 ```
 
 Install Node:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) install --config ./node.yaml
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) install --config ./node.yaml
 ```
 
 Alternatively, use `web --config ./web.yaml` or `node --config ./node.yaml` to check the purpose and install. `validate` checks YAML, the release, and fields; it does not verify DNS, certificate contents, network connections, or service health. After installation, check Node's status in [Server management](#node-registration).
@@ -423,7 +425,7 @@ Complete editable templates: [Web](../scripts/deploy/templates/web.yaml) · [Nod
 
 | Shared field | Description |
 | --- | --- |
-| `release` | Required string; currently `"1.0.2-rc.1"`, matching the selected scripts |
+| `release` | Required string; currently `"1.0.2-rc.2"`, matching the selected scripts |
 | `schema_version` | Configuration structure version; currently `1` |
 | `purpose` | `web` or `node`; determines deployment and removal targets |
 | `hostname`, `email` | Server domain and certificate email; Node external mode does not require email |
@@ -465,12 +467,46 @@ Node template passwords and server ID are placeholders to replace, rather than a
 After changing the current release's domain, application ports, or certificate mounts, recreate the corresponding host using its configuration:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) install --config ./node.yaml --force
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) install --config ./node.yaml --force
 ```
 
 Use `./web.yaml` for Web. `--force` pulls configured images and recreates API, UI, Agent, or Caddy containers. Existing MariaDB and Redis containers are retained. Changing an initialized database password requires updating the database itself and all clients; editing YAML alone is insufficient.
 
-Operations across releases must use the target release's scripts, configuration specification, and images. The entrypoint does not infer or convert other versions' configurations. Back up data and PKI before maintenance.
+Use the [image update command](#updates) and target release for updates across versions. Installation, validation, and recreation use matching configuration and image versions. Back up data and PKI before maintenance.
+
+<a id="updates"></a>
+## Update Web and Node images
+
+Run in a root Bash session on the corresponding host, using the **actual existing deployment YAML**. `--version` must explicitly select the target release. The entrypoint fetches that release’s update script and product images.
+
+Web:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) --version 1.0.2-rc.2 update --config ./web.yaml
+```
+
+Node:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) --version 1.0.2-rc.2 update --config ./node.yaml
+```
+
+YAML `purpose` selects the deployment to update. Do not change `release` or image fields beforehand, or replace existing configuration with an empty template. Updates accept versions `1.0` and newer with `schema_version: 1` and a supported container layout, and support upgrades or repairs of the same version. There is no automatic downgrade, and `latest` is not used. Prepare other configuration schemas according to the target release’s instructions.
+
+| Item | Update behavior |
+| --- | --- |
+| Web product images | Update API and Web UI |
+| Node product image | Update Node Agent and its associated host maintenance service |
+| Deployment YAML | Change only `release` and official product image fields for the deployment; retain credentials, server ID, domains, ports, and paths |
+| Data, PKI, certificates, and proxy runtime configuration | Retained; certificates are not reissued |
+| MariaDB, Redis, and Caddy | Existing containers and versions remain; product updates do not upgrade them |
+| Previous product images | Retained for recovery; no Docker prune runs |
+
+Back up service data and PKI first, and check that the existing YAML matches running container settings. Its `release` must match the tags of the running official GHCR product images. Restore the actual deployment configuration if they differ; do not substitute a new template. The update script checks container environment, mounts, networking, and ports, then pulls all target product images before switching. A failed pull leaves old containers running and the original configuration unchanged.
+
+Before switching, a mode `0600` backup is created beside the original YAML as `<configuration>.backup-<previous-version>-<time>-<random>`. Switching product containers briefly interrupts Web or Node services. If switching or health checks fail, the script attempts to restore the original configuration, previous product containers, runtime configuration, and Node maintenance service. If restoration fails, recovery files remain and their directory is printed for manual repair. This restores deployment state only: database migrations or writes by the new version are not rolled back automatically. Restore the database from a backup made before upgrading when necessary.
+
+Update Web and Node separately on their respective hosts. The command does not replace host Nginx or Certbot, or upgrade independent Xray / Hysteria2 kernel revisions; use Web kernel management for those.
 
 <a id="removal"></a>
 ## Local removal
@@ -478,13 +514,13 @@ Operations across releases must use the target release's scripts, configuration 
 Run on the corresponding host. Retain data:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) remove --config ./node.yaml --keep-data
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) remove --config ./node.yaml --keep-data
 ```
 
 Delete project data:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) remove --config ./node.yaml --purge-data
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) remove --config ./node.yaml --purge-data
 ```
 
 Use `./web.yaml` for Web. `--keep-data` and `--purge-data` are mutually exclusive. Without either, YAML `purge_data` selects the mode; templates retain data by default.
@@ -505,34 +541,41 @@ Web removal targets MariaDB, Redis, API, UI, and Web Caddy. Node removal targets
 
 Full removal clears project service directories, `pki_bundle_dir`, camouflage content, custom `kernel_runtime_path`, configured identity files, and original YAML. Maintenance directories are `/etc/trojanpanelnext-host` and `/usr/local/lib/trojanpanelnext-host`; the systemd unit is `/etc/systemd/system/trojanpanelnext-host.service`. Full removal is refused while the other project purpose still runs on the same host, protecting shared data. External certificate paths overlapping cleanup targets also cause refusal.
 
-Local removal does not delete Web server registration. Delete the server in Web to coordinate removal and registration cleanup.
+Local removal does not delete Web server registration. Choose Uninstall or Uninstall completely in Web to coordinate removal and registration cleanup. If the host was already cleaned locally or is offline, Delete can clear only its Web records.
 
 <a id="web-removal"></a>
-## Delete a node server from Web
+## Uninstall or delete a node server from Web
 
-The node server deletion dialog offers Cancel (取消), Delete (删除), and Delete completely (彻底删除):
+The server removal dialog offers Cancel (取消), Delete (删除), Uninstall (卸载), and Uninstall completely (彻底卸载):
 
 | Action | Node host | Web |
 | --- | --- | --- |
 | Cancel | No action | No action |
-| Delete | Uninstall while retaining data | Delete server and associated proxy configuration; retain traffic/task history |
-| Delete completely | Uninstall and delete project data | Delete server, associated proxies, and corresponding traffic/task history |
+| Delete | No Node connection; host services are neither stopped nor removed | Delete this server and associated proxies, protocol configuration, traffic, tasks, and connection records |
+| Uninstall | Remove project containers and eligible images while retaining data | Delete server and associated proxy configuration; retain traffic/task history |
+| Uninstall completely | Uninstall and delete project data | Delete this server and associated proxies, protocol configuration, traffic, tasks, and connection records |
 
-Web calls the Node host maintenance service first and commits deletion after receiving success. Offline nodes, failed mTLS/network connections, and failed removal return an error and retain registration and proxy configuration. Shared task records involving other servers remain. Deleting an individual proxy removes only that proxy.
+**Delete** works without an online Node and can remove an unreachable or unmanaged server. It only clears Web data. Running Agent/proxy services, containers, images, and the host maintenance service on Node are not stopped or removed. To clean the host, run [local removal](#removal) on Node. If an uninstall or delete request for the same server is already running, a busy error asks you to wait and retry. An offline uninstallation on another server does not block this server’s Web-only deletion.
+
+**Uninstall** and **Uninstall completely** first call the Node host maintenance service and clear Web registration only after success. Offline nodes, failed mTLS/network connections, or failed removal return an error and retain the server and associated proxy configuration. Fix the connection and retry, or choose to delete only Web records.
+
+Web cleanup targets the server ID. Shared tasks retain task items for other servers; empty tasks belonging solely to this server are deleted, and canary targets pointing to it are cleared. Account-wide traffic totals, daily rankings, JWTs, system settings, and shared caches remain because they are account or system state spanning servers. Deleting an individual proxy removes only that proxy.
 
 Remote removal temporarily retains TLS identity and a removal receipt. Maintenance files and the service are cleaned after Web commits and confirms the result. When the UI reports pending cleanup (`cleanupPending`), main services and Web records have been removed, while maintenance files await confirmation. Failed confirmation and cleanup retry in the background and recover after restart. Keep Web access to the Node maintenance port and Node access to Web HTTPS available until completion.
 
 <a id="reconnect"></a>
-## Reconnect after deletion
+## Reconnect after removal
 
-Delete retains Node data, PKI, certificates, and YAML, while removing server/proxy registration. Reconnect as follows:
+Uninstall retains Node data, PKI, certificates, and YAML, while removing server/proxy registration. Reconnect as follows:
 
 1. Wait for host maintenance cleanup, then register the server again in Web. Its name/address may be reused; obtain the new ID.
 2. Update `node_server_id` in the retained `node.yaml` and check database, Redis, and TLS settings.
 3. Redeploy Node with `install --config ./node.yaml`.
 4. Check that the server is online in Web and recreate the required proxies.
 
-Retained history belongs to the original server ID and does not automatically migrate to the new ID. After Delete completely, prepare YAML and public CA following first-install instructions. External certificates remain managed and retained by the host.
+Retained history belongs to the original server ID and does not automatically migrate to the new ID. After Uninstall completely, prepare YAML and public CA following first-install instructions. External certificates remain managed and retained by the host.
+
+If you only used Delete, Node may still run its previous configuration, while associated Web records and server-specific history have been cleared. Before reconnecting, uninstall locally while retaining data, register a new server ID, and redeploy as above. Do not keep using the deleted server ID.
 
 <a id="certificate-maintenance"></a>
 ## Automatic certificate maintenance
@@ -581,7 +624,7 @@ Inspect API on Web and Agent/maintenance on Node. Before sharing logs, remove pa
 | Node offline | Check actual server ID, Web database/Redis access, gRPC firewall, certificate domain, and public CA |
 | External certificate rejected | Check absolute paths, full chain, unencrypted matching key, validity, hostname coverage, and dedicated directories |
 | Certificate appears unchanged after renewal | Wait for the service's reload interval or restart that proxy; check symlink targets and Nginx reload |
-| Web server deletion fails | Check Node maintenance, Web mTLS access to `grpc_port + 1`, and Node HTTPS access to Web |
+| Web server uninstallation fails | Check Node maintenance, Web mTLS access to `grpc_port + 1`, and Node HTTPS access to Web; choose Delete if Node is unreachable and only Web cleanup is needed |
 | Removal retains a shared image | Another container still references it; identify that consumer before manual cleanup |
 
 When reporting issues, include the release, command with sensitive arguments removed, error, and sanitized logs. Do not upload actual deployment YAML, private keys, database passwords, or access tokens.

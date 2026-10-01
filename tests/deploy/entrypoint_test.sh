@@ -49,7 +49,7 @@ curl() {
   fi
   case "${file}" in
   web.yaml | node.yaml) sed "s/${MOCK_VERSION}/${version}/g" "${SCRIPT_DIR}/templates/${file}" >"${destination}" ;;
-  dependencies.sh | install.sh | uninstall.sh | web.sh | node.sh)
+  dependencies.sh | install.sh | update.sh | uninstall.sh | web.sh | node.sh)
     if [[ "${MOCK_DISPATCH:-0}" == 1 ]]; then
       printf '#!/usr/bin/env bash\nSCRIPT_VERSION="%s"\nprintf "arg:<%%s>\\n" "$@"\nexit %s\n' "${version}" "${MOCK_STATUS:-0}" >"${destination}"
     else sed "s/${MOCK_VERSION}/${version}/g" "${SCRIPT_DIR}/${file}" >"${destination}"; fi
@@ -64,9 +64,11 @@ test ! -e "${MOCK_REQUESTS}"
 assert_fails "${ENTRYPOINT}" unknown
 assert_fails "${ENTRYPOINT}" --version
 assert_fails "${ENTRYPOINT}" --version --help
-assert_fails "${ENTRYPOINT}" --version 1.0.2-rc.1 --version 1.0.2-rc.1 config web
+assert_fails "${ENTRYPOINT}" --version 1.0.2-rc.2 --version 1.0.2-rc.2 config web
 assert_fails "${ENTRYPOINT}" --version '../main' config web
 assert_fails "${ENTRYPOINT}" --version 1 config web
+assert_fails "${ENTRYPOINT}" update --config ignored.yaml
+grep -Fq 'update requires an explicit --version target release' "${TEST_DIR}/err"
 test ! -e "${MOCK_REQUESTS}"
 
 (cd "${TEST_DIR}"; "${ENTRYPOINT}" config web --output 'web config.yaml')
@@ -101,7 +103,7 @@ env TP_SCRIPT_REF=main TP_CONFIG_REF=main "${ENTRYPOINT}" --version "${MOCK_VERS
 if grep -Fq '/main/' "${MOCK_REQUESTS}"; then fail 'legacy ref override accepted'; fi
 grep -Fq "/v${MOCK_VERSION}/scripts/deploy/templates/node.yaml" "${MOCK_REQUESTS}"
 
-for action in install remove web node; do
+for action in install update remove web node; do
   env MOCK_DISPATCH=1 "${ENTRYPOINT}" "${action}" --version "${MOCK_VERSION}" --config "file with spaces.yaml" --help >"${TEST_DIR}/out"
   grep -Fxq 'arg:<file with spaces.yaml>' "${TEST_DIR}/out"
   if grep -Fq 'arg:<--version>' "${TEST_DIR}/out"; then fail 'global release option passed to child'; fi
@@ -128,5 +130,18 @@ assert_clean
 : >"${MOCK_REQUESTS}"
 env MOCK_DISPATCH=1 "${ENTRYPOINT}" --version 2.5 install --config ignored.yaml >/dev/null
 grep -Fq '/v2.5/scripts/deploy/uninstall.sh' "${MOCK_REQUESTS}"
+assert_clean
+: >"${MOCK_REQUESTS}"
+env MOCK_DISPATCH=1 "${ENTRYPOINT}" --version 2.5 update --config 'original web.yaml' >/dev/null
+for dependency in common.sh update.sh install.sh uninstall.sh; do
+  grep -Fq "/v2.5/scripts/deploy/${dependency}" "${MOCK_REQUESTS}"
+done
+for failure in fail empty html syntax version term; do
+  assert_fails env MOCK_TARGET=update.sh MOCK_FAILURE="${failure}" "${ENTRYPOINT}" --version 2.5 update --config ignored.yaml
+done
+assert_clean
+: >"${MOCK_REQUESTS}"
+"${ENTRYPOINT}" update --help >"${TEST_DIR}/out"
+grep -Fq 'TrojanPanel Next image update' "${TEST_DIR}/out"
 assert_clean
 printf 'PASS release-selected remote dispatch, argument/status propagation and failure cleanup\n'

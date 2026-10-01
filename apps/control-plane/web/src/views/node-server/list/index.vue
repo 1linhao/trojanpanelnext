@@ -306,7 +306,7 @@
     <ui-dialog
       v-if="deleteServer"
       :visible="true"
-      title="删除节点服务器"
+      title="移除 Node 服务器"
       width="580px"
       role="alertdialog"
       described-by="server-delete-description"
@@ -316,30 +316,34 @@
     >
       <div id="server-delete-description" class="server-delete-description">
         <p class="server-delete-target">
-          确认删除服务器「{{ deleteServer.name }}」？
+          选择如何移除服务器「{{ deleteServer.name }}」：
         </p>
         <p>
-          两种方式都会先卸载目标机器的容器与镜像，再移除 Web
-          中的服务器及关联代理节点。
+          <strong>删除：</strong>只删除 Web 中的服务器、关联代理节点、流量记录、内核任务和连接信息。
+          不连接目标机器，Node 失联时也可使用；目标机器上的服务和数据继续保留。
         </p>
         <p>
-          <strong>删除：</strong>保留目标机器的数据、证书、伪装站和部署配置。
+          <strong>卸载：</strong>先卸载目标机器的容器与镜像，再删除 Web 中的服务器及关联代理节点；
+          保留目标机器的数据、证书、伪装站、部署配置及 Web 流量和任务历史。
         </p>
         <p class="server-delete-warning">
-          <strong>彻底删除：</strong
-          >同时删除目标机器的服务数据、证书、伪装站和部署配置，并清理 Web
-          中关联的流量、内核任务和连接信息。此操作无法恢复。
+          <strong>彻底卸载：</strong>先卸载并删除目标机器的服务数据、证书、伪装站和部署配置，
+          再清理 Web 中该服务器的全部关联记录。卸载需要目标机器在线，失败时保留 Web 记录。
         </p>
+        <p class="server-delete-warning">删除的记录和数据无法恢复。</p>
       </div>
       <div slot="footer" class="dialog-footer server-delete-actions">
         <liquid-button ref="cancelDelete" @click="deleteServer = null"
           >取消</liquid-button
         >
-        <liquid-button type="primary" @click="confirmDelete(false)"
+        <liquid-button @click="confirmDelete('delete')"
           >删除</liquid-button
         >
-        <liquid-button type="danger" @click="confirmDelete(true)"
-          >彻底删除</liquid-button
+        <liquid-button type="primary" @click="confirmDelete('uninstall')"
+          >卸载</liquid-button
+        >
+        <liquid-button type="danger" @click="confirmDelete('purge')"
+          >彻底卸载</liquid-button
         >
       </div>
     </ui-dialog>
@@ -370,6 +374,7 @@ import { MessageBox } from '@/utils/liquid-feedback'
 import checkPermission from '@/utils/permission'
 import {
   deleteNodeServerById,
+  uninstallNodeServerById,
   exportNodeServer,
   importNodeServer,
   selectNodeServerPage,
@@ -541,27 +546,40 @@ export default {
       if (this.deletingServerId || !checkPermission(['sysadmin'])) return
       this.deleteServer = row
     },
-    async confirmDelete(purge) {
+    async confirmDelete(action) {
       const row = this.deleteServer
-      if (!row || this.deletingServerId || !checkPermission(['sysadmin']))
-        return
+      if (!row || this.deletingServerId || !checkPermission(['sysadmin']) ||
+        !['delete', 'uninstall', 'purge'].includes(action)) return
       this.deletingServerId = row.id
       this.deleteServer = null
+      const localOnly = action === 'delete'
       try {
-        const response = await deleteNodeServerById({ id: row.id, purge })
+        const response = localOnly
+          ? await deleteNodeServerById({ id: row.id })
+          : await uninstallNodeServerById({ id: row.id, purge: action === 'purge' })
         await this.getList()
-        const pending = response.data && response.data.cleanupPending
+        const pending = !localOnly && response.data && response.data.cleanupPending
         this.$notify({
           title: pending ? '清理待完成' : 'Success',
-          message: pending
-            ? '目标机器已卸载，Web 记录已删除；维护服务正在完成最终清理，异常时会自动重试。'
-            : this.$t('confirm.deleteSuccess'),
+          message: localOnly
+            ? 'Web 中该服务器的记录和关联数据已删除；目标机器未被卸载。'
+            : pending
+              ? '目标机器已卸载，Web 记录已删除；维护服务正在完成最终清理，异常时会自动重试。'
+              : '目标机器已卸载，Web 记录已删除。',
           type: pending ? 'info' : 'success',
           duration: pending ? 6000 : 2000
         })
       } catch (_) {
-        // The request interceptor reports the server error. Keep the row so
-        // the administrator can fix connectivity or dependencies and retry.
+        // Report which action failed and preserve the row. A remote uninstall
+        // must never fall back to a Web-only deletion.
+        this.$notify({
+          title: localOnly ? '删除失败' : '卸载失败',
+          message: localOnly
+            ? 'Web 记录未删除，请检查 Web 服务后重试。'
+            : 'Web 记录仍保留。请修复目标机器连接后重试；如只需移除 Web 记录，可选择“删除”。',
+          type: 'error',
+          duration: 6000
+        })
       } finally {
         this.deletingServerId = 0
       }

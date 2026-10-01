@@ -152,6 +152,9 @@ func UpdateNodeServerById(dto *dto.NodeServerUpdateDto) error {
 	if err != nil {
 		return err
 	}
+	if existing.Removing != nil && *existing.Removing != 0 {
+		return errors.New("node server is being removed; retry removal or delete its Web registration")
+	}
 	count, err := dao.CountNodeByNameAndNodeServerId(nil, nil, dto.Id)
 	if err != nil {
 		return err

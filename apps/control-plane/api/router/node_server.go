@@ -14,8 +14,10 @@ func initNodeServerRouter(trojanApi *gin.RouterGroup) {
 		nodeServer.POST("/createNodeServer", api.CreateNodeServer)
 		// 分页查询服务器
 		nodeServer.GET("/selectNodeServerPage", api.SelectNodeServerPage)
-		// 删除服务器
+		// 仅删除 Web 中的服务器记录
 		nodeServer.POST("/deleteNodeServerById", api.DeleteNodeServerById)
+		// 卸载目标机器后删除服务器记录
+		nodeServer.POST("/uninstallNodeServerById", api.UninstallNodeServerById)
 		// 重置服务器流量统计
 		nodeServer.POST("/resetNodeServerTraffic", api.ResetNodeServerTraffic)
 		// 更新服务器

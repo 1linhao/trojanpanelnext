@@ -6,7 +6,7 @@
 
 - [请求与鉴权](#authentication)
 - [接口入口](#endpoints)
-- [服务器删除](#server-removal)
+- [服务器卸载与删除](#server-removal)
 - [Node 管理通道](#node-management)
 - [接口模型](#models)
 
@@ -44,9 +44,11 @@ JSON 响应包含 `code`、`type`、`message` 和 `data`。成功业务码为 `2
 接口定义及模型随当前版本源码发布。完整路由参见 [router/](../apps/control-plane/api/router/)，Web 调用示例参见 [src/api/](../apps/control-plane/web/src/api/)。
 
 <a id="server-removal"></a>
-## 服务器删除
+## 服务器卸载与删除
 
-`POST /api/nodeServer/deleteNodeServerById` 接收服务器 ID 和清理模式：
+### 远程卸载
+
+`POST /api/nodeServer/uninstallNodeServerById` 接收服务器 ID 和清理模式：
 
 ```json
 {
@@ -55,9 +57,23 @@ JSON 响应包含 `code`、`type`、`message` 和 `data`。成功业务码为 `2
 }
 ```
 
-`purge: false` 对应页面“删除”，卸载 Node 容器及镜像并保留项目数据；`purge: true` 对应“彻底删除”，同时清理项目数据以及此服务器对应的 Web 连接、流量与内核任务信息。该操作针对整台节点服务器，单个代理使用 `/api/node/deleteNodeById`。
+`purge: false` 对应页面“卸载”，卸载 Node 容器及可清理的镜像并保留项目数据；清理 Web 服务器与关联代理配置，保留该服务器流量和内核任务历史。`purge: true` 对应“彻底卸载”，同时清理 Node 项目数据及 Web 中该服务器的关联记录。
 
-Web 先请求目标 Node 的宿主机维护服务卸载，收到成功结果后再清理登记；卸载失败会保留服务器信息。维护结果确认与后续服务清理可能返回 `cleanupPending`，保持双向连接至完成。完整范围见[服务器删除说明](deployment.md#web-removal)。
+Web 先请求目标 Node 的宿主机维护服务，收到成功结果后再清理登记；Node 失联或卸载失败会报错并保留服务器信息。维护结果确认与后续服务清理可能返回 `cleanupPending`，保持双向连接至完成。
+
+### 只删除 Web 数据
+
+`POST /api/nodeServer/deleteNodeServerById` 对应页面“删除”，仅接收服务器 ID：
+
+```json
+{
+  "id": 12
+}
+```
+
+该接口不请求 Node，清理 Web 中该服务器及关联代理、协议配置、流量、任务与连接记录，Node 失联时也可执行。同一服务器已有卸载或删除请求正在处理时返回忙碌错误；其他服务器的失联卸载不会阻塞该删除。不会停止 Node 上仍运行的项目服务。共享任务中的其他服务器内容、账户全局流量累计及系统共享状态保留。
+
+以上操作针对整台节点服务器；单个代理使用 `/api/node/deleteNodeById`。完整范围见[服务器移除说明](deployment.md#web-removal)。
 
 <a id="node-management"></a>
 ## Node 管理通道

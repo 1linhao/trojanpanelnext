@@ -197,13 +197,12 @@ func executeKernelTaskItem(item *model.KernelUpgradeTaskItem, token string) bool
 	nodeLock.Lock()
 	defer nodeLock.Unlock()
 
-	server, err := dao.SelectNodeServer(map[string]interface{}{"id": item.NodeServerId})
-	if err != nil {
-		failKernelTaskItem(item, err)
-		return false
-	}
-	transport := nodeTransport(server)
-	inventory, err := core.GetKernelInventory(token, *server.Ip, *server.GrpcPort, transport)
+	var inventory *core.KernelInventoryVo
+	err := withKernelTaskServer(item.NodeServerId, func(server *model.NodeServer) error {
+		var requestErr error
+		inventory, requestErr = core.GetKernelInventory(token, *server.Ip, *server.GrpcPort, nodeTransport(server))
+		return requestErr
+	})
 	if err != nil {
 		failKernelTaskItem(item, fmt.Errorf("node offline or inventory unavailable: %w", err))
 		return false
@@ -223,9 +222,14 @@ func executeKernelTaskItem(item *model.KernelUpgradeTaskItem, token string) bool
 	if item.Action == "rollback" {
 		action = core.KernelAction_KERNEL_ACTION_ROLLBACK
 	}
-	operation, err := core.StartKernelOperation(token, *server.Ip, *server.GrpcPort, transport, &core.KernelOperationRequest{
-		IdempotencyKey: item.IdempotencyKey, Kernel: kernelEnum, Version: item.TargetVersion,
-		Channel: channelProto(item.Channel), Action: action,
+	var operation *core.KernelOperationVo
+	err = withKernelTaskServer(item.NodeServerId, func(server *model.NodeServer) error {
+		var requestErr error
+		operation, requestErr = core.StartKernelOperation(token, *server.Ip, *server.GrpcPort, nodeTransport(server), &core.KernelOperationRequest{
+			IdempotencyKey: item.IdempotencyKey, Kernel: kernelEnum, Version: item.TargetVersion,
+			Channel: channelProto(item.Channel), Action: action,
+		})
+		return requestErr
 	})
 	if err != nil {
 		failKernelTaskItem(item, err)
@@ -239,7 +243,11 @@ func executeKernelTaskItem(item *model.KernelUpgradeTaskItem, token string) bool
 	deadline := time.Now().Add(15 * time.Minute)
 	for time.Now().Before(deadline) {
 		time.Sleep(2 * time.Second)
-		operation, err = core.GetKernelOperation(token, *server.Ip, *server.GrpcPort, transport, item.CoreOperationId)
+		err = withKernelTaskServer(item.NodeServerId, func(server *model.NodeServer) error {
+			var requestErr error
+			operation, requestErr = core.GetKernelOperation(token, *server.Ip, *server.GrpcPort, nodeTransport(server), item.CoreOperationId)
+			return requestErr
+		})
 		if err != nil {
 			failKernelTaskItem(item, err)
 			return false
@@ -268,6 +276,22 @@ func executeKernelTaskItem(item *model.KernelUpgradeTaskItem, token string) bool
 	}
 	failKernelTaskItem(item, errors.New("kernel operation timed out"))
 	return false
+}
+
+// A queued or polling task may outlive a Web-only deletion. Re-read the
+// server under the lifecycle lock for every remote call instead of retaining
+// its endpoint in a goroutine after its registration has been removed.
+func withKernelTaskServer(id uint, request func(*model.NodeServer) error) error {
+	nodeLifecycle.RLock()
+	defer nodeLifecycle.RUnlock()
+	server, err := dao.SelectNodeServer(map[string]interface{}{"id": id})
+	if err != nil {
+		return err
+	}
+	if server.Removing != nil && *server.Removing != 0 {
+		return errors.New("node server is being removed")
+	}
+	return request(server)
 }
 
 func failKernelTaskItem(item *model.KernelUpgradeTaskItem, err error) {

@@ -39,6 +39,14 @@ go test ./...
 go build ./...
 ```
 
+API 服务器移除集成测试需要一次性 MySQL/MariaDB 实例。在 `apps/control-plane/api/` 中为当前终端设置 `TP_REMOVAL_TEST_DSN` 后执行：
+
+```bash
+go test ./dao -run '^TestNodeRemovalIntegration$' -count=1
+```
+
+DSN 用户需具备创建和删除测试数据库的权限；每个子测试使用独立数据库并在结束后清理，不修改 DSN 中指定的数据库。未设置该变量时集成测试跳过；这些 DAO 测试使用共享连接，不能并行运行。测试覆盖纯 Web 删除、远程卸载两种数据模式、失败回滚、重复删除及跨服务器共享记录的隔离。
+
 Node 宿主机维护服务的入口是 `apps/node-agent/cmd/host-agent/`。运行服务需要对应的数据库、Redis、配置及证书；部署参数见[部署指南](deployment.md)。
 
 <a id="web-ui"></a>
@@ -78,7 +86,9 @@ npm run build
 
 需要已有 Chromium 和 ChromeDriver。
 
-`npm run test:server-delete:e2e` 启动隔离模拟 API、Web 和 ChromeDriver，使用端口 `18081`、`18082`、`18888`、`9518`。测试覆盖服务器删除弹窗、两种删除模式、取消、失败重试和移动布局，产物位于 `.local/server-delete-dialog/`。
+`npm run test:server-delete:e2e` 启动隔离模拟 API、Web 和 ChromeDriver，使用端口 `18081`、`18082`、`18888`、`9518`。测试检查服务器移除弹窗的“取消”“删除”“卸载”“彻底卸载”、纯 Web 删除与远程卸载的 API 请求分派、取消不发请求、离线卸载失败保留记录后显式删除，以及桌面和手机布局。产物位于 `.local/server-delete-dialog/`。
+
+该浏览器测试使用模拟 API 请求记录器，只验证界面行为和请求参数，不执行真实 Node 宿主机卸载或 SQL 清理。服务器数据清理的事务原子性、协议配置清理及其他服务器的数据隔离由 API 的 `dao/node_removal_integration_test.go` 覆盖，运行方式见[API 与 Node Agent](#go-services)。
 
 `npm run test:live-stack:e2e` 使用上面启动的模拟 API 与 `18888` 界面，覆盖登录、系统设置、订阅模板和移动导航。生产构建可通过 `MOCK_API_TARGET=http://127.0.0.1:18081 npm run preview -- --port 18889` 预览，再指定 `LIVE_WEB_URL=http://127.0.0.1:18889` 执行相同测试。
 
@@ -106,6 +116,7 @@ node tools/check-readme-languages.mjs
 node tools/check-installer-release.mjs
 bash tests/deploy/installer_cli_test.sh
 bash tests/deploy/entrypoint_test.sh
+bash tests/deploy/update_test.sh
 bash tests/deploy/uninstall_test.sh
 bash tests/deploy/persistence_test.sh
 bash tests/deploy/external_certificate_test.sh

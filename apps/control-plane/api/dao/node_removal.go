@@ -55,6 +55,31 @@ func BeginNodeServerRemoval(id uint) error {
 	return tx.Commit()
 }
 
+// DeleteNodeServerRecords removes only Web-owned records, including an old
+// uninstall receipt. It deliberately does not require an online Node, a valid
+// Node endpoint or a completed kernel operation.
+func DeleteNodeServerRecords(id uint) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var locked uint
+	if err = tx.QueryRow(`SELECT id FROM node_server WHERE id=? FOR UPDATE`, id).Scan(&locked); err != nil {
+		return err
+	}
+	if err = clearNodeServerData(tx, id, true); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(`DELETE FROM node_removal_cleanup WHERE node_server_id=?`, id); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(`DELETE FROM node_server WHERE id=?`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func CompleteNodeServerRemoval(item RemovalCleanup) error {
 	tx, err := db.Begin()
 	if err != nil {
@@ -65,51 +90,8 @@ func CompleteNodeServerRemoval(item RemovalCleanup) error {
 	if err = tx.QueryRow(`SELECT id FROM node_server WHERE id=? AND removing=1 FOR UPDATE`, item.NodeID).Scan(&locked); err != nil {
 		return err
 	}
-	for _, table := range []struct {
-		Name string
-		Type uint
-	}{{"node_xray", 1}, {"node_trojan_go", 2}, {"node_hysteria", 3}, {"node_hysteria2", 5}} {
-		if _, err = tx.Exec(`DELETE detail FROM `+table.Name+` detail INNER JOIN node n ON n.node_sub_id=detail.id WHERE n.node_server_id=? AND n.node_type_id=?`, item.NodeID, table.Type); err != nil {
-			return err
-		}
-	}
-	if _, err = tx.Exec(`DELETE FROM node WHERE node_server_id=?`, item.NodeID); err != nil {
+	if err = clearNodeServerData(tx, item.NodeID, item.Purge); err != nil {
 		return err
-	}
-	if item.Purge {
-		if _, err = tx.Exec(`DELETE FROM account_server_traffic_daily WHERE node_server_id=?`, item.NodeID); err != nil {
-			return err
-		}
-		// Snapshot only this node's task IDs before removing its task items.
-		rows, queryErr := tx.Query(`SELECT DISTINCT task_id FROM kernel_upgrade_task_item WHERE node_server_id=?`, item.NodeID)
-		if queryErr != nil {
-			return queryErr
-		}
-		var tasks []uint64
-		for rows.Next() {
-			var id uint64
-			if err = rows.Scan(&id); err != nil {
-				rows.Close()
-				return err
-			}
-			tasks = append(tasks, id)
-		}
-		err = rows.Err()
-		rows.Close()
-		if err != nil {
-			return err
-		}
-		if _, err = tx.Exec(`DELETE FROM kernel_upgrade_task_item WHERE node_server_id=?`, item.NodeID); err != nil {
-			return err
-		}
-		if _, err = tx.Exec(`UPDATE kernel_upgrade_task SET canary_node_id=0 WHERE canary_node_id=?`, item.NodeID); err != nil {
-			return err
-		}
-		for _, id := range tasks {
-			if _, err = tx.Exec(`DELETE FROM kernel_upgrade_task WHERE id=? AND NOT EXISTS (SELECT 1 FROM kernel_upgrade_task_item WHERE task_id=?)`, id, id); err != nil {
-				return err
-			}
-		}
 	}
 	if _, err = tx.Exec(`INSERT INTO node_removal_cleanup (node_server_id,ip,port,server_name,purge_data,receipt) VALUES (?,?,?,?,?,?)`, item.NodeID, item.IP, item.Port, item.ServerName, item.Purge, item.Receipt); err != nil {
 		return err
@@ -118,6 +100,79 @@ func CompleteNodeServerRemoval(item RemovalCleanup) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+// Account-wide traffic aggregates and shared task items belong to other
+// entities. Cleanup is always scoped to the selected Node server ID.
+func clearNodeServerData(tx *sql.Tx, id uint, removeHistory bool) error {
+	for _, table := range []struct {
+		Name string
+		Type uint
+	}{{"node_xray", 1}, {"node_trojan_go", 2}, {"node_hysteria", 3}, {"node_hysteria2", 5}} {
+		if _, err := tx.Exec(`DELETE detail FROM `+table.Name+` detail INNER JOIN node n ON n.node_sub_id=detail.id WHERE n.node_server_id=? AND n.node_type_id=?`, id, table.Type); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(`DELETE FROM node WHERE node_server_id=?`, id); err != nil {
+		return err
+	}
+	if removeHistory {
+		if _, err := tx.Exec(`DELETE FROM account_server_traffic_daily WHERE node_server_id=?`, id); err != nil {
+			return err
+		}
+		// Snapshot only this node's task IDs before removing its task items.
+		rows, queryErr := tx.Query(`SELECT DISTINCT task_id FROM kernel_upgrade_task_item WHERE node_server_id=?`, id)
+		if queryErr != nil {
+			return queryErr
+		}
+		var tasks []uint64
+		for rows.Next() {
+			var id uint64
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return err
+			}
+			tasks = append(tasks, id)
+		}
+		err := rows.Err()
+		rows.Close()
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`DELETE FROM kernel_upgrade_task_item WHERE node_server_id=?`, id); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`UPDATE kernel_upgrade_task SET canary_node_id=0 WHERE canary_node_id=?`, id); err != nil {
+			return err
+		}
+		for _, id := range tasks {
+			if _, err := tx.Exec(`DELETE FROM kernel_upgrade_task WHERE id=? AND NOT EXISTS (SELECT 1 FROM kernel_upgrade_task_item WHERE task_id=?)`, id, id); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func RemovalCleanupExists(id uint, receipt string) (bool, error) {
+	var exists bool
+	err := db.QueryRow(`SELECT EXISTS(SELECT 1 FROM node_removal_cleanup WHERE node_server_id=? AND BINARY receipt=?)`, id, receipt).Scan(&exists)
+	return exists, err
+}
+
+func migrateNodeServerRemovalPermissions() error {
+	for _, path := range []string{"/api/nodeServer/deleteNodeServerById", "/api/nodeServer/uninstallNodeServerById"} {
+		var count int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM casbin_rule WHERE p_type='p' AND v0='sysadmin' AND v1=? AND v2='POST'`, path).Scan(&count); err != nil {
+			return err
+		}
+		if count == 0 {
+			if _, err := db.Exec(`INSERT INTO casbin_rule (p_type,v0,v1,v2,v3,v4,v5) VALUES ('p','sysadmin',?,'POST','','','')`, path); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func PendingRemovalCleanups() ([]RemovalCleanup, error) {

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_VERSION="1.0.2-rc.1"
+SCRIPT_VERSION="1.0.2-rc.2"
 TP_SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 if [[ ! -f "${TP_SCRIPT_DIR}/common.sh" ]]; then
   printf 'Missing common.sh. Use tp.sh to download the command and its dependencies.\n' >&2
@@ -569,7 +569,7 @@ deploy_panel_backend() {
 
 deploy_panel_ui() {
   remove_container_if_force "${UI_CONTAINER}"
-  write_ui_nginx_config
+  if [[ "${TP_KEEP_RUNTIME_CONFIG:-0}" != 1 ]]; then write_ui_nginx_config; fi
   if container_running "${UI_CONTAINER}"; then
     echo_content skyBlue "---> Trojan Panel UI already running"
     return
@@ -705,8 +705,10 @@ deploy_core() {
   fi
 
   remove_container_if_force "${CORE_CONTAINER}"
-  migrate_node_kernel_certificates
-  write_core_runtime_config "${crt_path}" "${key_path}"
+  if [[ "${TP_KEEP_RUNTIME_CONFIG:-0}" != 1 ]]; then
+    migrate_node_kernel_certificates
+    write_core_runtime_config "${crt_path}" "${key_path}"
+  fi
   if container_running "${CORE_CONTAINER}"; then
     echo_content skyBlue "---> Trojan Panel Core already running"
     return
@@ -829,7 +831,7 @@ install_host_removal_service() {
   docker cp "${CORE_CONTAINER}:/usr/local/bin/tp-host-agent" "${library_dir}/tp-host-agent"
   chmod 700 "${library_dir}/tp-host-agent"
   local original_config
-  original_config="$(realpath -- "${TP_CONFIG_FILE}")"
+  original_config="$(realpath -- "${TP_ORIGINAL_CONFIG_FILE:-${TP_CONFIG_FILE}}")"
   export NODE_SERVER_ID GRPC_PORT GRPC_CLIENT_CA_PATH TP_DATA WEB_PATH TP_PKI_BUNDLE_DIR KERNEL_RUNTIME_PATH
   export MARIADB_CONTAINER REDIS_CONTAINER PANEL_CONTAINER UI_CONTAINER CORE_CONTAINER WEB_CADDY_CONTAINER NODE_CADDY_CONTAINER
   TP_HOST_CERT="${NODE_CERTIFICATE_PATH}" TP_HOST_KEY="${NODE_PRIVATE_KEY_PATH}" TP_ORIGINAL_CONFIG="${original_config}" \
@@ -866,8 +868,10 @@ WantedBy=multi-user.target
 EOF
   systemctl daemon-reload
   systemctl enable trojanpanelnext-host.service
-  systemctl restart trojanpanelnext-host.service
-  systemctl is-active --quiet trojanpanelnext-host.service
+  if [[ "${TP_DEFER_HOST_SERVICE_START:-0}" != 1 ]]; then
+    systemctl restart trojanpanelnext-host.service
+    systemctl is-active --quiet trojanpanelnext-host.service
+  fi
 }
 main() {
   if handle_metadata "$@"; then return; fi

@@ -8,13 +8,13 @@ The responsive Web administration interface for TrojanPanel Next provides admini
 
 - Manage users, node servers, Xray / Hysteria2 / NaiveProxy proxies, and subscriptions.
 - View account and server traffic and manage Xray and Hysteria2 kernel tasks.
-- Choose Cancel, Delete, or Delete completely in the server removal dialog.
+- Choose Delete (Web records only), Uninstall (retain Node data), or Uninstall completely in the server removal dialog; Delete also works for offline servers.
 - Follow browser light/dark preferences and select blue, violet, emerald, or amber palettes.
 - Use shared desktop navigation, mobile navigation, tables, forms, dialogs, and loading states.
 
 ## Deployment
 
-Install Web through the [v1.0.2-rc.1 script entrypoint](../../../scripts/README_EN.md). See the [deployment guide](../../../docs/deployment_EN.md#web) for complete instructions.
+Install Web through the [v1.0.2-rc.2 script entrypoint](../../../scripts/README_EN.md). See the [deployment guide](../../../docs/deployment_EN.md#web) for complete instructions and [image updates](../../../docs/deployment_EN.md#updates) for existing deployments.
 
 ## Interface
 

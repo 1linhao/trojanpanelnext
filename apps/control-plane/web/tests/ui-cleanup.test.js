@@ -832,3 +832,62 @@ test('Node server registration opens once, preserves unrelated query values and 
   assert.equal(instance.dialogFormVisible, false)
   assert.equal(cleared, 1, 'permission failure cannot reset or open the form')
 })
+
+test('server actions route Web-only delete and both uninstall modes to separate APIs', async () => {
+  const calls = [], notices = []
+  let allowed = true, failUninstall = false, refreshes = 0
+  const component = loadModule(compiler.parse({ source: read('src/views/node-server/list/index.vue') }).script.content, new Proxy({}, {
+    has: () => true,
+    get: (_, name) => {
+      if (name === '@/utils/permission') return () => allowed
+      if (name === '@/api/node-server') return {
+        async deleteNodeServerById(data) { calls.push({ action: 'delete', data }); return { data: null } },
+        async uninstallNodeServerById(data) {
+          calls.push({ action: 'uninstall', data })
+          if (failUninstall) throw new Error('Node is offline')
+          return { data: { cleanupPending: true } }
+        }
+      }
+      return {}
+    }
+  })).default
+  const row = { id: 11, name: 'offline Node', status: 0 }
+  const instance = {
+    deleteServer: row, deletingServerId: 0, list: [row],
+    async getList() { refreshes++ },
+    $notify(notice) { notices.push(notice) }
+  }
+  const run = (action) => { instance.deleteServer = row; return component.methods.confirmDelete.call(instance, action) }
+  await run('delete')
+  assert.equal(calls[0].action, 'delete')
+  assert.deepEqual(JSON.parse(JSON.stringify(calls[0].data)), { id: 11 })
+  assert.match(notices[0].message, /目标机器未被卸载/)
+  await run('uninstall')
+  assert.equal(calls[1].action, 'uninstall')
+  assert.deepEqual(JSON.parse(JSON.stringify(calls[1].data)), { id: 11, purge: false })
+  await run('purge')
+  assert.deepEqual(JSON.parse(JSON.stringify(calls[2].data)), { id: 11, purge: true })
+  assert.equal(refreshes, 3)
+  failUninstall = true
+  await run('uninstall')
+  assert.equal(calls.length, 4, 'failed uninstall must never request a Web-only deletion')
+  assert.equal(refreshes, 3, 'failed uninstall must retain the current server row')
+  assert.equal(instance.list[0], row)
+  assert.equal(instance.deletingServerId, 0, 'retry is available after failure')
+  assert.match(notices[3].message, /Web 记录仍保留/)
+  await run('invalid')
+  allowed = false
+  await run('delete')
+  assert.equal(calls.length, 4, 'invalid actions and other roles cannot mutate servers')
+})
+
+test('server API keeps Web deletion short and gives remote uninstall its own timeout', async () => {
+  const requests = []
+  const api = loadModule(read('src/api/node-server.js'), { '@/utils/request': (request) => { requests.push(request); return Promise.resolve() } })
+  await api.deleteNodeServerById({ id: 9 })
+  await api.uninstallNodeServerById({ id: 9, purge: true })
+  assert.equal(requests[0].url, '/nodeServer/deleteNodeServerById')
+  assert.equal(requests[0].timeout, 30000)
+  assert.equal(requests[1].url, '/nodeServer/uninstallNodeServerById')
+  assert.equal(requests[1].timeout, 240000)
+})

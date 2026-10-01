@@ -8,9 +8,10 @@
 
 ## 维护
 
-- [配置文件字段](https://github.com/1linhao/trojanpanelnext/blob/v1.0.2-rc.1/docs/deployment.md#configuration)
-- [保留数据和彻底卸载](https://github.com/1linhao/trojanpanelnext/blob/v1.0.2-rc.1/docs/deployment.md#removal)
-- [证书与 mTLS 维护](https://github.com/1linhao/trojanpanelnext/blob/v1.0.2-rc.1/docs/certificates.md)
-- [源码结构与开发](https://github.com/1linhao/trojanpanelnext/blob/v1.0.2-rc.1/docs/development.md#source-layout)
+- [配置文件字段](https://github.com/1linhao/trojanpanelnext/blob/v1.0.2-rc.2/docs/deployment.md#configuration)
+- [产品镜像更新](https://github.com/1linhao/trojanpanelnext/blob/v1.0.2-rc.2/docs/deployment.md#updates)
+- [保留数据和彻底卸载](https://github.com/1linhao/trojanpanelnext/blob/v1.0.2-rc.2/docs/deployment.md#removal)
+- [证书与 mTLS 维护](https://github.com/1linhao/trojanpanelnext/blob/v1.0.2-rc.2/docs/certificates.md)
+- [源码结构与开发](https://github.com/1linhao/trojanpanelnext/blob/v1.0.2-rc.2/docs/development.md#source-layout)
 
 直接修改代理运行配置可能被面板后续操作覆盖，代理参数优先在 Web 中维护。

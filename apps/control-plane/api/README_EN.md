@@ -6,7 +6,7 @@ The Web backend provides account, node server, proxy, subscription, traffic, ker
 
 ## Deployment
 
-Deploy Web through the [v1.0.2-rc.1 script entrypoint](../../../scripts/README_EN.md). See the [deployment guide](../../../docs/deployment_EN.md#web) for networking, databases, and certificates.
+Deploy Web through the [v1.0.2-rc.2 script entrypoint](../../../scripts/README_EN.md). See the [deployment guide](../../../docs/deployment_EN.md#web) for networking, databases, and certificates.
 
 ## Source layout
 

@@ -4,14 +4,14 @@
 
 TrojanPanel Next is a multi-user proxy management platform supporting Xray, Hysteria2, and NaiveProxy. The Web control plane manages accounts, node servers, proxies, traffic, and tasks. Node Agents manage proxy runtimes on each server.
 
-Current pre-release: **v1.0.2-rc.1 (Pre-release)**. Deployment uses GHCR images for Linux amd64 and arm64.
+Current pre-release: **v1.0.2-rc.2 (Pre-release)**. Deployment uses GHCR images for Linux amd64 and arm64.
 
 ## Quick installation
 
 Run these commands in a **root Bash session** on the target server. On amd64/arm64 hosts running Debian 12/13 or Ubuntu 22.04/24.04 with systemd, install dependencies first:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) deps install
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) deps install
 ```
 
 The entrypoint needs Bash, curl, CA certificates, grep, and coreutils; `deps` also needs `flock` from util-linux. If tools are missing, follow the [minimal bootstrap instructions](docs/deployment_EN.md#dependency-install). Prepare dependencies [manually](docs/deployment_EN.md#dependency-manual) on other Linux distributions. After preparing DNS and [network access](docs/deployment_EN.md#network), the deployment scripts prompt for configuration and install services.
@@ -19,7 +19,7 @@ The entrypoint needs Bash, curl, CA certificates, grep, and coreutils; `deps` al
 Web control plane:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) web
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) web
 ```
 
 Visit the configured HTTPS domain after installation. The initial account is `sysadmin` / `123456`; change its password after signing in.
@@ -27,31 +27,31 @@ Visit the configured HTTPS domain after installation. The initial account is `sy
 Sign into Web with the `sysadmin` role and click **Add Node server** on the dashboard, or open **Server management** in the sidebar and click **Add Node server**. Enter the Node address, gRPC port (default `8100`), and TLS server name; save and note the **Server ID** shown below the server name in each row. Securely copy Web's public `client-ca.crt` to the Node host, then install Node. See [registration and connection](docs/deployment_EN.md#node-registration):
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) node
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) node
 ```
 
 For certificates already managed on the host by Nginx, Certbot, or another tool:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) node --certificate-mode external
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) node --certificate-mode external
 ```
 
 This mode prompts for the full certificate chain and private key paths, skipping Node Caddy and certificate issuance. See [external certificates](docs/deployment_EN.md#external-certificates) for DNS, certificate, and shared-port preparation.
 
-## Configuration deployment and removal
+## Configuration deployment, updates, and removal
 
 Download the corresponding configuration template on each host first.
 
 Web host:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) config web --output ./web.yaml
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) config web --output ./web.yaml
 ```
 
 Node host:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) config node --output ./node.yaml
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) config node --output ./node.yaml
 ```
 
 Edit the downloaded file with `nano` or `vi`. Keep the `trojanpanelnext:` mapping, release, images, and other default fields; quote YAML strings and passwords. Templates use `0600` permissions and never overwrite existing files.
@@ -66,47 +66,55 @@ Edit the downloaded file with `nano` or `vi`. Keep the `trojanpanelnext:` mappin
 Validate Web:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) validate --config ./web.yaml
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) validate --config ./web.yaml
 ```
 
 Install Web:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) install --config ./web.yaml
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) install --config ./web.yaml
 ```
 
 Validate Node:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) validate --config ./node.yaml
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) validate --config ./node.yaml
 ```
 
 Install Node:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) install --config ./node.yaml
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) install --config ./node.yaml
 ```
 
 See [configuration deployment](docs/deployment_EN.md#configuration) for complete editing examples, non-default ports, and field descriptions.
 
+Update the Web product images on the corresponding host:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) --version 1.0.2-rc.2 update --config ./web.yaml
+```
+
+Use `./node.yaml` on a Node host. Keep the actual deployment YAML: updates retain credentials, data, ports, and PKI. Database, Redis, and Caddy versions are not upgraded by this command. See [image updates](docs/deployment_EN.md#updates) for target releases, backups, and failure handling.
+
 Remove containers and eligible images while retaining service data:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) remove --config ./node.yaml --keep-data
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) remove --config ./node.yaml --keep-data
 ```
 
 Remove the project completely, including service data, PKI, proxy runtime configuration, and deployment YAML:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) remove --config ./node.yaml --purge-data
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) remove --config ./node.yaml --purge-data
 ```
 
-Choose the configuration path for the Web or Node deployment on that host. External certificates, Nginx, and Certbot remain managed independently by the host and are preserved in both modes. See [remote removal](docs/deployment_EN.md#web-removal) for deleting an entire node server from Web.
+Choose the configuration path for the Web or Node deployment on that host. External certificates, Nginx, and Certbot remain managed independently by the host and are preserved in both modes. Web’s **Uninstall** and **Uninstall completely** require a connection to Node. **Delete** only clears Web records and associated data, including when Node is offline; it does not stop services on the Node host. See [server removal](docs/deployment_EN.md#web-removal).
 
 After removing the project and other Docker services, remove dependencies added by this entrypoint:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) deps remove
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) deps remove
 ```
 
 Only newly installed Docker packages in the installation record and an unchanged yq installed by this command are removed. Basic tools, pre-existing dependencies, Docker data, and external certificates remain. Docker removal is refused if any Docker container exists (including stopped containers), shared containerd has containers in other namespaces, Node maintenance remains, or runtime state cannot be verified. If dependency installation was interrupted, rerun `deps install` to repair it before removal. See [dependency removal](docs/deployment_EN.md#dependency-removal).
@@ -116,10 +124,10 @@ Only newly installed Docker packages in the installation record and an unchanged
 A single entrypoint can select the scripts, templates, and images of a specified release:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) --version 1.0.2-rc.1 web
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.2/scripts/tp.sh) --version 1.0.2-rc.2 web
 ```
 
-Version `1.0.2-rc.1` maps to Git tag `v1.0.2-rc.1` and product image tag `:1.0.2-rc.1`. Configuration, scripts, and product images must match. See [release binding](docs/deployment_EN.md#versions) for version rules and support scope.
+Version `1.0.2-rc.2` maps to Git tag `v1.0.2-rc.2` and product image tag `:1.0.2-rc.2`. Installation and validation require matching configuration, scripts, and product images. Updates bind existing supported configuration to the target release. See [release binding](docs/deployment_EN.md#versions) for version rules and support scope.
 
 ## Documentation
 
