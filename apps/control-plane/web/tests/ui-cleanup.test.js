@@ -783,3 +783,52 @@ test('tables render an empty state while async callers supply null, then render 
   assert.match(text(render()), /Loaded row/)
   table.$destroy()
 })
+
+test('dashboard registration targets the whole Node server form and requires sysadmin', () => {
+  let allowed = true
+  const component = loadModule(compiler.parse({ source: read('src/views/dashboard/admin/index.vue') }).script.content, new Proxy({}, {
+    has: () => true,
+    get: (_, name) => name === '@/utils/permission' ? () => allowed : {}
+  })).default
+  const routes = []
+  const instance = { $router: { push: (route) => routes.push(route) } }
+  component.methods.registerNodeServer.call(instance)
+  assert.equal(routes.length, 1)
+  assert.equal(routes[0].path, '/server-manage/server-list')
+  assert.equal(routes[0].query.action, 'create')
+  allowed = false
+  component.methods.registerNodeServer.call(instance)
+  assert.equal(routes.length, 1, 'admin and user roles cannot start registration')
+})
+
+test('Node server registration opens once, preserves unrelated query values and guards permissions', () => {
+  let allowed = true
+  const component = loadModule(compiler.parse({ source: read('src/views/node-server/list/index.vue') }).script.content, new Proxy({}, {
+    has: () => true,
+    get: (_, name) => name === '@/utils/permission' ? () => allowed : {}
+  })).default
+  let cleared = 0, resets = 0, navigations = 0
+  const instance = {
+    $route: { path: '/server-manage/server-list', query: { action: 'create', filter: 'online' } },
+    $router: { replace(route) { navigations++; instance.$route = route } },
+    $refs: { nodeServerForm: { clearValidate() { cleared++ } } },
+    resetTemp() { resets++ }, dialogFormVisible: false, dialogStatus: ''
+  }
+  for (const name of ['handleCreate', 'openRegistrationFromRoute']) instance[name] = component.methods[name].bind(instance)
+  component.mounted.call(instance)
+  assert.equal(instance.dialogFormVisible, true)
+  assert.equal(instance.dialogStatus, 'create')
+  assert.equal(instance.$route.query.filter, 'online')
+  assert.equal(instance.$route.query.action, undefined)
+  component.watch['$route.query.action'].call(instance)
+  assert.equal(navigations, 1)
+  assert.equal(cleared, 1)
+  assert.equal(resets, 1)
+  allowed = false
+  instance.dialogFormVisible = false
+  instance.$route.query.action = 'create'
+  component.mounted.call(instance)
+  instance.handleCreate()
+  assert.equal(instance.dialogFormVisible, false)
+  assert.equal(cleared, 1, 'permission failure cannot reset or open the form')
+})

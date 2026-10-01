@@ -1,6 +1,9 @@
 <template>
   <div class="prototype-page grid">
     <ui-panel motion-key="server-filters">
+      <p v-if="checkPermission(['sysadmin'])" class="muted">
+        {{ $t('serverRegistration.description') }}
+      </p>
       <div class="toolbar">
         <div class="search-box">
           <app-icon name="search" /><input
@@ -55,7 +58,7 @@
           type="button"
           @click="handleCreate"
         >
-          <app-icon name="plus" />添加服务器
+          <app-icon name="plus" />{{ $t('serverRegistration.add') }}
         </button>
       </div>
     </ui-panel>
@@ -99,7 +102,8 @@
             <tr v-for="row in list" :key="row.id">
               <td class="primary-cell">
                 <strong>{{ row.name }}</strong
-                ><small class="mono">{{ row.ip }}</small>
+                ><small class="mono">{{ $t('serverRegistration.serverId') }}: {{ row.id }}</small>
+                <small class="mono">{{ row.ip }}</small>
               </td>
               <td>
                 <span class="mono muted">:{{ row.grpcPort }}</span
@@ -425,6 +429,14 @@ export default {
   created() {
     this.getList()
   },
+  mounted() {
+    this.openRegistrationFromRoute()
+  },
+  watch: {
+    '$route.query.action'() {
+      this.openRegistrationFromRoute()
+    }
+  },
   filters: {
     statusTypeFilter(status) {
       return status > 0 ? 'success' : 'danger'
@@ -512,10 +524,18 @@ export default {
       this.getList()
     },
     handleCreate() {
+      if (!checkPermission(['sysadmin'])) return
       this.resetTemp()
       this.dialogStatus = 'create'
       this.dialogFormVisible = true
       this.$refs.nodeServerForm.clearValidate()
+    },
+    openRegistrationFromRoute() {
+      if (this.$route.query.action !== 'create' || !checkPermission(['sysadmin'])) return
+      this.handleCreate()
+      const query = { ...this.$route.query }
+      delete query.action
+      this.$router.replace({ path: this.$route.path, query })
     },
     handleDelete(row) {
       if (this.deletingServerId || !checkPermission(['sysadmin'])) return

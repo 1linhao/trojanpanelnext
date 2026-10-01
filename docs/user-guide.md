@@ -20,7 +20,18 @@
 <a id="servers"></a>
 ## 节点服务器
 
-服务器管理中创建服务器，填写可从 Web 到达的 Node 地址、gRPC 端口和 TLS 服务名，并配置服务器流量周期与额度。登记取得的真实服务器 ID 用于 Node 部署；将 Web 当前公开 `client-ca.crt` 复制到 Node，按[Node 部署说明](deployment.md#node)安装 Agent。
+使用具有 `sysadmin` 角色的系统管理员账号登录，点击首页的“新增 Node 服务器”，或左侧“服务器管理”中的同名按钮。首页入口会直接打开登记表单，也可访问 `https://你的Web域名/#/server-manage/server-list`。
+
+登记时至少填写以下内容：
+
+| 字段 | 要求 |
+| --- | --- |
+| 服务器名称 | 2–20 个字符，用于识别服务器 |
+| 服务器 IP | Web 可访问的 Node IP 地址或域名 |
+| gRPC端口 | 默认 `8100`，与 Node 配置中的 `grpc_port` 一致 |
+| gRPC 证书域名 | 与 Node 配置中的 `grpc_tls_server_name` 一致，并被 Node 证书覆盖 |
+
+确认后在服务器名称下方查看“服务器 ID”，将真实 ID 填入 Node 配置的 `node_server_id`。Node 尚未安装时显示离线是正常的。将 Web 当前公开 `client-ca.crt` 复制到 Node，再按[配置文件下载](deployment.md#configuration-download)、[Node 最少编辑项](deployment.md#configuration-node-minimum)和[CA 准备](deployment.md#configuration-node-ca)完成校验与安装。详细步骤见[登记 Node 服务器](deployment.md#node-registration)。
 
 一台节点服务器可承载多个代理节点。服务器在线后再添加代理；地址、证书服务名、CA 与防火墙配置必须一致。
 

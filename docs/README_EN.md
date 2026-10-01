@@ -2,14 +2,16 @@
 
 [简体中文](README.md) | English
 
-These guides describe TrojanPanel Next **v1.0.1**.
+These guides describe TrojanPanel Next **v1.0.2-rc.1**.
 
 | Topic | Guide |
 | --- | --- |
 | Dependencies and deployment preparation | [Dependencies](deployment_EN.md#dependencies) |
 | Dependency installation and removal | [`deps install`](deployment_EN.md#dependency-install) · [`deps remove`](deployment_EN.md#dependency-removal) |
 | One-command Web and Node installation | [Web](deployment_EN.md#web) · [Node](deployment_EN.md#node) |
-| Version selection and configuration deployment | [Release binding](deployment_EN.md#versions) · [Configuration](deployment_EN.md#configuration) |
+| Version selection and template download | [Release binding](deployment_EN.md#versions) · [Download and edit templates](deployment_EN.md#configuration-download) |
+| Minimum configuration edits and installation | [Web](deployment_EN.md#configuration-web-minimum) · [Node](deployment_EN.md#configuration-node-minimum) · [Public CA](deployment_EN.md#configuration-node-ca) · [Validation and installation](deployment_EN.md#configuration-validation) |
+| Register Node in Web | [Server management and server ID](deployment_EN.md#node-registration) |
 | Existing host certificates | [External certificate mode](deployment_EN.md#external-certificates) |
 | Local and remote removal | [Removal](deployment_EN.md#removal) · [Delete a node server](deployment_EN.md#web-removal) |
 | Renewal and mTLS trust | [Certificate maintenance](certificates.md) |

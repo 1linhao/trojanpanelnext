@@ -6,6 +6,9 @@
     custom-class="liquid-node-server-editor"
     @close="$emit('update:dialogVisible', false)"
   >
+    <p v-if="dialogStatus === 'create'" class="muted">
+      {{ $t('serverRegistration.formHint') }}
+    </p>
     <liquid-form
       ref="dataForm"
       :rules="dialogStatus === 'create' ? createRules : updateRules"
@@ -147,7 +150,7 @@ export default {
       form: Object.assign({}, this.nodeServer),
       textMap: {
         update: this.$t('table.edit'),
-        create: this.$t('table.add')
+        create: this.$t('serverRegistration.add')
       },
       createRules: {
         ip: [

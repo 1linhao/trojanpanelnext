@@ -1,4 +1,11 @@
 export default {
+  serverRegistration: {
+    title: '接入 Node 服务器',
+    add: '新增 Node 服务器',
+    description: '先登记服务器并获取服务器 ID，再安装 Node；安装后可在节点管理中创建代理节点。',
+    formHint: '填写服务器名称、Web 可达的地址、gRPC 端口及证书域名。登记后，使用列表中的服务器 ID 配置并安装 Node。',
+    serverId: '服务器 ID'
+  },
   route: {
     dashboard: '首页',
     serverManage: '服务器管理',
@@ -214,7 +221,7 @@ export default {
     nodeServer: '服务器',
     nodeServerIp: '服务器IP',
     nodeServerName: '服务器名称',
-    nodeServerGrpcPort: 'API端口',
+    nodeServerGrpcPort: 'gRPC端口',
     trojanPanelCoreVersion: 'TP Core 版本',
     import: '导入',
     export: '导出',

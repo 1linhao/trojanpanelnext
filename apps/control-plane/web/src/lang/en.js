@@ -1,4 +1,11 @@
 export default {
+  serverRegistration: {
+    title: 'Connect a Node server',
+    add: 'Add Node server',
+    description: 'Register a server to obtain its ID, then install Node. Once installed, create proxy nodes in Node management.',
+    formHint: 'Enter a server name, an address reachable from Web, the gRPC port and the certificate DNS name. Use the server ID shown in the list to configure and install Node.',
+    serverId: 'Server ID'
+  },
   route: {
     dashboard: 'Dashboard',
     serverManage: 'Server Manage',
@@ -215,7 +222,7 @@ export default {
     nodeServer: 'Server',
     nodeServerIp: 'Server IP',
     nodeServerName: 'Server Name',
-    nodeServerGrpcPort: 'Server API port',
+    nodeServerGrpcPort: 'gRPC port',
     trojanPanelCoreVersion: 'TP Core Version',
     import: 'Import',
     export: 'Export',

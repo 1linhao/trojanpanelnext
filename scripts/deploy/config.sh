@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_VERSION="1.0.1"
+SCRIPT_VERSION="1.0.2-rc.1"
 TP_SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 if [[ ! -f "${TP_SCRIPT_DIR}/common.sh" ]]; then
   printf 'Missing common.sh. Use tp.sh to download the command and its dependencies.\n' >&2
@@ -88,7 +88,11 @@ download_config() {
   rm -f -- "${TP_TEMP_CONFIG_FILE}"
   TP_TEMP_CONFIG_FILE=""
   echo_content green "Configuration downloaded: ${output} (release ${INSTALLER_VERSION}, template ref ${CONFIG_REF})"
-  echo_content skyBlue "Edit this file, then run: ./tp.sh validate --config ${output}"
+  local quoted_output quoted_entry
+  printf -v quoted_output '%q' "${output}"
+  printf -v quoted_entry '%q' "${GITHUB_RAW_BASE}/${CONFIG_REF}/scripts/tp.sh"
+  echo_content skyBlue "Minimum fields and Node CA preparation: https://github.com/1linhao/trojanpanelnext/blob/${CONFIG_REF}/docs/deployment.md#configuration"
+  echo_content skyBlue "Edit this file, then run: bash <(curl -fsSL ${quoted_entry}) validate --config ${quoted_output}"
 }
 
 handle_config_command() {

@@ -2,10 +2,10 @@
 
 [简体中文](README.md) | English
 
-`tp.sh` is the v1.0.1 entrypoint. It downloads commands, shared dependencies, and templates for the selected release. See the [deployment guide](../docs/deployment_EN.md) for complete instructions.
+`tp.sh` is the v1.0.2-rc.1 entrypoint. It downloads commands, shared dependencies, and templates for the selected release. See the [deployment guide](../docs/deployment_EN.md) for complete instructions.
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.1/scripts/tp.sh) --help
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) --help
 ```
 
 | Command | Purpose |
@@ -27,15 +27,61 @@ Deployment implementations and templates live in `deploy/`. The entrypoint assem
 In a root Bash session, install dependencies separately before running `web`, `node`, or `install`; deployment commands only check dependencies.
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.1/scripts/tp.sh) deps install
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) deps install
 ```
 
 Automatic dependency installation supports Debian 12/13 and Ubuntu 22.04/24.04 on amd64/arm64 with systemd. The entrypoint itself requires Bash, curl, CA certificates, grep, and coreutils; `deps` also requires `flock` from util-linux. See the [dependency guide](../docs/deployment_EN.md#dependencies) for minimal bootstrap instructions and manual preparation on other Linux distributions.
 
+## Configuration deployment
+
+Download a template, edit it, then validate and install. Templates use `0600` permissions and existing files are never overwritten.
+
+Web template:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) config web --output ./web.yaml
+```
+
+Node template:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) config node --output ./node.yaml
+```
+
+Edit with `nano` or `vi`; all fields belong to the `trojanpanelnext` mapping. For Web, edit at least `hostname` and `email`; empty first-install database/Redis passwords are generated and written back. For Node, edit its domain, Caddy email, Web database/Redis addresses and actual passwords, actual server ID, and TLS server name. Prepare Web's public CA before installation. For external certificates, set `node_certificate_mode: external` and existing absolute certificate/key paths; email is not required.
+
+[Minimum Web edits](../docs/deployment_EN.md#configuration-web-minimum) · [Register a server](../docs/deployment_EN.md#node-registration) · [Minimum Node edits](../docs/deployment_EN.md#configuration-node-minimum) · [Prepare Node CA](../docs/deployment_EN.md#configuration-node-ca)
+
+Validate Web:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) validate --config ./web.yaml
+```
+
+Install Web:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) install --config ./web.yaml
+```
+
+Validate Node:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) validate --config ./node.yaml
+```
+
+Install Node:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) install --config ./node.yaml
+```
+
+## Remove dependencies
+
 After removing the project and other Docker services, remove dependencies added by this command:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.1/scripts/tp.sh) deps remove
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.1/scripts/tp.sh) deps remove
 ```
 
 Pre-existing dependencies, basic tools, Docker data, and external certificates remain. Docker removal is refused while any Docker container exists (including stopped containers), shared containerd has containers in other namespaces, Node maintenance remains, or runtime state cannot be verified. If dependency installation was interrupted, rerun `deps install` to repair it before removal. See [dependency removal](../docs/deployment_EN.md#dependency-removal) for the full scope. `deps` also accepts `--version <version>`.

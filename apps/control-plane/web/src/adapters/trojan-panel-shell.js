@@ -7,7 +7,7 @@ export const ADMIN_GROUPS = Object.freeze([
   { key: 'manage', label: '管理', items: [
     { key: '/account-manage/account-list', label: '账号管理', mobileLabel: '账号', icon: 'account', roles: ['sysadmin', 'admin'] },
     { key: '/node-manage/node-list', label: '节点管理', mobileLabel: '节点', icon: 'node' },
-    { key: '/server-manage/server-list', label: '服务器', mobileLabel: '服务器', icon: 'server', roles: ['sysadmin', 'admin'] },
+    { key: '/server-manage/server-list', label: '服务器管理', mobileLabel: '服务器', icon: 'server', roles: ['sysadmin', 'admin'] },
     { key: '/server-manage/kernel-upgrade', label: '内核升级', mobileLabel: '内核', icon: 'sysinfo', roles: ['sysadmin'] }
   ] },
   { key: 'operations', label: '运维', items: [
