@@ -6,7 +6,7 @@ Node Agent 运行在节点服务器上，接受 Web 主控的 mTLS 管理请求�
 
 ## 部署
 
-使用 [v1.0.2-rc.7 脚本入口](../../scripts/README.md)安装 Node，具体网络、数据库、节点登记和公开 CA 准备见[部署指南](../../docs/deployment.md#node)。
+使用 [v1.0.2-rc.8 脚本入口](../../scripts/README.md)安装 Node，具体网络、数据库、节点登记和公开 CA 准备见[部署指南](../../docs/deployment.md#node)。
 
 证书支持 Caddy 自动管理和[外部证书模式](../../docs/deployment.md#external-certificates)。宿主机维护服务负责服务器卸载；Agent 无需挂载 Docker socket。
 

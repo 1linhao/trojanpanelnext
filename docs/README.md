@@ -2,7 +2,7 @@
 
 简体中文 | [English](README_EN.md)
 
-本文档面向 TrojanPanel Next **v1.0.2-rc.7** 用户。
+本文档面向 TrojanPanel Next **v1.0.2-rc.8** 用户。
 
 | 主题 | 文档 |
 | --- | --- |

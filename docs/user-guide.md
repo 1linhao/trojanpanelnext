@@ -42,7 +42,7 @@
 
 包包含已填实际 ID 与数据库 / Redis 凭据的 `node.yaml`、Web 公开 `client-ca.crt`、`install-node.sh` 和包内说明。只有 `sysadmin` 可生成该含凭据包；部署包和 YAML 应以 `0600` 权限保存在私有目录，只安全传到目标 Node，不提交公开仓库。包不包含任何 Web 私钥或 Node TLS 私钥，外部证书与私钥须在 Node 预先准备。
 
-在 Node 准备依赖、解压后执行 `bash ./install-node.sh`，脚本自动准备公开 CA 并按配置安装，不覆盖不同的现有信任，也不强制重建服务。安装后保留原 `node.yaml` 用于更新与卸载。Node 尚未安装时显示离线是正常的；完整流程见[部署包安装](deployment.md#node-deployment-package)。
+在 Node 准备依赖并解压后，四个文件位于 `tpnext/`（权限 `0700`）；从解压目录执行 `bash ./tpnext/install-node.sh`。脚本校验并使用包内当前 Web 的公开 CA，替换旧信任前先备份，不强制重建服务。安装后保留原 `tpnext/node.yaml` 用于更新与卸载。Node 尚未安装时显示离线是正常的；完整流程见[部署包安装](deployment.md#node-deployment-package)。
 
 手工配置部署为备选，模板下载、最少编辑和 CA 操作分别见[配置文件下载](deployment.md#configuration-download)、[Node 最少编辑项](deployment.md#configuration-node-minimum)和[CA 准备](deployment.md#configuration-node-ca)。
 

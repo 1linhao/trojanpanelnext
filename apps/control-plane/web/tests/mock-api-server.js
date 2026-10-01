@@ -175,23 +175,25 @@ const deploymentInfo = (server) => ({
 const deploymentArchive = (nodeServer, options) => {
   const info = deploymentInfo(nodeServer)
   const entries = {
-    'node.yaml': `trojanpanelnext:\n  release: "${productVersion}"\n  schema_version: 1\n  purpose: node\n  hostname: ${info.grpcTlsServerName}\n  node_server_id: ${info.id}\n  mariadb_host: ${options.webHost}\n  mariadb_password: fixture-only-database-password\n  redis_host: ${options.webHost}\n  redis_password: fixture-only-redis-password\n  node_certificate_mode: ${options.certificateMode}\n`,
-    'client-ca.crt': '-----BEGIN CERTIFICATE-----\nfixture-only-public-CA\n-----END CERTIFICATE-----\n',
-    'install-node.sh': '#!/usr/bin/env bash\nprintf "Mock fixture: no host installation is performed.\\n"\n',
-    'README.md': '# Local UI fixture\nThis archive is for UI tests. Do not deploy it.\n'
+    'tpnext/': '',
+    'tpnext/node.yaml': `trojanpanelnext:\n  release: "${productVersion}"\n  schema_version: 1\n  purpose: node\n  hostname: ${info.grpcTlsServerName}\n  node_server_id: ${info.id}\n  mariadb_host: ${options.webHost}\n  mariadb_password: fixture-only-database-password\n  redis_host: ${options.webHost}\n  redis_password: fixture-only-redis-password\n  node_certificate_mode: ${options.certificateMode}\n`,
+    'tpnext/client-ca.crt': '-----BEGIN CERTIFICATE-----\nfixture-only-public-CA\n-----END CERTIFICATE-----\n',
+    'tpnext/install-node.sh': '#!/usr/bin/env bash\nprintf "Mock fixture: no host installation is performed.\\n"\n',
+    'tpnext/README.md': '# Local UI fixture\nThis archive is for UI tests. Do not deploy it.\n'
   }
+  const modes = { 'tpnext/': 0o700, 'tpnext/node.yaml': 0o600, 'tpnext/client-ca.crt': 0o644, 'tpnext/install-node.sh': 0o700, 'tpnext/README.md': 0o600 }
   const chunks = []
   for (const [name, text] of Object.entries(entries)) {
     const content = Buffer.from(text)
     const header = Buffer.alloc(512)
     header.write(name, 0, 100)
-    header.write('0000600\0', 100, 8)
+    header.write(modes[name].toString(8).padStart(7, '0') + '\0', 100, 8)
     header.write('0000000\0', 108, 8)
     header.write('0000000\0', 116, 8)
     header.write(content.length.toString(8).padStart(11, '0') + '\0', 124, 12)
     header.write('00000000000\0', 136, 12)
     header.fill(32, 148, 156)
-    header.write('0', 156, 1)
+    header.write(name.endsWith('/') ? '5' : '0', 156, 1)
     header.write('ustar\0', 257, 6)
     header.write('00', 263, 2)
     const checksum = header.reduce((sum, byte) => sum + byte, 0)
