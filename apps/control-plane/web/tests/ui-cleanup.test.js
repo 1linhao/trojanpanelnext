@@ -1050,7 +1050,7 @@ test('deployment metadata must match the requested ID and trusted release format
   const commands = component.computed.installCommands.call({ metadata: result, archiveName: 'tpnext-node-42.tar.gz', $t: (key) => key })
   assert.ok(commands[0].value.includes(`/v${result.version}/scripts/tp.sh) --version ${result.version} deps install`))
   assert.equal(commands[1].value, 'tar -xzf tpnext-node-42.tar.gz')
-  assert.equal(commands[2].value, 'bash ./install-node.sh')
+  assert.equal(commands[2].value, 'bash ./tpnext/install-node.sh')
   for (result of [{ id: 99, version: '1.0.2' }, { id: 42, version: 'main; printf secret' }]) {
     const invalid = { ...component.data(), serverId: 42, $t: (key) => key }
     await component.methods.loadDeployment.call(invalid)

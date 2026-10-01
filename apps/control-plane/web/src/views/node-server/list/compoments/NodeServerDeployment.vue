@@ -168,7 +168,7 @@ export default {
       return [
         { key: 'dependencies', label: this.$t('nodeDeployment.dependenciesCommand'), value: `bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v${version}/scripts/tp.sh) --version ${version} deps install` },
         { key: 'extract', label: this.$t('nodeDeployment.extractCommand'), value: `tar -xzf ${this.archiveName}` },
-        { key: 'install', label: this.$t('nodeDeployment.installCommand'), value: 'bash ./install-node.sh' }
+        { key: 'install', label: this.$t('nodeDeployment.installCommand'), value: 'bash ./tpnext/install-node.sh' }
       ]
     }
   },

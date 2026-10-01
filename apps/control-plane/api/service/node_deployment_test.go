@@ -68,6 +68,13 @@ func deploymentArchiveFiles(t *testing.T, data []byte) (map[string][]byte, map[s
 	defer compressed.Close()
 	archive := tar.NewReader(compressed)
 	files, modes := map[string][]byte{}, map[string]int64{}
+	// Exact paths reject absolute names, traversal, entries outside the package,
+	// and unexpected nested files before a test extracts anything to disk.
+	members := map[string]byte{
+		"tpnext/":          tar.TypeDir,
+		"tpnext/node.yaml": tar.TypeReg, "tpnext/client-ca.crt": tar.TypeReg,
+		"tpnext/install-node.sh": tar.TypeReg, "tpnext/README.md": tar.TypeReg,
+	}
 	for {
 		header, err := archive.Next()
 		if err == io.EOF {
@@ -76,17 +83,30 @@ func deploymentArchiveFiles(t *testing.T, data []byte) (map[string][]byte, map[s
 		if err != nil {
 			t.Fatal(err)
 		}
-		if header.Typeflag != tar.TypeReg || filepath.Base(header.Name) != header.Name {
-			t.Fatalf("unsafe archive member: %#v", header)
+		wantType, expected := members[header.Name]
+		if !expected || header.Typeflag != wantType || header.Linkname != "" {
+			t.Fatalf("unsafe or unexpected archive member: %#v", header)
 		}
-		if _, exists := files[header.Name]; exists {
-			t.Fatal("duplicate archive member")
+		if _, exists := modes[header.Name]; exists {
+			t.Fatalf("duplicate archive member: %q", header.Name)
 		}
-		files[header.Name], err = io.ReadAll(archive)
-		if err != nil {
-			t.Fatal(err)
+		if header.Name == "tpnext/" {
+			if len(modes) != 0 || header.Size != 0 {
+				t.Fatal("package directory must be the first, empty archive member")
+			}
+		} else {
+			if _, exists := modes["tpnext/"]; !exists {
+				t.Fatal("archive file precedes its package directory")
+			}
+			files[header.Name], err = io.ReadAll(archive)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 		modes[header.Name] = header.Mode
+	}
+	if len(modes) != len(members) {
+		t.Fatalf("incomplete archive: %v", modes)
 	}
 	return files, modes
 }
@@ -108,11 +128,11 @@ func TestNodeDeploymentArchiveAndSafeMetadata(t *testing.T) {
 				t.Fatal(err)
 			}
 			files, modes := deploymentArchiveFiles(t, archive)
-			if !reflect.DeepEqual(modes, map[string]int64{"node.yaml": 0600, "client-ca.crt": 0644, "install-node.sh": 0700, "README.md": 0600}) {
+			if !reflect.DeepEqual(modes, map[string]int64{"tpnext/": 0700, "tpnext/node.yaml": 0600, "tpnext/client-ca.crt": 0644, "tpnext/install-node.sh": 0700, "tpnext/README.md": 0600}) {
 				t.Fatalf("archive files or modes changed: %v", modes)
 			}
 			var document map[string]map[string]interface{}
-			if err := yaml.Unmarshal(files["node.yaml"], &document); err != nil {
+			if err := yaml.Unmarshal(files["tpnext/node.yaml"], &document); err != nil {
 				t.Fatal(err)
 			}
 			node := document["trojanpanelnext"]
@@ -121,7 +141,7 @@ func TestNodeDeploymentArchiveAndSafeMetadata(t *testing.T) {
 					t.Fatalf("YAML %s changed: got=%#v want=%#v", key, node[key], want)
 				}
 			}
-			if !bytes.Equal(files["client-ca.crt"], ca) {
+			if !bytes.Equal(files["tpnext/client-ca.crt"], ca) {
 				t.Fatal("rotation CA bundle changed")
 			}
 			metadata, err := deploymentMetadata(server, request.WebHost, config)
@@ -132,7 +152,7 @@ func TestNodeDeploymentArchiveAndSafeMetadata(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			for _, data := range [][]byte{jsonData, files["README.md"], files["install-node.sh"], files["client-ca.crt"]} {
+			for _, data := range [][]byte{jsonData, files["tpnext/README.md"], files["tpnext/install-node.sh"], files["tpnext/client-ca.crt"]} {
 				for _, secret := range []string{config.MySQLConfig.Password, config.RedisConfig.Password} {
 					if bytes.Contains(data, []byte(secret)) {
 						t.Fatal("credentials escaped node.yaml")
@@ -142,7 +162,7 @@ func TestNodeDeploymentArchiveAndSafeMetadata(t *testing.T) {
 			if strings.Contains(string(jsonData), "password") || strings.Contains(string(jsonData), "privateKey") {
 				t.Fatal("metadata includes credential fields")
 			}
-			if bytes.Contains(files["client-ca.crt"], []byte("PRIVATE KEY")) || bytes.Contains(files["install-node.sh"], []byte("--force")) {
+			if bytes.Contains(files["tpnext/client-ca.crt"], []byte("PRIVATE KEY")) || bytes.Contains(files["tpnext/install-node.sh"], []byte("--force")) {
 				t.Fatal("deployment bundle exports a key or forces installation")
 			}
 		})
@@ -204,7 +224,7 @@ func TestNodeDeploymentConnectionHostFlagsMatchArchive(t *testing.T) {
 			}
 			files, _ := deploymentArchiveFiles(t, archive)
 			var document map[string]map[string]interface{}
-			if err := yaml.Unmarshal(files["node.yaml"], &document); err != nil {
+			if err := yaml.Unmarshal(files["tpnext/node.yaml"], &document); err != nil {
 				t.Fatal(err)
 			}
 			mysqlPreview, redisPreview := metadata.MariaDBHost, metadata.RedisHost
@@ -300,7 +320,7 @@ func TestNodeDeploymentRejectsUnsafeInputAndCA(t *testing.T) {
 }
 
 func TestNodeDeploymentInstallScriptDelegatesTrustImport(t *testing.T) {
-	for _, scenario := range []string{"new", "same", "different", "symlink_source", "missing_source", "directory_source", "symlink_config", "validate_failure", "install_failure"} {
+	for _, scenario := range []string{"new", "new_from_package", "same", "different", "symlink_source", "missing_source", "directory_source", "symlink_config", "validate_failure", "install_failure"} {
 		t.Run(scenario, func(t *testing.T) {
 			server, request, config := deploymentFixture()
 			ca := deploymentCAFixture(t, 1, true, false)
@@ -308,19 +328,33 @@ func TestNodeDeploymentInstallScriptDelegatesTrustImport(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			files, _ := deploymentArchiveFiles(t, data)
+			_, modes := deploymentArchiveFiles(t, data)
 			dir := t.TempDir()
-			pkg := filepath.Join(dir, "bundle with spaces")
+			extractRoot := filepath.Join(dir, "bundle with spaces")
+			pkg := filepath.Join(extractRoot, "tpnext")
 			bin := filepath.Join(dir, "bin")
 			pki := filepath.Join(dir, "custom-pki")
-			for _, path := range []string{pkg, bin} {
+			for _, path := range []string{extractRoot, bin} {
 				if err := os.Mkdir(path, 0700); err != nil {
 					t.Fatal(err)
 				}
 			}
-			for name, body := range files {
-				if err := os.WriteFile(filepath.Join(pkg, name), body, 0644); err != nil {
-					t.Fatal(err)
+			archivePath := filepath.Join(dir, "node.tar.gz")
+			if err := os.WriteFile(archivePath, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			extract := exec.Command("tar", "--extract", "--gzip", "--file", archivePath, "--directory", extractRoot, "--no-same-owner", "--same-permissions")
+			if output, err := extract.CombinedOutput(); err != nil {
+				t.Fatalf("extract deployment archive: %v %s", err, output)
+			}
+			entries, err := os.ReadDir(extractRoot)
+			if err != nil || len(entries) != 1 || entries[0].Name() != "tpnext" || !entries[0].IsDir() {
+				t.Fatal("deployment files were scattered outside the package directory")
+			}
+			for name, mode := range modes {
+				info, err := os.Stat(filepath.Join(extractRoot, filepath.FromSlash(name)))
+				if err != nil || int64(info.Mode().Perm()) != mode {
+					t.Fatalf("extracted package permissions changed for %s", name)
 				}
 			}
 			version := strings.TrimPrefix(constant.TrojanPanelVersion, "v")
@@ -408,7 +442,12 @@ esac
 			if scenario == "install_failure" {
 				installExit = "1"
 			}
-			cmd := exec.Command("bash", filepath.Join(pkg, "install-node.sh"))
+			cmd := exec.Command("bash", "./tpnext/install-node.sh")
+			cmd.Dir = extractRoot
+			if scenario == "new_from_package" {
+				cmd = exec.Command("bash", "./install-node.sh")
+				cmd.Dir = pkg
+			}
 			cmd.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "TEST_VERSION="+version, "TEST_ENTRY="+entry, "TEST_EVENTS="+events, "TEST_PKI="+pki, "TEST_VALIDATE_FAIL="+validationFail, "TEST_INSTALL_EXIT="+installExit, "TEST_INSTALL_ARGS="+args)
 			output, err := cmd.CombinedOutput()
 			unsafeSource := scenario == "symlink_source" || scenario == "missing_source" || scenario == "directory_source" || scenario == "symlink_config"

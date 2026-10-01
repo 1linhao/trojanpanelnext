@@ -245,7 +245,7 @@ func buildNodeDeploymentArchive(server *model.NodeServer, request dto.NodeDeploy
 	if err != nil {
 		return nil, errors.New("cannot create Node deployment configuration")
 	}
-	readme := fmt.Sprintf("# Node 部署包\n\n此包用于部署已登记的 Node 服务器 ID %d，版本 v%s。\n\n## 保护部署文件\n\n归档和 node.yaml 含 MariaDB、Redis 的真实连接凭据。请将归档和配置权限设为 600，使用安全方式传输到 Node 主机，并存放在私有目录中；不要公开或上传到仓库。包中仅包含公开的客户端 CA，不导出 Web 客户端私钥、CA 私钥或外部证书文件。\n\n## 安装\n\n先按照使用文档运行 deps install 命令准备依赖。使用 umask 077 创建私有目录并解压此包，检查 node.yaml 后，以 root 在 Node 主机运行 bash ./install-node.sh。外部证书模式要求该主机上已存在配置指向的完整证书链和私钥文件。安装脚本先验证当前版本配置，再将包内当前 Web 的客户端 CA 交给安装器。安装器校验该 CA，并在重新部署时先备份、再替换不同的旧 CA，避免继续信任旧控制端。安装不默认启用 force。\n\n完整说明：%s\n\n## English summary\n\nKeep this credential-bearing archive and node.yaml private (chmod 600). Prepare dependencies, extract into a private directory, review node.yaml, then run bash ./install-node.sh as root on the Node host. Only the public client CA is included. The installer validates the bundle's current Web public client CA and backs up any different retained CA before replacing it. Installation does not enable force.\n", metadata.Id, metadata.Version, metadata.DocsURL)
+	readme := fmt.Sprintf("# Node 部署包\n\n此包用于部署已登记的 Node 服务器 ID %d，版本 v%s。\n\n## 保护部署文件\n\n归档和 node.yaml 含 MariaDB、Redis 的真实连接凭据。请将归档和配置权限设为 600，使用安全方式传输到 Node 主机，并存放在私有目录中；不要公开或上传到仓库。包中仅包含公开的客户端 CA，不导出 Web 客户端私钥、CA 私钥或外部证书文件。\n\n## 安装\n\n先按照使用文档运行 deps install 命令准备依赖。使用 umask 077 在私有目录中解压此包，解压后会生成权限为 700 的 tpnext/ 目录。检查 tpnext/node.yaml 后，以 root 在 Node 主机运行 bash ./tpnext/install-node.sh；也可以先 cd tpnext，再运行 bash ./install-node.sh。外部证书模式要求该主机上已存在配置指向的完整证书链和私钥文件。安装脚本先验证当前版本配置，再将包内当前 Web 的客户端 CA 交给安装器。安装器校验该 CA，并在重新部署时先备份、再替换不同的旧 CA，避免继续信任旧控制端。安装不默认启用 force。\n\n完整说明：%s\n\n## English summary\n\nKeep this credential-bearing archive and node.yaml private (chmod 600). Prepare dependencies and extract into a private directory; the archive creates a mode-700 tpnext/ directory. Review tpnext/node.yaml, then run bash ./tpnext/install-node.sh as root on the Node host, or cd tpnext and run bash ./install-node.sh. Only the public client CA is included. The installer validates the bundle's current Web public client CA and backs up any different retained CA before replacing it. Installation does not enable force.\n", metadata.Id, metadata.Version, metadata.DocsURL)
 
 	files := []struct {
 		name string
@@ -259,8 +259,11 @@ func buildNodeDeploymentArchive(server *model.NodeServer, request dto.NodeDeploy
 	var buffer bytes.Buffer
 	compressed := gzip.NewWriter(&buffer)
 	archive := tar.NewWriter(compressed)
+	if err = archive.WriteHeader(&tar.Header{Name: "tpnext/", Mode: 0700, Typeflag: tar.TypeDir}); err != nil {
+		return nil, errors.New("cannot create Node deployment archive")
+	}
 	for _, file := range files {
-		if err = archive.WriteHeader(&tar.Header{Name: file.name, Mode: file.mode, Size: int64(len(file.data)), Typeflag: tar.TypeReg}); err != nil {
+		if err = archive.WriteHeader(&tar.Header{Name: "tpnext/" + file.name, Mode: file.mode, Size: int64(len(file.data)), Typeflag: tar.TypeReg}); err != nil {
 			return nil, errors.New("cannot create Node deployment archive")
 		}
 		if _, err = archive.Write(file.data); err != nil {

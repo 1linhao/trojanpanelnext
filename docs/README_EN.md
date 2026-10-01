@@ -2,7 +2,7 @@
 
 [简体中文](README.md) | English
 
-These guides describe TrojanPanel Next **v1.0.2-rc.6**.
+These guides describe TrojanPanel Next **v1.0.2-rc.7**.
 
 | Topic | Guide |
 | --- | --- |
