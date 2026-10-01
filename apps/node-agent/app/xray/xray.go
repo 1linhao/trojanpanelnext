@@ -21,6 +21,13 @@ func InitXrayApp() error {
 	}
 	xrayProcess := process.NewXrayProcess()
 	for _, apiPort := range apiPorts {
+		configPath, err := util.GetConfigFile(constant.Xray, apiPort)
+		if err != nil {
+			return err
+		}
+		if err = migrateServerTLSConfig(configPath); err != nil {
+			return err
+		}
 		if err = xrayProcess.StartXray(apiPort); err != nil {
 			return err
 		}
@@ -180,6 +187,12 @@ func initXray(xrayConfigDto dto.XrayConfigDto) error {
 	configContentByte, err := json.MarshalIndent(xrayConfig, "", "    ")
 	if err != nil {
 		logrus.Errorf("xray template config deserialization err: %v", err)
+		return err
+	}
+	// Sanitize every server inbound, including those supplied by the template;
+	// outbound client certificate verification options remain untouched.
+	configContentByte, _, err = withoutServerAllowInsecure(configContentByte)
+	if err != nil {
 		return err
 	}
 	_, err = file.Write(configContentByte)

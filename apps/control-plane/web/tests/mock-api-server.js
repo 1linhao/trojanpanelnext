@@ -124,15 +124,17 @@ const nodeServers = [
   { id: 5, name: 'Hong Kong', ip: 'hk.example.com', grpcPort: 8104, grpcTLSMode: 'mtls', grpcTLSServerName: 'core-hk.example.com', trafficPeriod: 'month', trafficLimitMode: 'combined', trafficTotalLimit: 1649267441664, trafficUploadLimit: 0, trafficDownloadLimit: 0, status: 1, trojanPanelCoreVersion: '2.3.0', kernelSummary: 'xray 25.8.3' }
 ]
 
+const clearedServerTraffic = new Set()
 const serverTrafficStatus = (server) => {
-  if (server.trafficPeriod === 'none') return null
+  const unlimited = server.trafficPeriod === 'none'
   const usage = [0.18, 0.42, 0.05, 0.73, 0.31]
-  const ratio = usage[(server.id - 1) % usage.length]
-  const separate = server.trafficLimitMode === 'separate'
-  const uploadUsed = separate ? Math.round(server.trafficUploadLimit * ratio) : Math.round(server.trafficTotalLimit * ratio * 0.4)
-  const downloadUsed = separate ? Math.round(server.trafficDownloadLimit * ratio) : Math.round(server.trafficTotalLimit * ratio * 0.6)
+  const ratio = clearedServerTraffic.has(server.id) ? 0 : usage[(server.id - 1) % usage.length]
+  const separate = !unlimited && server.trafficLimitMode === 'separate'
+  const combinedUsage = (unlimited ? 107374182400 : server.trafficTotalLimit) * ratio
+  const uploadUsed = separate ? Math.round(server.trafficUploadLimit * ratio) : Math.round(combinedUsage * 0.4)
+  const downloadUsed = separate ? Math.round(server.trafficDownloadLimit * ratio) : Math.round(combinedUsage * 0.6)
   const totalUsed = uploadUsed + downloadUsed
-  const reached = ratio >= 1
+  const reached = !unlimited && ratio >= 1
   return {
     nodeServerId: server.id,
     nodeServerName: server.name,
@@ -215,6 +217,25 @@ const server = http.createServer((req, res) => {
     return
   }
   res.setHeader('Content-Type', 'application/json; charset=utf-8')
+
+  if (path === '/nodeServer/resetNodeServerTraffic') {
+    let body = ''
+    req.on('data', (chunk) => { body += chunk })
+    req.on('end', () => {
+      let params
+      try { params = JSON.parse(body || '{}') } catch (_) {
+        res.end(JSON.stringify({ code: 50000, message: 'Invalid request JSON' })); return
+      }
+      if (isUserSession) { res.end(JSON.stringify({ code: 50401, message: 'Administrator required' })); return }
+      if (req.method !== 'POST' || !Number.isSafeInteger(params.id) || !nodeServers.some((server) => server.id === params.id)) {
+        res.end(JSON.stringify({ code: 50000, message: 'Node server not found' })); return
+      }
+      const deletedRows = clearedServerTraffic.has(params.id) ? 0 : 24
+      clearedServerTraffic.add(params.id)
+      res.end(ok({ deletedRows }))
+    })
+    return
+  }
 
   if (path === '/nodeServer/createNodeServer' || path === '/nodeServer/downloadDeployment') {
     let body = ''
@@ -409,7 +430,6 @@ const server = http.createServer((req, res) => {
     ),
     '/nodeServer/selectNodeServerById': Object.assign({}, nodeServers[0], { trafficStatus: serverTrafficStatus(nodeServers[0]) }),
     '/nodeServer/nodeServerState': { cpuUsed: 28, memUsed: 43, diskUsed: 37 },
-    '/nodeServer/resetNodeServerTraffic': { deletedRows: 24 },
     '/kernel/releases': {
       releases: [
         { version: '25.8.3', channel: 'stable' },

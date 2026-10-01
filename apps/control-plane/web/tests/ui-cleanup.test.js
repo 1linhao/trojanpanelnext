@@ -901,7 +901,9 @@ test('server creation opens deployment with the returned numeric ID, never a gue
   let result = { id: 42, name: 'Duplicate name', ip: 'new.example.com', grpcPort: 8100, grpcTlsServerName: 'tls.example.com' }
   const events = [], notices = []
   const form = loadModule(compiler.parse({ source: read('src/views/node-server/list/compoments/NodeServerForm.vue') }).script.content, {
-    '@/api/node-server': { createNodeServer: async () => ({ data: result }) }
+    '@/api/node-server': { createNodeServer: async () => ({ data: result }) },
+    '@/utils/account': { getFlow: (value) => String(value) },
+    '@/utils/permission': () => true
   }).default
   let refreshes = 0
   const context = { creating: false, $refs: { dataForm: { validate: async () => true } }, payload: () => ({ name: 'Duplicate name' }), getList: () => { refreshes++ }, $t: (key) => key, $emit: (...args) => events.push(args), $notify: (notice) => notices.push(notice) }
@@ -1055,4 +1057,130 @@ test('deployment metadata must match the requested ID and trusted release format
     assert.equal(invalid.metadata, null)
     assert.equal(invalid.loadError, 'nodeDeployment.invalidMetadata')
   }
+})
+
+
+const vnodeTree = (node) => [node, ...(node.children || []).flatMap(vnodeTree)]
+const vnodeText = (node) => node.text || (node.children || []).map(vnodeText).join('')
+const compileRender = (template) => {
+  const result = compiler.compileTemplate({ source: template, filename: 'server-traffic-fixture.vue' })
+  assert.deepEqual(result.errors, [])
+  return vm.runInNewContext(`${result.code}; ({ render, staticRenderFns })`)
+}
+
+test('server list renders used traffic without reset controls and an accessible deployment icon', () => {
+  const Vue = require('vue/dist/vue.common.js')
+  const descriptor = compiler.parse({ source: read('src/views/node-server/list/index.vue') })
+  const component = loadModule(descriptor.script.content, new Proxy({}, {
+    has: () => true,
+    get: (_, name) => name === '@/utils/permission' ? () => true : name === '@/utils/account' ? loadModule(read('src/utils/account.js'), {}) : {}
+  })).default
+  const compiled = compileRender(descriptor.template.content)
+  const View = Vue.extend({ ...component, components: {}, mixins: [], created: undefined, mounted: undefined, watch: {},
+    beforeCreate() { this.$t = (key) => key }, render: compiled.render, staticRenderFns: compiled.staticRenderFns })
+  const view = new View()
+  view.listLoading = false
+  view.list = [{ id: 42, name: 'Fixture Node', ip: 'fixture.example.com', grpcPort: 8100, grpcTlsMode: 'mtls',
+    trafficStatus: { period: 'none', totalUsed: 2 * 1024 * 1024 * 1024 }, status: 1 }]
+  const rendered = view._render()
+  const row = vnodeTree(rendered).find((node) => node.tag === 'tr' && (node.children || []).filter((child) => child.tag === 'td').length === 9)
+  const cells = row.children.filter((node) => node.tag === 'td')
+  assert.equal(vnodeText(cells[7]).trim(), '2.0GB')
+  assert.equal(vnodeTree(cells[7]).some((node) => node.tag === 'button' || node.tag === 'liquid-button'), false)
+  assert.equal(vnodeTree(rendered).some((node) => String(node.data && node.data.attrs && node.data.attrs.title).includes('重置')), false)
+  const deploy = vnodeTree(cells[8]).find((node) => node.data && node.data.attrs && node.data.attrs.title === 'nodeDeployment.title')
+  assert.equal(deploy.tag, 'button')
+  assert.equal(deploy.data.staticClass, 'icon-btn')
+  assert.equal(deploy.data.attrs['aria-label'], 'nodeDeployment.title')
+  assert.equal(vnodeText(deploy).trim(), '')
+  assert.ok(vnodeTree(deploy).some((node) => node.tag === 'app-icon' && node.data.attrs.name === 'download'))
+  view.$destroy()
+})
+
+test('traffic reset renders in the edit dialog and uses the server identity rather than unsaved form data', () => {
+  const Vue = require('vue/dist/vue.common.js')
+  let allowed = true
+  const descriptor = compiler.parse({ source: read('src/views/node-server/list/compoments/NodeServerForm.vue') })
+  const component = loadModule(descriptor.script.content, {
+    '@/api/node-server': {}, '@/utils/account': loadModule(read('src/utils/account.js'), {}), '@/utils/permission': () => allowed
+  }).default
+  const compiled = compileRender(descriptor.template.content)
+  const Form = Vue.extend({ ...component, beforeCreate() { this.$t = (key) => key }, render: compiled.render, staticRenderFns: compiled.staticRenderFns })
+  const server = { id: 42, name: 'Fixture Node', ip: 'fixture.example.com', grpcPort: 8100, grpcTlsServerName: 'fixture.example.com', trafficPeriod: 'none' }
+  const props = { nodeServer: server, dialogStatus: 'update', dialogVisible: true, getList: () => {}, trafficStatus: { totalUsed: 1024 * 1024 }, resettingTraffic: false }
+  const form = new Form({ propsData: props })
+  const events = []
+  form.$on('reset-traffic', (value) => events.push(value))
+  const item = vnodeTree(form._render()).find((node) => node.tag === 'liquid-form-item' && node.data.attrs.label === 'dashboard.trafficUsed')
+  assert.match(vnodeText(item), /1MB/)
+  const button = vnodeTree(item).find((node) => node.tag === 'liquid-button')
+  assert.equal(vnodeText(button).trim(), 'traffic.resetServer')
+  form.form.id = 99
+  button.data.on.click()
+  assert.equal(events.length, 1)
+  assert.equal(events[0].id, 42)
+  form.trafficStatus = { totalUsed: 0 }
+  assert.match(vnodeText(form._render()), /0KB/)
+  assert.equal(form.form.id, 99, 'a statistics refresh preserves unsaved form fields')
+  form.resettingTraffic = true
+  form.resetTraffic()
+  assert.equal(events.length, 1)
+  form.resettingTraffic = false
+  allowed = false
+  const denied = new Form({ propsData: props })
+  assert.equal(vnodeTree(denied._render()).some((node) => node.tag === 'liquid-button' && vnodeText(node).trim() === 'traffic.resetServer'), false)
+  form.dialogStatus = 'create'
+  form.resetTraffic()
+  assert.equal(events.length, 1)
+  assert.equal(vnodeTree(form._render()).some((node) => node.tag === 'liquid-form-item' && node.data.attrs.label === 'dashboard.trafficUsed'), false)
+  denied.$destroy()
+  form.$destroy()
+})
+
+test('traffic reset confirms once, preserves its target ID, and refreshes list and dialog statistics', async () => {
+  const calls = [], notices = []
+  let decision, failReset = false, allowed = true, confirmations = 0
+  const component = loadModule(compiler.parse({ source: read('src/views/node-server/list/index.vue') }).script.content, new Proxy({}, {
+    has: () => true,
+    get: (_, name) => {
+      if (name === '@/utils/permission') return () => allowed
+      if (name === '@/utils/liquid-feedback') return { MessageBox: { confirm() { confirmations++; return new Promise((resolve, reject) => { decision = { resolve, reject } }) } } }
+      if (name === '@/api/node-server') return { resetNodeServerTraffic: async (request) => { calls.push(request); if (failReset) throw new Error('offline') } }
+      return {}
+    }
+  })).default
+  const row = { id: 42, name: 'Fixture Node', trafficStatus: { totalUsed: 2048 } }
+  const context = { resettingServerId: 0, dialogFormVisible: true, dialogStatus: 'update', temp: { ...row }, list: [row],
+    $t: (key) => key, $notify: (notice) => notices.push(notice),
+    async getList() { this.list = [{ id: 42, trafficStatus: { totalUsed: 0 } }] } }
+  const reset = component.methods.handleResetServerTraffic
+  let pending = reset.call(context, row)
+  assert.equal(calls.length, 0)
+  await reset.call(context, row)
+  assert.equal(confirmations, 1, 'pending confirmation prevents duplicate submissions')
+  decision.resolve()
+  row.id = 99
+  await pending
+  assert.equal(calls[0].id, 42)
+  assert.equal(component.computed.editingTrafficStatus.call(context).totalUsed, 0)
+  assert.equal(context.resettingServerId, 0)
+  assert.equal(notices.length, 1)
+  row.id = 42
+  pending = reset.call(context, row)
+  decision.reject('cancel')
+  await pending
+  assert.equal(calls.length, 1, 'cancellation sends no API request')
+  failReset = true
+  pending = reset.call(context, row)
+  decision.resolve()
+  await pending
+  assert.equal(notices.length, 1, 'failure cannot report success')
+  assert.equal(context.resettingServerId, 0)
+  for (const invalid of [{ id: 7 }, { id: 0 }, { id: '42' }]) await reset.call(context, invalid)
+  context.dialogStatus = 'create'
+  await reset.call(context, row)
+  context.dialogStatus = 'update'
+  allowed = false
+  await reset.call(context, row)
+  assert.equal(confirmations, 3, 'creation, wrong IDs, and denied permission never reset data')
 })

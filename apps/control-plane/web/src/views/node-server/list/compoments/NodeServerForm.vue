@@ -40,6 +40,22 @@
       <div class="dialog-section-title">
         <span>{{ $t('traffic.limitSettings') }}</span>
       </div>
+      <liquid-form-item
+        v-if="editingServer"
+        :label="$t('dashboard.trafficUsed')"
+      >
+        <div class="server-traffic-controls">
+          <span class="mono num">{{ trafficStatus ? getFlow(trafficStatus.totalUsed) : '—' }}</span>
+          <liquid-button
+            v-if="canResetTraffic"
+            icon="refresh-left"
+            :loading="resettingTraffic"
+            @click="resetTraffic"
+          >
+            {{ $t('traffic.resetServer') }}
+          </liquid-button>
+        </div>
+      </liquid-form-item>
       <liquid-form-item :label="$t('traffic.period')">
         <liquid-select v-model="form.trafficPeriod">
           <option :label="$t('traffic.unlimited')" value="none" />
@@ -122,6 +138,8 @@
 
 <script>
 import { createNodeServer, updateNodeServerById } from '@/api/node-server'
+import { getFlow } from '@/utils/account'
+import checkPermission from '@/utils/permission'
 
 export default {
   name: 'NodeServerForm',
@@ -141,6 +159,14 @@ export default {
     getList: {
       type: Function,
       required: true
+    },
+    trafficStatus: {
+      type: Object,
+      default: null
+    },
+    resettingTraffic: {
+      type: Boolean,
+      default: false
     }
   },
   data() {
@@ -250,6 +276,14 @@ export default {
       }
     }
   },
+  computed: {
+    editingServer() {
+      return this.dialogStatus === 'update' && Number.isSafeInteger(this.nodeServer.id) && this.nodeServer.id > 0
+    },
+    canResetTraffic() {
+      return this.editingServer && checkPermission(['sysadmin', 'admin'])
+    }
+  },
   watch: {
     nodeServer: {
       deep: true,
@@ -266,6 +300,11 @@ export default {
     }
   },
   methods: {
+    getFlow,
+    resetTraffic() {
+      if (!this.canResetTraffic || this.resettingTraffic) return
+      this.$emit('reset-traffic', { id: this.nodeServer.id, name: this.nodeServer.name })
+    },
     toBytes(value) {
       return Math.round((value || 0) * 1024 * 1024 * 1024)
     },
@@ -335,4 +374,11 @@ export default {
 }
 </script>
 
-<style scoped></style>
+<style scoped>
+.server-traffic-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+</style>

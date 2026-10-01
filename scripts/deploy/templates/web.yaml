@@ -1,5 +1,5 @@
 trojanpanelnext:
-  release: "1.0.2-rc.3"
+  release: "1.0.2-rc.4"
   schema_version: 1
   purpose: web
 
@@ -10,8 +10,8 @@ trojanpanelnext:
   caddy_image: caddy:2.8.4
   mariadb_image: mariadb:10.7.3
   redis_image: redis:6.2.7
-  panel_image: ghcr.io/1linhao/trojanpanelnext-api:1.0.2-rc.3
-  ui_image: ghcr.io/1linhao/trojanpanelnext-web:1.0.2-rc.3
+  panel_image: ghcr.io/1linhao/trojanpanelnext-api:1.0.2-rc.4
+  ui_image: ghcr.io/1linhao/trojanpanelnext-web:1.0.2-rc.4
 
   mariadb_port: 9507
   redis_port: 6378

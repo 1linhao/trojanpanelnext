@@ -14,7 +14,7 @@ The responsive Web administration interface for TrojanPanel Next provides admini
 
 ## Deployment
 
-Install Web through the [v1.0.2-rc.3 script entrypoint](../../../scripts/README_EN.md). See the [deployment guide](../../../docs/deployment_EN.md#web) for complete instructions and [image updates](../../../docs/deployment_EN.md#updates) for existing deployments.
+Install Web through the [v1.0.2-rc.4 script entrypoint](../../../scripts/README_EN.md). See the [deployment guide](../../../docs/deployment_EN.md#web) for complete instructions and [image updates](../../../docs/deployment_EN.md#updates) for existing deployments.
 
 ## Interface
 

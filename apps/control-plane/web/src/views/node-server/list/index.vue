@@ -72,21 +72,7 @@
               <th>内核</th>
               <th>Core</th>
               <th>状态</th>
-              <th class="traffic-reset-column">
-                <div class="traffic-reset-column-head">
-                  <span>流量统计</span>
-                  <button
-                    v-if="checkPermission(['sysadmin', 'admin'])"
-                    class="cap small traffic-reset-button"
-                    type="button"
-                    title="重置所有服务器流量统计"
-                    aria-label="重置所有服务器流量统计"
-                    @click="handleResetAllServerTraffic"
-                  >
-                    <app-icon name="refresh" />重置全部
-                  </button>
-                </div>
-              </th>
+              <th>{{ $t('dashboard.trafficUsed') }}</th>
               <th class="table-actions">操作</th>
             </tr>
           </thead>
@@ -172,28 +158,21 @@
                   >{{ statusComputed(row.status) }}</span
                 >
               </td>
-              <td>
-                <button
-                  v-if="checkPermission(['sysadmin', 'admin'])"
-                  class="cap small traffic-reset-button"
-                  type="button"
-                  :disabled="resettingServerId !== 0"
-                  :title="`重置服务器 ${row.name} 的流量统计`"
-                  :aria-label="`重置服务器 ${row.name} 的流量统计`"
-                  @click="handleResetServerTraffic(row)"
-                >
-                  <app-icon name="refresh-left" />重置流量
-                </button>
-                <span v-else class="faint">—</span>
+              <td class="mono num">
+                {{ row.trafficStatus ? getFlow(row.trafficStatus.totalUsed) : '—' }}
               </td>
               <td>
                 <div class="row-actions">
-                  <liquid-button
+                  <button
                     v-if="checkPermission(['sysadmin'])"
-                    icon="download"
-                    size="sm"
+                    class="icon-btn"
+                    type="button"
+                    :title="$t('nodeDeployment.title')"
+                    :aria-label="$t('nodeDeployment.title')"
                     @click="handleDeployment(row)"
-                  >{{ $t('nodeDeployment.title') }}</liquid-button>
+                  >
+                    <app-icon name="download" />
+                  </button>
                   <button
                     class="icon-btn"
                     type="button"
@@ -367,6 +346,9 @@
       :dialog-status="dialogStatus"
       :dialog-visible.sync="dialogFormVisible"
       :get-list="getList"
+      :traffic-status="editingTrafficStatus"
+      :resetting-traffic="resettingServerId !== 0"
+      @reset-traffic="handleResetServerTraffic"
       @created="handleDeployment"
     />
     <node-server-deployment
@@ -474,6 +456,10 @@ export default {
     }
   },
   computed: {
+    editingTrafficStatus() {
+      const server = (this.list || []).find((row) => row.id === this.temp.id)
+      return server ? server.trafficStatus : this.temp.trafficStatus || null
+    },
     statusComputed() {
       return function (status) {
         return status === 1
@@ -621,43 +607,35 @@ export default {
         this.deletingServerId = 0
       }
     },
-    handleResetAllServerTraffic() {
-      this.showPendingTrafficReset('全部服务器')
-    },
-    handleResetServerTraffic(row) {
-      if (this.resettingServerId) return
-      MessageBox.confirm(
-        this.$t('traffic.resetServerConfirm', { name: row.name }),
-        this.$t('confirm.warn'),
-        {
-          confirmButtonText: this.$t('confirm.yes'),
-          cancelButtonText: this.$t('confirm.cancel'),
-          type: 'warning'
-        }
-      )
-        .then(() => {
-          this.resettingServerId = row.id
-          return resetNodeServerTraffic({ id: row.id })
+    async handleResetServerTraffic(row) {
+      if (this.resettingServerId || !this.dialogFormVisible || this.dialogStatus !== 'update' ||
+          !Number.isSafeInteger(row.id) || row.id <= 0 || row.id !== this.temp.id ||
+          !checkPermission(['sysadmin', 'admin'])) return
+      const id = row.id
+      this.resettingServerId = id
+      try {
+        await MessageBox.confirm(
+          this.$t('traffic.resetServerConfirm', { name: row.name }),
+          this.$t('confirm.warn'),
+          {
+            confirmButtonText: this.$t('confirm.yes'),
+            cancelButtonText: this.$t('confirm.cancel'),
+            type: 'warning'
+          }
+        )
+        await resetNodeServerTraffic({ id })
+        await this.getList()
+        this.$notify({
+          title: 'Success',
+          message: this.$t('traffic.resetServerSuccess'),
+          type: 'success',
+          duration: 2000
         })
-        .then(() => {
-          this.$notify({
-            title: 'Success',
-            message: this.$t('traffic.resetServerSuccess'),
-            type: 'success',
-            duration: 2000
-          })
-          this.getList()
-        })
-        .finally(() => {
-          this.resettingServerId = 0
-        })
-    },
-    showPendingTrafficReset(target) {
-      this.$message({
-        type: 'info',
-        showClose: true,
-        message: `${target}流量统计重置接口待接入，当前未修改任何数据`
-      })
+      } catch (_) {
+        // Cancellation sends no request; API failures use the shared feedback.
+      } finally {
+        this.resettingServerId = 0
+      }
     },
     handleUpdate(row) {
       this.temp = Object.assign(this.temp, row)

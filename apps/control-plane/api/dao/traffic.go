@@ -158,11 +158,13 @@ func SelectServerTrafficStatuses(serverIDs []uint) ([]vo.ServerTrafficStatusVo, 
 	query := fmt.Sprintf(`SELECT ns.id AS node_server_id,ns.name AS node_server_name,ns.traffic_period,
 		ns.traffic_limit_mode,ns.traffic_total_limit,ns.traffic_upload_limit,ns.traffic_download_limit,
 		COALESCE(SUM(CASE
+			WHEN ns.traffic_period='none' THEN d.upload
 			WHEN ns.traffic_period='day' AND d.traffic_date=CURRENT_DATE() THEN d.upload
 			WHEN ns.traffic_period='month' AND d.traffic_date>=DATE_FORMAT(CURRENT_DATE(),'%%Y-%%m-01') THEN d.upload
 			WHEN ns.traffic_period='year' AND d.traffic_date>=MAKEDATE(YEAR(CURRENT_DATE()),1) THEN d.upload
 			ELSE 0 END),0) AS upload_used,
 		COALESCE(SUM(CASE
+			WHEN ns.traffic_period='none' THEN d.download
 			WHEN ns.traffic_period='day' AND d.traffic_date=CURRENT_DATE() THEN d.download
 			WHEN ns.traffic_period='month' AND d.traffic_date>=DATE_FORMAT(CURRENT_DATE(),'%%Y-%%m-01') THEN d.download
 			WHEN ns.traffic_period='year' AND d.traffic_date>=MAKEDATE(YEAR(CURRENT_DATE()),1) THEN d.download

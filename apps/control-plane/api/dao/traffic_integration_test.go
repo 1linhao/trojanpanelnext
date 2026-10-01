@@ -106,4 +106,25 @@ func TestTrafficMigrationAndQueries(t *testing.T) {
 	if err = db.QueryRow(`SELECT COUNT(*) FROM casbin_rule WHERE v0 IN ('sysadmin','admin') AND v1 IN ('/api/dashboard/serverTrafficUsage','/api/dashboard/serverTrafficUserUsage') AND v2='GET'`).Scan(&trafficPermissions); err != nil || trafficPermissions != 4 {
 		t.Fatalf("unexpected traffic permissions: count=%d err=%v", trafficPermissions, err)
 	}
+
+	t.Run("unlimited_server_counts_all_history", func(t *testing.T) {
+		if _, err := db.Exec(`INSERT INTO node_server
+			(id,name,ip,grpc_port,grpc_tls_mode,grpc_tls_server_name,traffic_period,traffic_limit_mode,traffic_total_limit)
+			VALUES (4,'unlimited','203.0.113.4',8100,'mtls','unlimited.example.test','none','combined',1)`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(`INSERT INTO account_server_traffic_daily
+			(traffic_date,account_id,node_server_id,upload,download) VALUES
+			(CURRENT_DATE(),7,4,13,17),
+			(CURRENT_DATE(),8,4,19,23),
+			(DATE_SUB(CURRENT_DATE(),INTERVAL 1 YEAR),7,4,101,103),
+			(DATE_SUB(CURRENT_DATE(),INTERVAL 3 YEAR),8,4,1009,1013)`); err != nil {
+			t.Fatal(err)
+		}
+		statuses, err := SelectServerTrafficStatuses([]uint{4})
+		if err != nil || len(statuses) != 1 || statuses[0].Period != "none" ||
+			statuses[0].UploadUsed != 1142 || statuses[0].DownloadUsed != 1156 || statuses[0].Reached {
+			t.Fatalf("unlimited server should report all historical traffic without reaching a limit: %#v err=%v", statuses, err)
+		}
+	})
 }
