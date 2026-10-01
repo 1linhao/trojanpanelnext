@@ -86,13 +86,6 @@
             <tr v-for="row in list" :key="row.id">
               <td class="server-id-cell">
                 <span class="mono server-id-value">{{ row.id }}</span>
-                <liquid-button
-                  icon="document-copy"
-                  size="sm"
-                  :title="$t('nodeDeployment.copyId')"
-                  :aria-label="$t('nodeDeployment.copyId') + ': ' + row.id"
-                  @click="copyServerId(row.id)"
-                />
               </td>
               <td class="primary-cell">
                 <strong>{{ row.name }}</strong>
@@ -374,7 +367,6 @@ import ImportTip from '@/components/ImportTip'
 import latestListRequest from '@/mixins/latest-list-request'
 import { MessageBox } from '@/utils/liquid-feedback'
 import checkPermission from '@/utils/permission'
-import copy from 'copy-to-clipboard'
 import {
   deleteNodeServerById,
   uninstallNodeServerById,
@@ -547,16 +539,6 @@ export default {
     handleDeployment(server) {
       if (!checkPermission(['sysadmin']) || !server || !Number.isSafeInteger(server.id) || server.id <= 0) return
       this.deploymentServer = { id: server.id }
-    },
-    copyServerId(id) {
-      if (!Number.isSafeInteger(id) || id <= 0) return
-      const success = copy(String(id))
-      this.$notify({
-        title: this.$t(success ? 'nodeDeployment.copySuccess' : 'nodeDeployment.copyFailed'),
-        message: this.$t(success ? 'nodeDeployment.copySuccess' : 'nodeDeployment.copyFailed'),
-        type: success ? 'success' : 'error',
-        duration: 2000
-      })
     },
     openRegistrationFromRoute() {
       if (this.$route.query.action !== 'create' || !checkPermission(['sysadmin'])) return
@@ -751,9 +733,6 @@ export default {
   color: var(--ink);
   font-size: 14px;
   font-weight: 650;
-}
-.server-id-cell .liquid-button {
-  margin-left: 8px;
 }
 .server-address {
   display: block;

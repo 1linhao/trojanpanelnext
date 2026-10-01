@@ -1,4 +1,4 @@
-# TrojanPanel Next v1.0.2-rc.4 部署指南
+# TrojanPanel Next v1.0.2-rc.5 部署指南
 
 简体中文 | [English](deployment_EN.md)
 
@@ -55,7 +55,7 @@
 在 root Bash 会话中执行：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.4/scripts/tp.sh) deps install
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.5/scripts/tp.sh) deps install
 ```
 
 命令准备 Bash、curl、CA 证书、grep、coreutils、OpenSSL、tar、findutils、awk（缺少时安装 gawk），以及发行版提供的 Docker Engine 软件包（`docker.io`、`containerd`、`runc`；Debian 13 另需 `docker-cli`），并启动 Docker。缺少兼容 yq 时，下载对应架构的 **mikefarah/yq v4.53.6** 二进制，通过 SHA256 校验后安装。已有兼容的 Docker 和 mikefarah/yq v4 会复用，不替换原有工具。
@@ -70,7 +70,7 @@ apt-get install -y bash curl ca-certificates grep coreutils util-linux
 依赖命令与部署命令使用同一个版本入口，也可显式选择版本：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.4/scripts/tp.sh) --version 1.0.2-rc.4 deps install
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.5/scripts/tp.sh) --version 1.0.2-rc.5 deps install
 ```
 
 安装记录保存在 `/var/lib/trojanpanelnext-dependencies`（目录权限 `0700`），记录本命令新增的 Docker 软件包以及所安装 yq 文件的 SHA256，供[依赖卸载](#dependency-removal)使用。重复执行会检查并补齐缺少的依赖。安装中断时先重跑 `deps install` 修复，再执行卸载。
@@ -104,7 +104,7 @@ openssl version
 先在对应主机完成[项目卸载](#removal)，并移除其他 Docker 服务的容器；从 Web 卸载 Node 后还需等待宿主机维护服务清理完成；只删除 Web 记录时，Node 主机仍需自行本地卸载。然后执行：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.4/scripts/tp.sh) deps remove
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.5/scripts/tp.sh) deps remove
 ```
 
 | 对象 | 处理 |
@@ -120,13 +120,13 @@ bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0
 <a id="versions"></a>
 ## 版本绑定与命令入口
 
-本指南对应预发布版本 **v1.0.2-rc.4（Pre-release）**。版本号 `1.0.2-rc.4` 对应 Git 标签 `v1.0.2-rc.4`、配置 `trojanpanelnext.release: "1.0.2-rc.4"`，以及以下产品镜像：
+本指南对应预发布版本 **v1.0.2-rc.5（Pre-release）**。版本号 `1.0.2-rc.5` 对应 Git 标签 `v1.0.2-rc.5`、配置 `trojanpanelnext.release: "1.0.2-rc.5"`，以及以下产品镜像：
 
 | 组件 | 镜像 |
 | --- | --- |
-| Web API | `ghcr.io/1linhao/trojanpanelnext-api:1.0.2-rc.4` |
-| Web 界面 | `ghcr.io/1linhao/trojanpanelnext-web:1.0.2-rc.4` |
-| Node Agent | `ghcr.io/1linhao/trojanpanelnext-node-agent:1.0.2-rc.4` |
+| Web API | `ghcr.io/1linhao/trojanpanelnext-api:1.0.2-rc.5` |
+| Web 界面 | `ghcr.io/1linhao/trojanpanelnext-web:1.0.2-rc.5` |
+| Node Agent | `ghcr.io/1linhao/trojanpanelnext-node-agent:1.0.2-rc.5` |
 
 所有产品镜像提供 `linux/amd64` 和 `linux/arm64`。Caddy、MariaDB、Redis 使用配置模板中的独立上游版本。
 
@@ -135,7 +135,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0
 显式指定版本安装 Web：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.4/scripts/tp.sh) --version 1.0.2-rc.4 web
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.5/scripts/tp.sh) --version 1.0.2-rc.5 web
 ```
 
 `--version <版本号>` 可放在命令前或后；`--entry-version` 显示入口的默认版本；`--help` 或 `<命令> --help` 查看用法。只传 `--version` 不用于查询版本。
@@ -193,13 +193,13 @@ API 8081、UI 8888 和 Node API 8082 使用宿主机网络监听。按来源控�
 在 Web 主机执行：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.4/scripts/tp.sh) web
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.5/scripts/tp.sh) web
 ```
 
 按提示输入 Web 域名和证书邮箱。也可直接提供公开参数：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.4/scripts/tp.sh) web --hostname panel.example.com --email admin@example.com --output ./web.yaml
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.5/scripts/tp.sh) web --hostname panel.example.com --email admin@example.com --output ./web.yaml
 ```
 
 默认输出 `./web.yaml`。首次安装生成 MariaDB 与 Redis 密码并写入配置，创建 Web 内部 mTLS 身份，部署 MariaDB、Redis、API、UI 和 Web Caddy。
@@ -268,7 +268,7 @@ Web 不生成 Node 外部 TLS 证书或私钥。路径与目录要求见[外部�
 在 Node 的 root Bash 会话执行：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.4/scripts/tp.sh) deps install
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.5/scripts/tp.sh) deps install
 ```
 
 支持范围与手动准备见[软件依赖](#dependencies)。
@@ -301,7 +301,7 @@ bash ./install-node.sh
 在 Node 主机执行：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.4/scripts/tp.sh) node
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.5/scripts/tp.sh) node
 ```
 
 按提示输入 Node 域名、Web 地址、节点服务器 ID、公开 CA 路径，以及 Web 的数据库和 Redis 凭据；Caddy 模式还需输入证书邮箱。这些连接密码可由管理员读取 Web YAML 获取，敏感输入不显示在终端。
@@ -309,7 +309,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0
 也可提供公开参数，剩余字段仍按提示填写：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.4/scripts/tp.sh) node --hostname node.example.com --email admin@example.com --web-host panel.example.com --node-id 1 --client-ca /root/client-ca.crt
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.5/scripts/tp.sh) node --hostname node.example.com --email admin@example.com --web-host panel.example.com --node-id 1 --client-ca /root/client-ca.crt
 ```
 
 `--client-ca` 指向已安全传输到本机的 PEM 公开 CA。文件只应包含未过期的 CA 证书，可包含轮换期间的新旧 CA；叶证书、过期 CA、私钥和其他混入内容会被拒绝，校验通过前不会保存新 YAML 或发布 CA 文件。脚本校验后将其复制到 `/tpdata/trojanpanelnext-pki/client-ca.crt`；该默认文件已存在时可省略此选项。同一份 CA 可重复使用，不会覆盖不同的现有信任文件；信任更新遵循[证书维护](certificates.md)流程。
@@ -326,13 +326,13 @@ bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0
 宿主机由 Nginx＋Certbot 或其他工具管理证书时，先签发有效证书，再使用外部模式：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.4/scripts/tp.sh) node --certificate-mode external
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.5/scripts/tp.sh) node --certificate-mode external
 ```
 
 按提示输入 fullchain 和未加密 PEM 私钥的绝对路径。也可直接提供路径：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.4/scripts/tp.sh) node --certificate-mode external --certificate /etc/letsencrypt/live/node.example.com/fullchain.pem --private-key /etc/letsencrypt/live/node.example.com/privkey.pem
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.5/scripts/tp.sh) node --certificate-mode external --certificate /etc/letsencrypt/live/node.example.com/fullchain.pem --private-key /etc/letsencrypt/live/node.example.com/privkey.pem
 ```
 
 | 字段 | 含义 |
@@ -369,13 +369,13 @@ certbot renew --cert-name node.example.com --dry-run --no-random-sleep-on-renew
 在 Web 主机下载 Web 模板：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.4/scripts/tp.sh) config web --output ./web.yaml
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.5/scripts/tp.sh) config web --output ./web.yaml
 ```
 
 在 Node 主机下载 Node 模板：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.4/scripts/tp.sh) config node --output ./node.yaml
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.5/scripts/tp.sh) config node --output ./node.yaml
 ```
 
 模板以 `0600` 权限保存；目标文件已存在或是符号链接时不会覆盖。已有部署请直接编辑原配置，首次部署需要另一个文件时使用新的 `--output` 路径。
@@ -471,25 +471,25 @@ install -m 0644 /root/client-ca.crt /tpdata/trojanpanelnext-pki/client-ca.crt
 Web 校验：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.4/scripts/tp.sh) validate --config ./web.yaml
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.5/scripts/tp.sh) validate --config ./web.yaml
 ```
 
 Web 安装：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.4/scripts/tp.sh) install --config ./web.yaml
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.5/scripts/tp.sh) install --config ./web.yaml
 ```
 
 Node 校验：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.4/scripts/tp.sh) validate --config ./node.yaml
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.5/scripts/tp.sh) validate --config ./node.yaml
 ```
 
 Node 安装：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.4/scripts/tp.sh) install --config ./node.yaml
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.5/scripts/tp.sh) install --config ./node.yaml
 ```
 
 也可使用 `web --config ./web.yaml`、`node --config ./node.yaml`，命令会检查配置用途。`validate` 仅校验 YAML、版本与字段，不验证 DNS、证书内容、网络连接或服务健康。安装完成后在[服务器管理](#node-registration)检查 Node 状态。
@@ -501,7 +501,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0
 
 | 通用字段 | 说明 |
 | --- | --- |
-| `release` | 必填字符串，当前为 `"1.0.2-rc.4"`，必须匹配选定脚本版本 |
+| `release` | 必填字符串，当前为 `"1.0.2-rc.5"`，必须匹配选定脚本版本 |
 | `schema_version` | 配置结构版本，当前为 `1` |
 | `purpose` | `web` 或 `node`，决定部署和卸载对象 |
 | `hostname`、`email` | 当前服务器域名与证书联系邮箱；Node 外部模式不要求邮箱 |
@@ -543,7 +543,7 @@ Node 模板中的密码和服务器 ID 是待填写示例，不能直接作为�
 修改当前版本的域名、应用端口或证书挂载后，用已有配置重建相应主机：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.4/scripts/tp.sh) install --config ./node.yaml --force
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.5/scripts/tp.sh) install --config ./node.yaml --force
 ```
 
 Web 使用 `./web.yaml`。`--force` 会拉取配置指定的镜像并重建 API、UI、Agent 或 Caddy 容器，不重建已有 MariaDB、Redis 容器。调整已初始化的数据库密码需要同时正确更新数据库本身及所有连接方，不能仅改 YAML。
@@ -558,13 +558,13 @@ Web 使用 `./web.yaml`。`--force` 会拉取配置指定的镜像并重建 API�
 Web：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.4/scripts/tp.sh) --version 1.0.2-rc.4 update --config ./web.yaml
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.5/scripts/tp.sh) --version 1.0.2-rc.5 update --config ./web.yaml
 ```
 
 Node：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.4/scripts/tp.sh) --version 1.0.2-rc.4 update --config ./node.yaml
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.5/scripts/tp.sh) --version 1.0.2-rc.5 update --config ./node.yaml
 ```
 
 YAML 中的 `purpose` 决定更新对象。无需先手工替换 `release` 或镜像，也不要用空白模板覆盖已有配置。更新接受 `1.0` 及以上版本、`schema_version: 1` 且采用受支持容器布局的配置；仅升级或同版本修复，不提供自动降级，也不使用 `latest`。其他配置规范需按目标版本说明准备。
@@ -591,13 +591,13 @@ Web 与 Node 分别在各自主机更新。命令不替换宿主机 Nginx、Cert
 在对应主机执行。保留数据：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.4/scripts/tp.sh) remove --config ./node.yaml --keep-data
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.5/scripts/tp.sh) remove --config ./node.yaml --keep-data
 ```
 
 删除项目数据：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.4/scripts/tp.sh) remove --config ./node.yaml --purge-data
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.5/scripts/tp.sh) remove --config ./node.yaml --purge-data
 ```
 
 Web 使用 `./web.yaml`。`--keep-data` 和 `--purge-data` 不能同时使用；不传选项时使用 YAML `purge_data`，模板默认保留数据。

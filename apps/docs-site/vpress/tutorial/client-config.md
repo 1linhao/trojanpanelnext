@@ -18,4 +18,4 @@
 - [Hysteria2](https://v2.hysteria.network/)
 - [NaiveProxy](https://github.com/klzgrad/naiveproxy)
 
-账户及模板操作见[Web 使用指南](https://github.com/1linhao/trojanpanelnext/blob/v1.0.2-rc.4/docs/user-guide.md#accounts)。
+账户及模板操作见[Web 使用指南](https://github.com/1linhao/trojanpanelnext/blob/v1.0.2-rc.5/docs/user-guide.md#accounts)。

@@ -7,7 +7,7 @@
 ## 操作顺序
 
 1. 在服务器管理中登记 Node 主机；**ID** 列显示 Web 数据库生成的整数（≥ `1`），与 IP / 域名分列，也不是代理 ID。
-2. 保存后在 **部署 Node** 下载包，安全传到目标 Node，准备依赖后解压并运行 `bash ./install-node.sh`；它自动准备公开 CA，按已填真实 ID 的 YAML 安装。步骤见[部署包安装](https://github.com/1linhao/trojanpanelnext/blob/v1.0.2-rc.4/docs/deployment.md#node-deployment-package)，安装后确认服务器在线。
+2. 保存后在 **部署 Node** 下载包，安全传到目标 Node，准备依赖后解压并运行 `bash ./install-node.sh`；它自动准备公开 CA，按已填真实 ID 的 YAML 安装。步骤见[部署包安装](https://github.com/1linhao/trojanpanelnext/blob/v1.0.2-rc.5/docs/deployment.md#node-deployment-package)，安装后确认服务器在线。
 3. 在节点管理中选择该服务器，创建 Xray、Hysteria2 或 NaiveProxy 代理实例。
 4. 配置用户角色、额度和有效期，导入账户对应的节点或订阅。
 5. 在首页查看流量，在内核管理中管理 Xray / Hysteria2 升级和回退任务。
@@ -18,8 +18,8 @@
 
 “删除”不联系 Node，只清理 Web 中该服务器及关联代理、协议配置、流量、任务和连接记录，失联时也可执行。Node 主机上仍运行的项目服务不会停止，需要时在该主机执行本地卸载。
 
-删除一个代理实例只影响该实例。完整删除范围、离线处理与重新接入见[服务器删除指南](https://github.com/1linhao/trojanpanelnext/blob/v1.0.2-rc.4/docs/deployment.md#web-removal)。
+删除一个代理实例只影响该实例。完整删除范围、离线处理与重新接入见[服务器删除指南](https://github.com/1linhao/trojanpanelnext/blob/v1.0.2-rc.5/docs/deployment.md#web-removal)。
 
 ## 完整说明
 
-[Web 使用指南](https://github.com/1linhao/trojanpanelnext/blob/v1.0.2-rc.4/docs/user-guide.md)覆盖账户、订阅、代理、内核任务、系统设置和界面偏好。
+[Web 使用指南](https://github.com/1linhao/trojanpanelnext/blob/v1.0.2-rc.5/docs/user-guide.md)覆盖账户、订阅、代理、内核任务、系统设置和界面偏好。
