@@ -15,6 +15,8 @@ The package does not own button styling, layout, permissions, or business naviga
 
 ## Usage
 
+This private workspace package is built with the Web source and is not installed from the public npm registry. See the [development guide](../../../../../docs/development_EN.md#web-ui) for setup.
+
 ```js
 import { iconNames, renderIcon } from '@tp-ui/icons'
 ```

@@ -20,6 +20,8 @@
 
 ## 安装
 
+本包是 `apps/control-plane/web/` 下的私有 workspace 包，随 Web 源码构建，不从公共 npm 安装。开发环境见[开发指南](../../../../../docs/development.md#web-ui)。
+
 ```json
 {
   "dependencies": {

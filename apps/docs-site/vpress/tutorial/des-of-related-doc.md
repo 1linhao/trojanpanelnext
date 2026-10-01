@@ -1,57 +1,16 @@
-# 相关说明
+# 数据与配置
 
-## 文件路径
+## 持久化数据
 
-证书文件位置如下
+服务默认数据位于 `/tpdata/`。Web 包括数据库、Redis、API、UI 和 Caddy 数据；Node 包括代理运行配置、日志、Caddy 证书或配置指定的外部证书，以及公开 mTLS 信任文件。
 
-`/tpdata/cert/`
+具体路径由部署配置决定。Node 外部证书与项目可清理数据目录须分开保存。Web PKI 应完整备份，包含 `state.json`、`generations/` 和符号链接；CA 私钥与 Web 客户端私钥不复制到 Node。
 
-伪装网站文件位置如下
+## 维护
 
-`/tpdata/web/`
+- [配置文件字段](https://github.com/1linhao/trojanpanelnext/blob/v1.0/docs/deployment.md#configuration)
+- [保留数据和彻底卸载](https://github.com/1linhao/trojanpanelnext/blob/v1.0/docs/deployment.md#removal)
+- [证书与 mTLS 维护](https://github.com/1linhao/trojanpanelnext/blob/v1.0/docs/certificates.md)
+- [源码结构与开发](https://github.com/1linhao/trojanpanelnext/blob/v1.0/docs/development.md#source-layout)
 
-Nginx配置文件位置如下
-
-`/tpdata/nginx/default.conf`
-
-Caddy配置文件位置如下
-
-`/tpdata/caddy/config.json`
-
-Trojan Panel UI Nginx配置文件位置如下
-
-`/tpdata/trojan-panel-ui/nginx/default.conf`
-
-Trojan Panel日志文件位置如下
-
-`/tpdata/trojan-panel/logs/`
-
-Trojan Panel导出文件位置如下
-
-`/tpdata/trojan-panel/config/export/`
-
-Trojan Panel模板文件位置如下
-
-`/tpdata/trojan-panel/config/template/`
-
-Trojan Panel Core日志文件位置如下
-
-`/tpdata/trojan-panel-core/logs/`
-
-Xray/Trojan-Go/Hysteria/NaiveProxy配置文件位置如下
-
-- Xray：`/tpdata/trojan-panel-core/bin/xray/config/`
-- Trojan-Go：`/tpdata/trojan-panel-core/bin/trojango/config/`
-- Hysteria：`/tpdata/trojan-panel-core/bin/hysteria/config/`
-- NaiveProxy：`/tpdata/trojan-panel-core/bin/naiveproxy/config/`
-
-## Xray
-
-1. [xtls-rprx-vision仅支持TLS](https://github.com/XTLS/Xray-core/issues/1562)
-2. [fallbacks仅支持TCP+TLS](https://xtls.github.io/config/features/fallback.html#fallbacks-%E9%85%8D%E7%BD%AE)
-3. [Xray配置](https://xtls.github.io/config/#%E6%A6%82%E8%BF%B0)
-4. [Xray配置举例](https://github.com/XTLS/Xray-examples)
-
-## Clash
-
-1. [Clash规则](https://github.com/Loyalsoldier/clash-rules)
+直接修改代理运行配置可能被面板后续操作覆盖，代理参数优先在 Web 中维护。

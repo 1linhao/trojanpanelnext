@@ -22,5 +22,5 @@ const (
 	Hysteria2BinPath  string = "bin/hysteria2"
 	KernelRuntimePath string = "/tpdata/trojan-panel-core/runtime"
 
-	TrojanPanelCoreVersion = "v2.3.1"
+	TrojanPanelCoreVersion = "v1.0"
 )

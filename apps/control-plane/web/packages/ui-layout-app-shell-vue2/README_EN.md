@@ -16,6 +16,8 @@ The shell does not read Router, Vuex, tokens, roles, or business APIs and does n
 
 ## Usage
 
+This private workspace package is built with the Web source and is not installed from the public npm registry. See the [development guide](../../../../../docs/development_EN.md#web-ui) for setup.
+
 ```js
 import Vue from 'vue'
 import { createAppShell } from '@tp-ui/layout-app-shell-vue2'

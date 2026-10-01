@@ -15,6 +15,8 @@ The package does not own colors, materials, icons, routing, Vuex, or business fo
 
 ## Usage
 
+This private workspace package is built with the Web source and is not installed from the public npm registry. See the [development guide](../../../../../docs/development_EN.md#web-ui) for setup.
+
 ```js
 import Vue from 'vue'
 import { createVue2Components } from '@tp-ui/components-vue2'

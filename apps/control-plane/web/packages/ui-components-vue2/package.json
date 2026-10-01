@@ -6,7 +6,7 @@
   "files": [
     "dist",
     "README.md",
-    "CHANGELOG.md"
+    "README_EN.md"
   ],
   "peerDependencies": {
     "vue": "^2.6.11"

@@ -3,11 +3,11 @@ name: Publish product images
 on:
   push:
     tags:
-      - "v*.*.*"
+      - "v[1-9]*.*"
   workflow_dispatch:
     inputs:
       version:
-        description: Version label matching the installer, for example 0.1.0-rc.9
+        description: Version matching the script library, for example 1.0
         required: true
         type: string
       publish:
@@ -56,9 +56,9 @@ jobs:
             publish="$DISPATCH_PUBLISH"
           fi
           version="${raw_version#v}"
-          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]
+          [[ "$version" =~ ^[1-9][0-9]*\.[0-9]+(\.[0-9]+)?(-[0-9A-Za-z.-]+)?$ ]]
           [[ "$publish" == true || "$publish" == false ]]
-          node scripts/check-installer-release.mjs "$version"
+          node tools/check-installer-release.mjs "$version"
           if [[ "$publish" == true ]]; then
             git fetch --no-tags --depth=1 origin "refs/tags/v${version}"
             if [[ "$(git rev-parse 'FETCH_HEAD^{commit}')" != "$(git rev-parse HEAD)" ]]; then

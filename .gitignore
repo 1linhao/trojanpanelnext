@@ -1,7 +1,12 @@
 /.artifacts/
 /.local/
+/.cache/
 /node_modules/
 /apps/docs-site/docs/
+/web.yaml
+/node.yaml
+/scripts/web.yaml
+/scripts/node.yaml
 *.local
 *.local.json
 *.local.yaml

@@ -2,101 +2,90 @@
 
 [简体中文](README.md) | English
 
-TrojanPanel Next is a multi-user Web administration panel supporting Xray, Hysteria2, and NaiveProxy. It provides account and node management, dashboards, certificate management, and distributed deployment.
+TrojanPanel Next is a multi-user proxy management platform supporting Xray, Hysteria2, and NaiveProxy. The Web control plane manages accounts, node servers, proxies, traffic, and tasks. Node Agents manage proxy runtimes on each server.
 
-| Component | Description |
+Current release: **v1.0**. Deployment uses GHCR images for Linux amd64 and arm64.
+
+## Quick installation
+
+Run these commands in a **root Bash session** on the target server. First install and start Docker Engine, mikefarah/yq v4, and the other [dependencies](docs/deployment_EN.md#dependencies), then prepare DNS and [network access](docs/deployment_EN.md#network). The scripts prompt for configuration and install the services.
+
+Web control plane:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0/scripts/tp.sh) web
+```
+
+Visit the configured HTTPS domain after installation. The initial account is `sysadmin` / `123456`; change its password after signing in.
+
+Register a node server in Web, obtain its server ID, and securely copy Web's public `client-ca.crt` to the Node host. Then install Node:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0/scripts/tp.sh) node
+```
+
+For certificates already managed on the host by Nginx, Certbot, or another tool:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0/scripts/tp.sh) node --certificate-mode external
+```
+
+This mode prompts for the full certificate chain and private key paths, skipping Node Caddy and certificate issuance. See [external certificates](docs/deployment_EN.md#external-certificates) for DNS, certificate, and shared-port preparation.
+
+## Configuration deployment and removal
+
+Deploy using a completed Web or Node YAML file:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0/scripts/tp.sh) install --config ./web.yaml
+```
+
+Remove containers and eligible images while retaining service data:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0/scripts/tp.sh) remove --config ./node.yaml --keep-data
+```
+
+Remove the project completely, including service data, PKI, proxy runtime configuration, and deployment YAML:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0/scripts/tp.sh) remove --config ./node.yaml --purge-data
+```
+
+Choose the configuration path for the Web or Node deployment on that host. External certificates, Nginx, and Certbot remain managed independently by the host and are preserved in both modes. See [remote removal](docs/deployment_EN.md#web-removal) for deleting an entire node server from Web.
+
+## Version selection
+
+A single entrypoint can select the scripts, templates, and images of a specified release:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0/scripts/tp.sh) --version 1.0 web
+```
+
+Version `1.0` maps to Git tag `v1.0` and product image tag `:1.0`. Configuration, scripts, and product images must match. See [release binding](docs/deployment_EN.md#versions) for version rules and support scope.
+
+## Documentation
+
+| Topic | Guide |
 | --- | --- |
-| `apps/control-plane/api` | Control-plane API |
+| Complete deployment, configuration, certificates, and removal | [Deployment guide](docs/deployment_EN.md) |
+| Current documentation index | [docs](docs/README_EN.md) |
+| Commands and script library | [scripts](scripts/README_EN.md) |
+| Certificate renewal and internal mTLS trust | [Certificate maintenance](docs/certificates.md) |
+
+## Source layout
+
+| Directory | Contents |
+| --- | --- |
+| `apps/control-plane/api` | Web control-plane API |
 | `apps/control-plane/web` | Web administration interface |
 | `apps/node-agent` | Node Agent and proxy runtime management |
-| `deploy/installer` | Installation and deployment tool |
-| `apps/docs-site` | User and installation documentation |
-
-## Get started
-
-The current version is `0.1.0-rc.9`. First follow the [dependency instructions](deploy/installer/README_EN.md#system-and-software-dependencies) to install Docker Engine, mikefarah/yq v4, and the other tools, then start Docker. The installer does not install dependencies. Node hosts also require systemd.
-
-Download the command entrypoint on each Web or Node server:
-
-```bash
-curl -fsSL --connect-timeout 10 --max-time 60 \
-  https://raw.githubusercontent.com/1linhao/trojanpanelnext/v0.1.0-rc.9/deploy/installer/tp.sh \
-  -o tp.sh
-chmod +x tp.sh
-./tp.sh --version
-```
-
-The entrypoint downloads the required scripts from the matching release. Deploy Web first:
-
-```bash
-./tp.sh config web --output ./web.yaml
-nano web.yaml
-./tp.sh validate --config ./web.yaml
-sudo ./tp.sh install --config ./web.yaml
-```
-
-Set the domain and email, and prepare DNS and firewall rules. Generated database and Redis passwords are written back to the YAML. Visit `https://<hostname>`; the initial account is `sysadmin` / `123456`. Change the password after signing in.
-
-Create a node server in Web, record its actual ID (at least `1`), and securely copy Web's public `client-ca.crt` to Node's `pki_bundle_dir` (default `/tpdata/trojanpanelnext-pki`). Deploy on the Node host:
-
-```bash
-./tp.sh config node --output ./node.yaml
-nano node.yaml
-./tp.sh validate --config ./node.yaml
-sudo ./tp.sh install --config ./node.yaml
-```
-
-Set the Node domain, Web database/Redis addresses and credentials, and actual `node_server_id`. Copy only the public CA to Node; keep private keys and the Web client identity on Web. Restrict Node's gRPC port (default `8100`) and host maintenance HTTPS port (`grpc_port + 1`, default `8101`) to Web sources. Node must also reach Web HTTPS (TCP 443) to confirm removal results. See the [full installation guide](deploy/installer/README_EN.md) for network preparation. `validate` checks only YAML and fields.
-
-### Node with existing certificates
-
-If Nginx and Certbot already manage host certificates, select external certificate mode in your edited `node.yaml`:
-
-```bash
-yq -i '.trojanpanelnext.node_certificate_mode = "external" |
-  .trojanpanelnext.node_certificate_path = "/etc/letsencrypt/live/node.example.com/fullchain.pem" |
-  .trojanpanelnext.node_private_key_path = "/etc/letsencrypt/live/node.example.com/privkey.pem"' node.yaml
-./tp.sh validate --config ./node.yaml
-sudo ./tp.sh install --config ./node.yaml
-```
-
-Replace the paths with real PEM files covering the YAML `hostname`. This skips Node Caddy and issuance, leaving signing ports 80/8863 free. Read-only directory mounts support Certbot `live` → `archive` links and renewal updates. The host manages issuance, renewal, and Nginx routing. Both removal modes preserve external certificates.
-
-Use `--force` when changing an installed Node's certificate mode or paths to recreate mounts and migrate existing proxy certificate references. Default `node_certificate_mode: caddy` retains automatic issuance. See the [external certificate guide](deploy/installer/README_EN.md#use-existing-certificates-and-skip-node-caddy).
-
-Recreate application containers after updating their image configuration. When upgrading to this version, update all Nodes before Web:
-
-```bash
-sudo ./tp.sh install --config ./node.yaml --force
-sudo ./tp.sh install --config ./web.yaml --force
-```
-
-Uninstall while retaining data (on the corresponding host):
-
-```bash
-sudo ./tp.sh remove --config ./node.yaml --keep-data
-sudo ./tp.sh remove --config ./web.yaml --keep-data
-```
-
-Uninstall completely, deleting data, PKI, camouflage content, custom kernel runtime, and deployment YAML (`--purge` is an alias for `--purge-data`):
-
-```bash
-sudo ./tp.sh remove --config ./node.yaml --purge-data
-sudo ./tp.sh remove --config ./web.yaml --purge-data
-```
-
-Both modes remove the corresponding containers, anonymous volumes, and all local tags in the image repositories they use, including historical tags in the default GHCR repositories. Shared images used by other containers are retained with a message; no global prune runs. Full removal is refused while containers for the other deployment purpose remain on the same host. Both modes ultimately remove the installed host maintenance service. The downloaded `tp.sh` and Docker Engine remain.
-
-Local removal does not remove Web registration; initiate deletion directly on Web's node server page to coordinate Node removal and registration cleanup.
-
-The server delete button opens a dialog with Cancel (取消), Delete (删除), and Delete completely (彻底删除). Delete retains data and Web history; Delete completely also removes the corresponding history. Offline nodes, older versions without the maintenance service, or removal failure retain registration and return an error. Deleting one proxy node only deletes that proxy. See the [removal guide](deploy/installer/README_EN.md#removal) for details.
-
-[Web administration interface](apps/control-plane/web/README_EN.md)
-
-[Node Agent](apps/node-agent/README_EN.md)
-
-[Documentation source](apps/docs-site/vpress/README_EN.md)
+| `apps/docs-site` | Documentation site |
+| `scripts/deploy` | Release-bound deployment scripts and templates |
+| `tests` | Automated tests |
+| `tools` | Repository checks |
+| `docs` | User and architecture documentation |
 
 ## Project origin
 
-TrojanPanel Next is an independently maintained continuation of the [original TrojanPanel project](https://github.com/trojanpanel), not an official release from the original organization. See [NOTICE.md](NOTICE.md) for project origin and history information.
+The project is independently maintained from [TrojanPanel](https://github.com/trojanpanel). See [NOTICE.md](NOTICE.md) for attribution.

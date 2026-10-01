@@ -21,6 +21,8 @@ Vue 2 无皮肤组件包，负责控件行为、DOM anatomy、可访问性、Ove
 
 ## 安装
 
+本包是 `apps/control-plane/web/` 下的私有 workspace 包，随 Web 源码构建，不从公共 npm 安装。开发环境见[开发指南](../../../../../docs/development.md#web-ui)。
+
 当前包是 private workspace 包：
 
 ```json

@@ -2,7 +2,7 @@
 
 [简体中文](README.md) | English
 
-The default native motion package. It provides a motion controller, semantic timing tokens, and framework-independent helpers while preserving a replacement seam for future motion engines.
+The default native motion package. It provides a motion controller, semantic timing tokens, and framework-independent helpers through a replaceable adapter interface.
 
 ## Responsibilities
 
@@ -13,6 +13,8 @@ The default native motion package. It provides a motion controller, semantic tim
 - Exposes cancellable transition and scrolling helpers.
 
 ## Usage
+
+This private workspace package is built with the Web source and is not installed from the public npm registry. See the [development guide](../../../../../docs/development_EN.md#web-ui) for setup.
 
 ```js
 import { createNativeMotion, createMotionEnvironment } from '@tp-ui/motion-native'

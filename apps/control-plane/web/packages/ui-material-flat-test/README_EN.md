@@ -13,6 +13,8 @@ A high-contrast flat material used to prove that the public material contract is
 
 ## Usage
 
+This private workspace package is built with the Web source and is not installed from the public npm registry. See the [development guide](../../../../../docs/development_EN.md#web-ui) for setup.
+
 ```js
 import { createFlatTestMaterial } from '@tp-ui/material-flat-test'
 import '@tp-ui/material-flat-test/material.css'

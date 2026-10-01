@@ -21,6 +21,8 @@
 
 ## 安装
 
+本包是 `apps/control-plane/web/` 下的私有 workspace 包，随 Web 源码构建，不从公共 npm 安装。开发环境见[开发指南](../../../../../docs/development.md#web-ui)。
+
 ```json
 {
   "dependencies": {
@@ -70,7 +72,7 @@ export default {
 | 浏览器颜色主题 | 支持，继承 `currentColor` |
 | SSR | 仅依赖传入的 `h()`，可由宿主验证 |
 | 独立 CSS | 不需要 |
-| 旧 Sprite / mask | 不支持 |
+| Sprite / mask | 不提供 |
 
 ## 验证
 

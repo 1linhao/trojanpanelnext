@@ -2,76 +2,43 @@
 
 [简体中文](README.md) | English
 
-The responsive Web administration interface for TrojanPanel Next. It uses a consistent frosted-glass design across administrator and user pages on desktop and mobile browsers.
+The responsive Web administration interface for TrojanPanel Next provides administrator and user views with a shared frosted-glass theme on desktop and mobile browsers.
 
-## Highlights
+## Features
 
-- Light and dark themes follow browser preferences on first load and react to preference changes.
-- Blue, violet, emerald, and amber palettes are saved in the current browser.
-- The page theme color is synchronized with supported mobile browsers.
-- Desktop and mobile navigation share the same icons and state styles.
-- Tables, forms, date pickers, overlays, dialogs, and loading states use common controls.
-- Responsive administrator and regular-user views are included.
+- Manage users, node servers, Xray / Hysteria2 / NaiveProxy proxies, and subscriptions.
+- View account and server traffic and manage Xray and Hysteria2 kernel tasks.
+- Choose Cancel, Delete, or Delete completely in the server removal dialog.
+- Follow browser light/dark preferences and select blue, violet, emerald, or amber palettes.
+- Use shared desktop navigation, mobile navigation, tables, forms, dialogs, and loading states.
 
-Browser chrome colors depend on browser and operating-system support. Some browsers require an option similar to “follow page color.”
+## Deployment
 
-## Test page previews
+Install Web through the [v1.0 script entrypoint](../../../scripts/README_EN.md). See the [deployment guide](../../../docs/deployment_EN.md#web) for complete instructions.
 
-### Login
+## Interface
 
 ![Login page](docs/screenshots/login.png)
 
-### Nodes
-
 ![Nodes page](docs/screenshots/nodes.png)
-
-### Profile
 
 ![Profile page](docs/screenshots/profile.png)
 
 ## Local development
 
-Use Node.js `^20.19.0 || >=22.12.0` (Node 22 recommended) and Yarn Classic 1.22. The application uses Vue 2.7.16, Vite 7, and the official `@vitejs/plugin-vue2`.
+Use Node.js `^20.19.0 || >=22.12.0` and Yarn Classic 1.22. Run from this directory:
 
 ```bash
 npx --yes yarn@1.22.22 install --frozen-lockfile
 npm run serve
 ```
 
-The default development URL is `http://127.0.0.1:8888/`, and API requests are proxied to `http://127.0.0.1:8081/`.
+The development URL is `http://127.0.0.1:8888/`. API requests are proxied to `http://127.0.0.1:8081/` by default. The [development guide](../../../docs/development_EN.md) covers Vue 2.7, Vite, UI packages, mock API, and browser tests.
 
-Run the included mock API and UI server for local testing:
-
-```bash
-MOCK_API_PORT=18081 node tests/mock-api-server.js
-MOCK_API_TARGET=http://127.0.0.1:18081 npm run serve -- --port 18888
-```
-
-## Build and test
+## Build
 
 ```bash
-npm run lint -- --no-fix
-npm run test:ui-libraries
-npm run test:ui-cleanup
-npm run test:vite-proxy
-npm run build:ui-labs
 npm run build
-npm run test:live-stack:e2e
 ```
 
-`test:live-stack:e2e` uses only the local mock account and captcha fixtures. The production build is written to `dist/` and can be deployed with Nginx or the project Docker image.
-
-```bash
-npm run test:server-delete:e2e
-```
-
-`test:server-delete:e2e` starts an isolated local mock API, Web, and ChromeDriver. Chromium / ChromeDriver must be installed and ports 18081, 18082, 18888, and 9518 must be free. It checks dialog actions, deletion parameters, dismissal, failed deletion retries, mobile layout, and browser errors without contacting a deployed server. Screenshots are saved in the repository’s `.local/server-delete-dialog/`.
-
-## Support
-
-- [Original TrojanPanel project](https://github.com/trojanpanel)
-- [trojan](https://github.com/trojan-gfw/trojan)
-- [trojan-go](https://github.com/p4gefau1t/trojan-go)
-- [Xray-core](https://github.com/XTLS/Xray-core)
-- [hysteria](https://github.com/HyNetwork/hysteria)
-- [naiveproxy](https://github.com/klzgrad/naiveproxy)
+Output is written to `dist/` and can be served by the project Web image or Nginx. `VITE_BASE_API` sets the client API prefix and defaults to `/api`.

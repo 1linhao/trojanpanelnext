@@ -1,0 +1,397 @@
+# TrojanPanel Next v1.0 部署指南
+
+简体中文 | [English](deployment_EN.md)
+
+## 目录
+
+- [系统与软件依赖](#dependencies)
+- [版本绑定与命令入口](#versions)
+- [域名、端口与网络](#network)
+- [一键安装 Web](#web)
+- [一键安装 Node](#node)
+- [Node 使用已有证书](#external-certificates)
+- [配置文件部署与字段](#configuration)
+- [重建当前版本服务](#recreate)
+- [本地卸载](#removal)
+- [从 Web 删除节点服务器](#web-removal)
+- [删除后重新接入](#reconnect)
+- [证书自动维护](#certificate-maintenance)
+- [日常维护](#operations)
+- [故障排查](#troubleshooting)
+
+<a id="dependencies"></a>
+## 系统与软件依赖
+
+支持 Linux `amd64` 和 `arm64`。使用 Bash 执行命令，安装、重建和卸载需要 root；Node 宿主机必须运行 systemd。建议每台服务器至少有 1 GiB 内存。Web 与 Node 可部署在不同服务器，通过受控网络连接。
+
+脚本不会安装 Docker、yq 或其他系统软件。执行部署前先准备以下依赖：
+
+| 操作 | 依赖 |
+| --- | --- |
+| 入口、帮助、模板下载 | Bash、curl、CA 证书、grep、coreutils |
+| 一键部署与配置校验 | 上述依赖及 **mikefarah/yq v4** |
+| 安装、重建 | 上述依赖、运行中的 Docker Engine、OpenSSL、tar、findutils、awk；Node 还需 systemd |
+| 卸载 | Bash、curl、CA 证书、grep、coreutils（含 realpath、rmdir）、Docker Engine、yq；Node 维护服务清理需要 systemctl |
+
+Debian/Ubuntu 可使用包管理器准备系统工具并启动 Docker：
+
+```bash
+apt-get update
+apt-get install -y bash curl ca-certificates grep coreutils openssl tar findutils gawk docker.io
+systemctl enable --now docker
+```
+
+也可按 [Docker Engine 官方说明](https://docs.docker.com/engine/install/)安装。按 [mikefarah/yq 官方安装说明](https://github.com/mikefarah/yq#install)获取与 CPU 架构对应的 v4 二进制并校验发布文件；Python 的同名 `yq` 不兼容。
+
+部署前检查：
+
+```bash
+yq --version
+docker info
+openssl version
+```
+
+`yq --version` 应显示 mikefarah/yq v4；`docker info` 应能连接 Docker 服务。本指南的一键命令均在 root 的 Bash 会话运行，远程脚本从固定发布标签获取。
+
+<a id="versions"></a>
+## 版本绑定与命令入口
+
+当前维护版本是 **v1.0**。版本号 `1.0` 对应 Git 标签 `v1.0`、配置 `trojanpanelnext.release: "1.0"`，以及以下产品镜像：
+
+| 组件 | 镜像 |
+| --- | --- |
+| Web API | `ghcr.io/1linhao/trojanpanelnext-api:1.0` |
+| Web 界面 | `ghcr.io/1linhao/trojanpanelnext-web:1.0` |
+| Node Agent | `ghcr.io/1linhao/trojanpanelnext-node-agent:1.0` |
+
+所有产品镜像提供 `linux/amd64` 和 `linux/arm64`。Caddy、MariaDB、Redis 使用配置模板中的独立上游版本。
+
+统一入口 `scripts/tp.sh` 按选定版本获取该标签下的脚本库及模板，检查脚本版本并执行对应命令；下载的临时脚本在命令结束后清理。配置和产品镜像必须匹配所选版本。脚本不转换其他版本的配置，仅维护当前发布版本。
+
+显式指定版本安装 Web：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0/scripts/tp.sh) --version 1.0 web
+```
+
+`--version <版本号>` 可放在命令前或后；`--entry-version` 显示入口的默认版本；`--help` 或 `<命令> --help` 查看用法。只传 `--version` 不用于查询版本。
+
+| 命令 | 行为 |
+| --- | --- |
+| `web [选项]` | 按提示生成 Web YAML、校验并安装 |
+| `node [选项]` | 按提示生成 Node YAML、校验并安装 |
+| `config web\|node [--output <文件>]` | 下载对应版本配置模板 |
+| `validate --config <文件>` | 校验 YAML、发布版本和字段 |
+| `install --config <文件> [--force]` | 按 YAML 部署对应用途 |
+| `remove --config <文件> [--keep-data\|--purge-data]` | 按 YAML 卸载对应用途 |
+
+一键部署读取终端输入，数据库和 Redis 密码不会作为命令行参数传入。`--config` 使用已有配置立即安装，不再提示填写。配置模板、生成配置均以 `0600` 权限保存；目标文件已存在或是符号链接时不会覆盖。`--config` 仅能与 `--force` 组合，其他值在 YAML 中设置。
+
+| 一键部署选项 | 用途 |
+| --- | --- |
+| `--hostname <域名>` | 当前服务器域名；省略时提示输入 |
+| `--email <邮箱>` | Web 或 Node Caddy 的 ACME 联系邮箱 |
+| `--output <文件>` | 新配置路径，默认 `./web.yaml` 或 `./node.yaml` |
+| `--config <文件>` | 使用已填写配置安装 |
+| `--force` | 重建应用容器，保留业务数据 |
+| `--web-host <地址>` | Node 的 Web 数据库和 Redis 地址；不同地址使用 YAML 设置 |
+| `--node-id <ID>` | Node 在 Web 中已登记的服务器 ID |
+| `--client-ca <文件>` | Node 使用的本机 Web 公开 CA 文件 |
+| `--certificate-mode caddy\|external` | Node 证书模式，默认 `caddy` |
+| `--certificate <文件>`、`--private-key <文件>` | Node 外部证书模式的 fullchain 和私钥路径 |
+
+<a id="network"></a>
+## 域名、端口与网络
+
+为 Web 和 Node 分别准备域名，例如 `panel.example.com` 和 `node.example.com`，将 A/AAAA 记录解析到对应服务器。存在 AAAA 记录时，IPv6 也必须可达。自动签证模式要求验证端口可以从公网访问，并且没有其他服务占用。
+
+| 方向 | 默认端口和用途 |
+| --- | --- |
+| 浏览器、证书签发服务 → Web | TCP 80、443：Caddy 和 HTTPS 面板 |
+| Node → Web | TCP 9507：MariaDB；TCP 6378：Redis，仅允许受信任 Node 来源 |
+| Node 宿主机维护服务 → Web | TCP 443：卸载结果确认 |
+| 证书签发服务 → Node（Caddy 模式） | TCP 80：HTTP 域名验证 |
+| Web → Node | TCP 8100：mTLS gRPC 控制，只允许 Web 来源 |
+| Web → Node 宿主机维护服务 | TCP 8101：mTLS HTTPS 卸载，固定为 `grpc_port + 1`，只允许 Web 来源 |
+| 访问 Node 伪装站 → Node（Caddy 模式） | TCP 8863：Caddy HTTPS |
+| 代理客户端 → Node | 面板中实际配置的代理 TCP/UDP 端口 |
+
+API 8081、UI 8888 和 Node API 8082 使用宿主机网络监听。按来源控制这些内部服务的访问，不要统一向公网放行。MariaDB、Redis 应通过防火墙或可信私网连接；配置不会自动建立 VPN 或防火墙规则。
+
+更改端口时同步更新配置、面板登记和防火墙。维护端口不能独立配置，`grpc_port` 最大为 `65534`。外部证书模式不启动 Node Caddy，其 HTTP/HTTPS 端口不使用；代理自身仍需可用的监听端口。
+
+<a id="web"></a>
+## 一键安装 Web
+
+在 Web 主机执行：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0/scripts/tp.sh) web
+```
+
+按提示输入 Web 域名和证书邮箱。也可直接提供公开参数：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0/scripts/tp.sh) web --hostname panel.example.com --email admin@example.com --output ./web.yaml
+```
+
+默认输出 `./web.yaml`。首次安装生成 MariaDB 与 Redis 密码并写入配置，创建 Web 内部 mTLS 身份，部署 MariaDB、Redis、API、UI 和 Web Caddy。
+
+访问 `https://panel.example.com`。初始用户名为 `sysadmin`，密码为 `123456`，登录后及时修改。面板登录密码独立于 YAML 中的数据库、Redis 密码。现有部署的登录密码以账户设置为准。
+
+备份 `web.yaml` 和完整 `pki_bundle_dir`。配置包含敏感凭据，应仅允许管理员读取，不要提交到公开仓库。
+
+<a id="node"></a>
+## 一键安装 Node
+
+先完成 Web 部署，并在面板的节点服务器页面创建服务器，填写 Node 地址、gRPC 端口和 TLS 服务器名（Node 证书域名）。记下实际服务器 ID，ID 必须至少为 `1`。
+
+将 Web 的当前公开 `client-ca.crt` 安全传输到 Node 主机，例如 `/root/client-ca.crt`。该文件默认位于 Web 的 `/tpdata/trojanpanelnext-pki/client-ca.crt`。仅传输公开 CA；`client-ca.key`、`client.key` 和 `client.crt` 留在 Web。
+
+在 Node 主机执行：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0/scripts/tp.sh) node
+```
+
+按提示输入 Node 域名、Web 地址、节点服务器 ID、公开 CA 路径，以及 Web 的数据库和 Redis 凭据；Caddy 模式还需输入证书邮箱。这些连接密码可由管理员读取 Web YAML 获取，敏感输入不显示在终端。
+
+也可提供公开参数，剩余字段仍按提示填写：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0/scripts/tp.sh) node --hostname node.example.com --email admin@example.com --web-host panel.example.com --node-id 1 --client-ca /root/client-ca.crt
+```
+
+`--client-ca` 指向已安全传输到本机的 PEM 公开 CA。文件只应包含未过期的 CA 证书，可包含轮换期间的新旧 CA；叶证书、过期 CA、私钥和其他混入内容会被拒绝，校验通过前不会保存新 YAML 或发布 CA 文件。脚本校验后将其复制到 `/tpdata/trojanpanelnext-pki/client-ca.crt`；该默认文件已存在时可省略此选项。同一份 CA 可重复使用，不会覆盖不同的现有信任文件；信任更新遵循[证书维护](certificates.md)流程。
+
+默认输出 `./node.yaml`。Node 需要持续访问 Web 的 MariaDB、Redis 和 HTTPS；Web 需要访问 Node 的控制及维护端口。脚本不会自动登记节点服务器或从 Web 获取 CA。
+
+安装会部署 Agent、默认证书模式下的 Node Caddy，以及宿主机 `trojanpanelnext-host.service`。该维护服务使用 mTLS HTTPS，仅接受获授权的 Web 客户端，用于远程卸载；Agent 容器不挂载 `docker.sock`。
+
+完成后在 Web 检查服务器在线，再创建需要的 Xray、Hysteria2 或 NaiveProxy 代理。
+
+<a id="external-certificates"></a>
+## Node 使用已有证书
+
+宿主机由 Nginx＋Certbot 或其他工具管理证书时，先签发有效证书，再使用外部模式：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0/scripts/tp.sh) node --certificate-mode external
+```
+
+按提示输入 fullchain 和未加密 PEM 私钥的绝对路径。也可直接提供路径：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0/scripts/tp.sh) node --certificate-mode external --certificate /etc/letsencrypt/live/node.example.com/fullchain.pem --private-key /etc/letsencrypt/live/node.example.com/privkey.pem
+```
+
+| 字段 | 含义 |
+| --- | --- |
+| `node_certificate_mode: caddy` | 默认方式，启动 Node Caddy 申请和续签证书 |
+| `node_certificate_mode: external` | 读取现有 PEM，跳过 Node Caddy 与证书申请 |
+| `node_certificate_path` | 完整证书链的宿主机绝对路径 |
+| `node_private_key_path` | 匹配的未加密 PEM 私钥绝对路径 |
+
+外部模式安装前检查文件可读、证书有效期、域名覆盖和私钥配对。Agent、宿主机维护服务和使用默认路径的代理读取这对证书；代理使用其他域名时，证书也必须覆盖这些域名，可使用多域名 SAN 或通配符证书。
+
+证书所在目录和符号链接目标目录只读挂载，支持 Certbot 的 `live/<域名>` → `archive/<域名>` 文件链接更新。使用独立证书目录，并与可写的 mTLS PKI 分开。不能将外部证书放在项目数据、PKI、伪装站、内核运行或维护目录中；直接挂载 `/`、`/etc`、`/root` 等宽泛目录也会被拒绝。
+
+证书申请、续签及 Nginx reload 由宿主机维护。可通过以下命令检查 Certbot webroot 续签链路：
+
+```bash
+certbot renew --cert-name node.example.com --dry-run --no-random-sleep-on-renew
+```
+
+续签的 pre/post hook 应与验证方式相符；使用 Nginx webroot 时保持 Nginx 运行。若 Nginx 读取该证书，应设置相应 deploy hook 检查配置并 reload Nginx。
+
+一台主机上的多个 TLS 服务可由宿主机 Nginx stream 根据 SNI 分流到不同的本地 TCP 端口，各服务使用独立域名。Nginx stream 模块、监听端口、TLS 终止方式及 PROXY protocol 必须与后端匹配。脚本不自动设置 SNI 分流；TCP 和 UDP 是独立监听，SNI TCP 分流不能代替 UDP 代理的端口规划。
+
+改变已安装 Node 的证书模式、路径或符号链接目标目录时，用 `--force` 重建挂载。对应原证书、私钥的代理配置引用会同步更新，代理账户与其他参数保留。两种本地卸载和 Web 远程卸载均保留外部证书、Nginx、Certbot 及其配置。
+
+<a id="configuration"></a>
+## 配置文件部署与字段
+
+配置式部署适用于固定参数、重复执行和自动化运维。下载 Web 模板：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0/scripts/tp.sh) config web --output ./web.yaml
+```
+
+下载 Node 模板：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0/scripts/tp.sh) config node --output ./node.yaml
+```
+
+编辑 YAML 后先校验再安装：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0/scripts/tp.sh) validate --config ./web.yaml
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0/scripts/tp.sh) install --config ./web.yaml
+```
+
+替换为 `./node.yaml` 即可部署 Node；或使用 `web --config ./web.yaml`、`node --config ./node.yaml`，命令会检查配置用途。`validate` 仅校验 YAML 与字段，不验证 DNS、证书内容、网络连接或服务健康。
+
+完整可编辑模板：[Web](../scripts/deploy/templates/web.yaml) · [Node](../scripts/deploy/templates/node.yaml)。所有字段位于 `trojanpanelnext` 映射内：
+
+| 通用字段 | 说明 |
+| --- | --- |
+| `release` | 必填字符串，当前为 `"1.0"`，必须匹配选定脚本版本 |
+| `schema_version` | 配置结构版本，当前为 `1` |
+| `purpose` | `web` 或 `node`，决定部署和卸载对象 |
+| `hostname`、`email` | 当前服务器域名与证书联系邮箱；Node 外部模式不要求邮箱 |
+| `pki_bundle_dir` | PKI 目录，默认 `/tpdata/trojanpanelnext-pki` |
+| `caddy_image` | Caddy 镜像；Node 外部证书模式不启动 Caddy |
+| `force` | `0` 或 `1`，是否重建应用容器；通常保持 `0` 并使用 `--force` |
+| `purge_data` | `0` 或 `1`，无卸载数据参数时的默认模式；通常保持 `0` |
+
+| Web 字段 | 说明 |
+| --- | --- |
+| `panel_image`、`ui_image` | 对应当前发布的 API、Web 镜像 |
+| `mariadb_image`、`redis_image` | 数据库及缓存上游镜像 |
+| `mariadb_port`、`redis_port` | 数据库及 Redis 宿主机端口，默认 `9507`、`6378` |
+| `panel_port`、`ui_port` | API、UI 内部监听端口，默认 `8081`、`8888` |
+| `mariadb_password`、`redis_password` | 首次安装可留空以生成；后续安装沿用现有凭据 |
+| `grpc_client_cert_path`、`grpc_client_key_path` | Web mTLS 客户端身份的运行路径 |
+| `grpc_server_ca_path` | Node 服务端证书的可选 CA 文件；留空使用系统信任 |
+
+| Node 字段 | 说明 |
+| --- | --- |
+| `core_image` | 对应当前发布的 Node Agent 镜像 |
+| `mariadb_host`、`mariadb_port`、`mariadb_user`、`mariadb_password` | Web 数据库连接，须与 Web 实际设置一致 |
+| `database`、`account_table` | 数据库及账户表，默认 `trojan_panel_db`、`account` |
+| `redis_host`、`redis_port`、`redis_password` | Web Redis 连接 |
+| `node_server_id` | Web 已登记服务器的实际 ID，至少为 `1` |
+| `grpc_port`、`core_port` | Agent gRPC 与 API 端口，默认 `8100`、`8082` |
+| `grpc_tls_mode` | 必须为 `mtls` |
+| `grpc_tls_server_name` | Node 证书域名，需与 Web 登记一致 |
+| `grpc_client_ca_path` | Node 运行时公开 CA 信任文件的绝对路径 |
+| `kernel_runtime_path` | 代理内核运行目录，默认 `/tpdata/trojan-panel-core/runtime` |
+| `node_certificate_mode`、`node_certificate_path`、`node_private_key_path` | [证书模式与路径](#external-certificates) |
+| `node_caddy_http_port`、`node_caddy_https_port` | Caddy 模式端口，默认 `80`、`8863` |
+
+Node 模板中的密码和服务器 ID 是待填写示例，不能直接作为实际部署凭据。使用配置式部署时，在 Node 的 `pki_bundle_dir` 准备 Web 当前公开 `client-ca.crt`。
+
+<a id="recreate"></a>
+## 重建当前版本服务
+
+修改当前版本的域名、应用端口或证书挂载后，用已有配置重建相应主机：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0/scripts/tp.sh) install --config ./node.yaml --force
+```
+
+Web 使用 `./web.yaml`。`--force` 会拉取配置指定的镜像并重建 API、UI、Agent 或 Caddy 容器，不重建已有 MariaDB、Redis 容器。调整已初始化的数据库密码需要同时正确更新数据库本身及所有连接方，不能仅改 YAML。
+
+跨发布版本的操作必须使用目标发布的脚本、配置规范和镜像；入口不会推断或转换其他版本配置。维护前备份数据与 PKI。
+
+<a id="removal"></a>
+## 本地卸载
+
+在对应主机执行。保留数据：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0/scripts/tp.sh) remove --config ./node.yaml --keep-data
+```
+
+删除项目数据：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0/scripts/tp.sh) remove --config ./node.yaml --purge-data
+```
+
+Web 使用 `./web.yaml`。`--keep-data` 和 `--purge-data` 不能同时使用；不传选项时使用 YAML `purge_data`，模板默认保留数据。
+
+| 对象 | `--keep-data` | `--purge-data` |
+| --- | --- | --- |
+| 对应用途容器、匿名 volume | 删除 | 删除 |
+| 对应镜像仓库中可清理的本地镜像 | 删除 | 删除 |
+| 业务数据、PKI、伪装站、内核运行配置 | 保留 | 删除 |
+| 原始部署 YAML | 保留 | 删除 |
+| 安装的宿主机维护服务及工作副本 | 删除 | 删除 |
+| 外部证书、宿主机 Nginx 和 Certbot | 保留 | 保留 |
+| Docker Engine、管理员自行保存的入口脚本 | 保留 | 保留 |
+
+Web 卸载 MariaDB、Redis、API、UI、Web Caddy；Node 卸载 Agent 和 Caddy 模式的 Node Caddy。镜像清理覆盖配置及实际容器所用仓库的全部本地标签，被其他容器引用的共享镜像保留并提示。不执行全局 prune。
+
+彻底卸载清理项目服务目录、`pki_bundle_dir`、伪装站、自定义 `kernel_runtime_path`、配置的身份文件和原始 YAML。维护服务目录为 `/etc/trojanpanelnext-host`、`/usr/local/lib/trojanpanelnext-host`，systemd 单元为 `/etc/systemd/system/trojanpanelnext-host.service`。同一主机仍运行另一用途的项目容器时，脚本会拒绝彻底卸载以保护共享数据。外部证书路径与清理范围重叠时也会拒绝操作。
+
+本地卸载不删除 Web 的服务器登记；需要协调卸载和登记清理时，在 Web 删除节点服务器。
+
+<a id="web-removal"></a>
+## 从 Web 删除节点服务器
+
+节点服务器页面的删除弹窗提供“取消”“删除”“彻底删除”：
+
+| 操作 | Node 主机 | Web |
+| --- | --- | --- |
+| 取消 | 不执行 | 不执行 |
+| 删除 | 保留数据模式卸载 | 删除服务器及关联代理配置，保留流量与任务历史 |
+| 彻底删除 | 删除项目数据模式卸载 | 删除服务器、关联代理配置及对应流量和任务历史 |
+
+Web 先调用 Node 宿主机维护服务，收到成功结果后再提交删除。节点离线、mTLS/网络连接失败或卸载失败时，服务器登记及关联代理配置保留，并返回错误。涉及其他服务器的共享任务记录保留。删除单个代理节点仅删除该代理。
+
+远程卸载会暂存 TLS 身份和卸载回执，待 Web 提交完成并确认结果后，再清理维护服务及文件。界面显示“清理待完成”（`cleanupPending`）时，主服务和 Web 记录已清理，维护文件仍等待确认。失败的确认和清理在后台重试，并能在重启后恢复；保持 Web 到 Node 维护端口及 Node 到 Web HTTPS 连通，直至完成。
+
+<a id="reconnect"></a>
+## 删除后重新接入
+
+使用“删除”后，Node 数据、PKI、证书和 YAML 保留，服务器与代理登记已移除。重新接入步骤：
+
+1. 等待宿主机维护服务清理完成，在 Web 重新添加服务器，可复用名称和地址，取得新 ID。
+2. 在保留的 `node.yaml` 更新 `node_server_id`，并核对数据库、Redis、TLS 设置。
+3. 使用 `install --config ./node.yaml` 重新部署 Node。
+4. 在 Web 检查服务器在线，并重新创建所需代理节点。
+
+保留的历史仍属于原服务器 ID，不会自动迁移到新 ID。使用“彻底删除”后，按首次安装步骤重新准备 YAML 和公开 CA；外部证书仍由宿主机保留和维护。
+
+<a id="certificate-maintenance"></a>
+## 证书自动维护
+
+Caddy 模式下，Web 和 Node 的公网证书由各自 Caddy 申请和续签，需保留证书数据并保证 DNS、ACME 验证可达。Node 外部模式由宿主机工具申请、续签。
+
+| 服务 | 更新证书后的加载行为 |
+| --- | --- |
+| Agent gRPC、宿主机维护服务、Hysteria2 | 新 TLS 握手读取证书文件 |
+| NaiveProxy | 每分钟检查证书，验证后短暂重启受影响实例，保存用户及运行配置 |
+| Xray | 文件证书默认每小时加载，可在面板重启该代理立即加载 |
+| 宿主机 Nginx | 由管理员配置的续签 deploy hook 检查并 reload |
+
+Web API 每 5 分钟检查内部 mTLS 身份，客户端证书剩余不足 90 天时重新签发。CA 剩余不足 365 天时开始分发新旧信任，在全部已登记 mTLS Node 确认后切换身份；旧身份至少保留 24 小时。离线 Node 会阻止轮换推进，连接恢复后重试。
+
+首次接入仍需手工传输当前公开 CA。备份完整 Web PKI 目录，包括 `state.json`、`generations` 和文件链接。Node 离线超过原信任有效期或从过期备份恢复时，需要重新引导信任。完整机制见[证书维护](certificates.md)。
+
+<a id="operations"></a>
+## 日常维护
+
+主机数据默认位于 `/tpdata`，部署 YAML 保存在生成时选择的路径。备份应包含数据库、Redis、API/Agent 配置、代理运行配置及完整 PKI；保存外部证书时遵守对应证书工具的备份要求。数据库备份应使用一致性导出或在停止写入后执行。
+
+查看容器与维护服务：
+
+```bash
+docker ps
+docker logs --tail 100 trojan-panel
+docker logs --tail 100 trojan-panel-core
+systemctl status trojanpanelnext-host.service
+journalctl -u trojanpanelnext-host.service -n 100 --no-pager
+```
+
+在 Web 主机查看 API 容器，在 Node 主机查看 Agent 和维护服务。公开日志前删除密码、访问令牌、私钥及用户连接信息。
+
+<a id="troubleshooting"></a>
+## 故障排查
+
+| 现象 | 检查 |
+| --- | --- |
+| 依赖检查失败 | 确认 mikefarah/yq v4、Docker 已启动，Node 运行 systemd |
+| 版本或镜像不匹配 | 使用所选发布的模板，核对 `release` 与产品镜像标签 |
+| Web 证书签发失败 | 检查 A/AAAA、80/443 可达与端口占用、Caddy 日志 |
+| 登录请求超时 | 检查 API、MariaDB、Redis 容器与 API 日志，确认 Caddy 到 API 的连接；超时并不代表密码错误 |
+| 登录凭据错误 | 初次部署使用初始账户；现有部署使用管理员已设置的密码 |
+| Node 不在线 | 核对实际服务器 ID、Web 数据库/Redis连接、gRPC 防火墙、证书域名与公开 CA |
+| 外部证书安装失败 | 检查绝对路径、完整链、未加密私钥、有效期、域名覆盖和独立目录 |
+| 续签后仍显示原证书 | 按服务加载周期等待或重启相应代理，检查证书链接目标与 Nginx reload |
+| Web 删除服务器失败 | 检查 Node 维护服务、Web 到 `grpc_port + 1` 的 mTLS 连接和 Node 到 Web HTTPS 回调 |
+| 卸载显示共享镜像保留 | 该镜像仍由其他容器使用，确认使用方后再自行处理 |
+
+提交问题时提供所用发布版本、操作命令（移除敏感参数）、错误信息和已脱敏日志。不要上传实际部署 YAML、私钥、数据库密码或访问令牌。

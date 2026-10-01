@@ -4,6 +4,8 @@
 
 The production frosted-glass material for TrojanPanel Next. It implements the complete material variable contract and changes visuals through semantic surfaces without altering component DOM.
 
+This private workspace package is built with the Web source and is not installed from the public npm registry. See the [development guide](../../../../../docs/development_EN.md#web-ui) for setup.
+
 ## Responsibilities
 
 - Provides light and dark modes with blue, violet, emerald, and amber palettes.

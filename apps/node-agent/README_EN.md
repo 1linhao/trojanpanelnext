@@ -2,61 +2,38 @@
 
 [简体中文](README.md) | English
 
-Trojan Panel Core
+The Node Agent runs on a node server and receives management requests from the Web control plane over mTLS. It manages Xray, Hysteria2, and NaiveProxy processes, configuration, accounts, and traffic statistics.
 
-## Supported node types
+## Deployment
 
-1. Xray
-2. Hysteria2
-3. NaiveProxy
+Install Node through the [v1.0 script entrypoint](../../scripts/README_EN.md). See the [deployment guide](../../docs/deployment_EN.md#node) for network, database, server registration, and public CA preparation.
 
-Trojan-Go and Hysteria v1 are retired. Their historical numeric type IDs remain
-reserved for database compatibility and must not be reused.
+Certificates can be managed automatically by Caddy or supplied in [external certificate mode](../../docs/deployment_EN.md#external-certificates). The host maintenance service handles server removal; the Agent does not need a Docker socket mount.
 
-Default data processing：
+## Source layout
 
-1. Read/write username, pass, hash, quota, download, upload, ip_limit, download_speed_limit, upload_speed_limit in
-   account. pass, hash needs to be hashed, quota, upload, download, download_speed_limit, upload_speed_limit unit is
-   byte
+| Directory | Purpose |
+| --- | --- |
+| `app/` | Proxy kernels, processes, and certificate loading |
+| `api/` | gRPC management and Hysteria2 authentication |
+| `core/` | Initialization, configuration, and shared state |
+| `dao/`, `service/` | Accounts, node configuration, and runtime state |
+| `hostagent/`, `cmd/host-agent/` | Host maintenance service |
+| `scripts/` | Build tools for the NaiveProxy traffic extension |
 
-Main logic：
+## Development
 
-1. API real-time update (database to application) valid account: account.quota < 0 or account.download +
-   account.upload < account.quota
-2. Regularly update account.download, account.upload
-3. account.quota=0, the user is disabled
+Run from this directory:
 
-## Create database table statement example
-
-```sql
-create table trojan_panel_db.account
-(
-    id                   bigint(10) unsigned auto_increment comment 'auto increment primary key'
-        primary key,
-    username             varchar(64) default '' not null comment 'login username',
-    pass                 varchar(64) default '' not null comment 'login password',
-    hash                 varchar(64) default '' not null comment 'hash of pass',
-    quota                bigint      default 0  not null comment 'quota unit/byte',
-    download             bigint unsigned default 0 not null comment 'download unit/byte',
-    upload               bigint unsigned default 0 not null comment 'upload unit/byte',
-    ip_limit             tinyint(2) unsigned default 3 not null comment 'limit the number of IP devices',
-    download_speed_limit bigint unsigned default 0 not null comment 'download speed limit unit/byte',
-    upload_speed_limit   bigint unsigned default 0 not null comment 'upload speed limit unit/byte',
-);
+```bash
+go test ./...
+go build ./...
 ```
 
-## Prevent circular dependencies
+See the [development guide](../../docs/development_EN.md) for dependencies, workflow, and test commands.
 
-router->api->middleware->app->service/dao->core
+## Proxy projects
 
-## Build
-
-[compile.bat](compile.bat)
-
-## Support
-
-- [Original TrojanPanel project](https://github.com/trojanpanel)
-- [trojan](https://github.com/trojan-gfw/trojan)
 - [Xray-core](https://github.com/XTLS/Xray-core)
-- [hysteria](https://github.com/apernet/hysteria)
-- [naiveproxy](https://github.com/klzgrad/naiveproxy)
+- [Hysteria2](https://github.com/apernet/hysteria)
+- [NaiveProxy](https://github.com/klzgrad/naiveproxy)

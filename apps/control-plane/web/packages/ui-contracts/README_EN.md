@@ -15,6 +15,8 @@ The package does not render DOM, read application state, or define a concrete vi
 
 ## Usage
 
+This private workspace package is built with the Web source and is not installed from the public npm registry. See the [development guide](../../../../../docs/development_EN.md#web-ui) for setup.
+
 ```js
 import { createUiRuntime } from '@tp-ui/contracts'
 import '@tp-ui/contracts/base.css'

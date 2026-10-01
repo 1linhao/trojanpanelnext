@@ -25,7 +25,10 @@ jobs:
           fetch-depth: 0
 
       - name: Verify bilingual README contract
-        run: node scripts/check-readme-languages.mjs
+        run: node tools/check-readme-languages.mjs
+
+      - name: Verify documentation links and title anchors
+        run: node tools/check-documentation.mjs
 
       - name: Scan complete Git history for secrets
         run: >-
@@ -99,7 +102,7 @@ jobs:
           CGO_ENABLED=0 go build -trimpath -o /tmp/trojanpanelnext-host-agent ./cmd/host-agent
 
   installer:
-    name: installer scripts
+    name: deployment script library
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -111,25 +114,26 @@ jobs:
           while IFS= read -r -d '' script; do
             bash -n "$script"
             count=$((count + 1))
-          done < <(find deploy/installer -type f -name '*.sh' -print0)
+          done < <(find scripts tests/deploy -type f -name '*.sh' -print0)
           test "$count" -gt 0
           printf 'validated %d shell scripts\n' "$count"
-      - name: Prepare installer test dependencies
+      - name: Prepare deployment test dependencies
         run: |
           curl -fsSL --retry 2 --connect-timeout 10 --max-time 120 https://github.com/mikefarah/yq/releases/download/v4.53.6/yq_linux_amd64 -o /tmp/yq
           printf '%s  %s\n' c5f056448f973ae7d39b5401949648a78f2dc1947d6a8eb65be60d5c504b9385 /tmp/yq | sha256sum -c -
           sudo install -m 0755 /tmp/yq /usr/local/bin/yq
-      - name: Check installer release binding
-        run: node scripts/check-installer-release.mjs
+      - name: Check script library release binding
+        run: node tools/check-installer-release.mjs
       - name: Check shell scripts
-        run: shellcheck deploy/installer/*.sh deploy/installer/tests/*.sh
-      - name: Test installer CLI contract
+        run: shellcheck scripts/tp.sh scripts/deploy/*.sh tests/deploy/*.sh
+      - name: Test deployment CLI contract
         run: |
-          bash deploy/installer/tests/installer_cli_test.sh
-          bash deploy/installer/tests/entrypoint_test.sh
-          bash deploy/installer/tests/uninstall_test.sh
-          bash deploy/installer/tests/persistence_test.sh
-          bash deploy/installer/tests/external_certificate_test.sh
+          bash tests/deploy/installer_cli_test.sh
+          bash tests/deploy/entrypoint_test.sh
+          bash tests/deploy/uninstall_test.sh
+          bash tests/deploy/persistence_test.sh
+          bash tests/deploy/external_certificate_test.sh
+          bash tests/deploy/quick_deploy_test.sh
 
   docs:
     name: documentation site

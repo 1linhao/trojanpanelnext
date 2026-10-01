@@ -6,7 +6,7 @@
   "files": [
     "dist",
     "README.md",
-    "CHANGELOG.md"
+    "README_EN.md"
   ],
   "dependencies": {
     "@tp-ui/contracts": "0.1.0"

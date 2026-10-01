@@ -22,7 +22,9 @@ Trojan Panel 可组合 UI 的框架无关契约包。主题、材质、布局、
 
 ## 安装
 
-当前包是仓库内的 private workspace 包。根目录执行 `npm install` 后即可通过固定版本依赖使用：
+本包是 `apps/control-plane/web/` 下的私有 workspace 包，随 Web 源码构建，不从公共 npm 安装。开发环境见[开发指南](../../../../../docs/development.md#web-ui)。
+
+当前包是仓库内的 private workspace 包。在 `apps/control-plane/web/` 执行 `npx --yes yarn@1.22.22 install --frozen-lockfile` 安装 workspace 依赖；包通过固定版本依赖使用：
 
 ```json
 {
