@@ -2,11 +2,12 @@
 
 简体中文 | [English](README_EN.md)
 
-本文档面向 TrojanPanel Next **v1.0** 用户。
+本文档面向 TrojanPanel Next **v1.0.1** 用户。
 
 | 主题 | 文档 |
 | --- | --- |
 | 软件依赖与部署准备 | [部署指南：依赖](deployment.md#dependencies) |
+| 一键安装与卸载依赖 | [`deps install`](deployment.md#dependency-install) · [`deps remove`](deployment.md#dependency-removal) |
 | 一键安装 Web 与 Node | [Web](deployment.md#web) · [Node](deployment.md#node) |
 | 指定版本与配置文件部署 | [版本绑定](deployment.md#versions) · [配置说明](deployment.md#configuration) |
 | 使用已有证书 | [外部证书模式](deployment.md#external-certificates) |

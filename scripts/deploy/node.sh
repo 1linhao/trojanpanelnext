@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-SCRIPT_VERSION="1.0"
+SCRIPT_VERSION="1.0.1"
 TP_SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/deploy/common.sh
 source "${TP_SCRIPT_DIR}/common.sh"

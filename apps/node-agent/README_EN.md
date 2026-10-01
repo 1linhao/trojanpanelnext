@@ -6,7 +6,7 @@ The Node Agent runs on a node server and receives management requests from the W
 
 ## Deployment
 
-Install Node through the [v1.0 script entrypoint](../../scripts/README_EN.md). See the [deployment guide](../../docs/deployment_EN.md#node) for network, database, server registration, and public CA preparation.
+Install Node through the [v1.0.1 script entrypoint](../../scripts/README_EN.md). See the [deployment guide](../../docs/deployment_EN.md#node) for network, database, server registration, and public CA preparation.
 
 Certificates can be managed automatically by Caddy or supplied in [external certificate mode](../../docs/deployment_EN.md#external-certificates). The host maintenance service handles server removal; the Agent does not need a Docker socket mount.
 

@@ -36,7 +36,7 @@ if (!entrypoint.includes(`DEFAULT_VERSION="${version}"`) ||
     !entrypoint.includes('/scripts/deploy/')) {
   throw new Error('Entrypoint must default to the current release and download its script library');
 }
-for (const file of ['config.sh', 'validate.sh', 'install.sh', 'uninstall.sh', 'quick.sh', 'web.sh', 'node.sh']) {
+for (const file of ['config.sh', 'validate.sh', 'install.sh', 'uninstall.sh', 'quick.sh', 'web.sh', 'node.sh', 'dependencies.sh']) {
   const script = readFileSync(`${root}scripts/deploy/${file}`, 'utf8');
   if (!script.includes(`SCRIPT_VERSION="${version}"`)) {
     throw new Error(`${file} must use script library version ${version}`);

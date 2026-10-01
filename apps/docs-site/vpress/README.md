@@ -25,26 +25,40 @@ footer: TrojanPanel Next
 
 ## 快速安装
 
-当前版本为 **v1.0**。先完成[依赖与网络准备](https://github.com/1linhao/trojanpanelnext/blob/v1.0/docs/deployment.md#dependencies)，然后在 root Bash 中运行。
+当前版本为 **v1.0.1**。在 root Bash 中先安装依赖，再准备域名和[网络访问](https://github.com/1linhao/trojanpanelnext/blob/v1.0.1/docs/deployment.md#network)。自动依赖安装支持 Debian 12/13、Ubuntu 22.04/24.04（amd64/arm64，运行 systemd）：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.1/scripts/tp.sh) deps install
+```
+
+入口需要 Bash、curl、CA 证书、grep、coreutils；`deps` 还需 util-linux 的 `flock`。最小引导和其他 Linux 的手动安装见[依赖准备](https://github.com/1linhao/trojanpanelnext/blob/v1.0.1/docs/deployment.md#dependencies)。
 
 Web 主控：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0/scripts/tp.sh) web
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.1/scripts/tp.sh) web
 ```
 
 Node Agent：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0/scripts/tp.sh) node
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.1/scripts/tp.sh) node
 ```
 
-入口按提示收集配置并部署同版本镜像，也支持指定版本、配置文件部署、外部证书、重建和卸载。完整操作以 [docs 部署指南](https://github.com/1linhao/trojanpanelnext/blob/v1.0/docs/deployment.md)为准。
+入口按提示收集配置并部署同版本镜像，也支持指定版本、配置文件部署、外部证书、重建和卸载。完整操作以 [docs 部署指南](https://github.com/1linhao/trojanpanelnext/blob/v1.0.1/docs/deployment.md)为准。
+
+卸载项目和其他 Docker 服务后，可按安装记录清理新增的 Docker 软件包和未修改的 yq：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.1/scripts/tp.sh) deps remove
+```
+
+原有依赖、基础工具、Docker 数据和外部证书保留；删除前检查 Docker 容器、共享 containerd 其他 namespace 的容器与维护服务。安装中断时先重跑 `deps install` 修复。完整范围见[依赖卸载](https://github.com/1linhao/trojanpanelnext/blob/v1.0.1/docs/deployment.md#dependency-removal)。
 
 ## 文档
 
-- [完整部署与卸载](https://github.com/1linhao/trojanpanelnext/blob/v1.0/docs/deployment.md)
-- [Web 使用指南](https://github.com/1linhao/trojanpanelnext/blob/v1.0/docs/user-guide.md)
-- [证书管理](https://github.com/1linhao/trojanpanelnext/blob/v1.0/docs/certificates.md)
-- [API 指南](https://github.com/1linhao/trojanpanelnext/blob/v1.0/docs/api.md)
-- [开发指南](https://github.com/1linhao/trojanpanelnext/blob/v1.0/docs/development.md)
+- [完整部署与卸载](https://github.com/1linhao/trojanpanelnext/blob/v1.0.1/docs/deployment.md)
+- [Web 使用指南](https://github.com/1linhao/trojanpanelnext/blob/v1.0.1/docs/user-guide.md)
+- [证书管理](https://github.com/1linhao/trojanpanelnext/blob/v1.0.1/docs/certificates.md)
+- [API 指南](https://github.com/1linhao/trojanpanelnext/blob/v1.0.1/docs/api.md)
+- [开发指南](https://github.com/1linhao/trojanpanelnext/blob/v1.0.1/docs/development.md)

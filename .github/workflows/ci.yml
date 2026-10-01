@@ -130,6 +130,7 @@ jobs:
         run: |
           bash tests/deploy/installer_cli_test.sh
           bash tests/deploy/entrypoint_test.sh
+          bash tests/deploy/dependencies_test.sh
           bash tests/deploy/uninstall_test.sh
           bash tests/deploy/persistence_test.sh
           bash tests/deploy/external_certificate_test.sh

@@ -14,7 +14,7 @@ TrojanPanel Next 的响应式 Web 管理界面，提供管理员与普通用户�
 
 ## 部署
 
-使用 [v1.0 脚本入口](../../../scripts/README.md)安装 Web。完整操作见[部署指南](../../../docs/deployment.md#web)。
+使用 [v1.0.1 脚本入口](../../../scripts/README.md)安装 Web。完整操作见[部署指南](../../../docs/deployment.md#web)。
 
 ## 界面
 

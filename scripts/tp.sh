@@ -2,7 +2,7 @@
 set -euo pipefail
 
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
-DEFAULT_VERSION="1.0"
+DEFAULT_VERSION="1.0.1"
 GITHUB_RAW_BASE="https://raw.githubusercontent.com/1linhao/trojanpanelnext"
 TP_DOWNLOAD_DIR=""
 
@@ -18,6 +18,7 @@ usage() {
 TrojanPanel Next script library
 
 Usage:
+  $0 [--version <release>] deps install|remove
   $0 [--version <release>] web|node [options]
   $0 [--version <release>] config web|node [--output <file>]
   $0 [--version <release>] validate --config <file>
@@ -26,12 +27,14 @@ Usage:
   $0 <command> --help
   $0 --entry-version
 
-Default release: ${DEFAULT_VERSION}. --version accepts 1.0 or v1.0.
+Default release: ${DEFAULT_VERSION}. --version accepts ${DEFAULT_VERSION} or v${DEFAULT_VERSION}.
 The selected release supplies its commands, templates and product image tags.
 web/node create a protected YAML and deploy it; missing values are prompted.
-Install dependencies first: Bash, curl, CA certificates and coreutils; deployment
-also requires Docker Engine, OpenSSL and mikefarah/yq v4. Node requires systemd.
-Deployment and removal require root. Full guide: docs/deployment.md.
+deps install prepares deployment dependencies on Debian/Ubuntu systemd hosts.
+deps remove uninstalls the Docker/yq it added, retaining system tools and data.
+The entrypoint needs Bash, curl, CA certificates, grep and coreutils first.
+Deployment, dependency management and removal require root.
+Full guide: docs/deployment.md.
 EOF
 }
 
@@ -90,6 +93,7 @@ main() {
   case "${command}" in
   -h | --help | help | "") usage; return ;;
   web | node) script="${command}.sh" ;;
+  deps) script=dependencies.sh ;;
   config) script=config.sh ;;
   validate) script=validate.sh ;;
   install) script=install.sh ;;

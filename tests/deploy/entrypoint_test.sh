@@ -49,7 +49,7 @@ curl() {
   fi
   case "${file}" in
   web.yaml | node.yaml) sed "s/${MOCK_VERSION}/${version}/g" "${SCRIPT_DIR}/templates/${file}" >"${destination}" ;;
-  install.sh | uninstall.sh | web.sh | node.sh)
+  dependencies.sh | install.sh | uninstall.sh | web.sh | node.sh)
     if [[ "${MOCK_DISPATCH:-0}" == 1 ]]; then
       printf '#!/usr/bin/env bash\nSCRIPT_VERSION="%s"\nprintf "arg:<%%s>\\n" "$@"\nexit %s\n' "${version}" "${MOCK_STATUS:-0}" >"${destination}"
     else sed "s/${MOCK_VERSION}/${version}/g" "${SCRIPT_DIR}/${file}" >"${destination}"; fi
@@ -64,7 +64,7 @@ test ! -e "${MOCK_REQUESTS}"
 assert_fails "${ENTRYPOINT}" unknown
 assert_fails "${ENTRYPOINT}" --version
 assert_fails "${ENTRYPOINT}" --version --help
-assert_fails "${ENTRYPOINT}" --version 1.0 --version 1.0 config web
+assert_fails "${ENTRYPOINT}" --version 1.0.1 --version 1.0.1 config web
 assert_fails "${ENTRYPOINT}" --version '../main' config web
 assert_fails "${ENTRYPOINT}" --version 1 config web
 test ! -e "${MOCK_REQUESTS}"
@@ -109,6 +109,22 @@ for action in install remove web node; do
   if env MOCK_DISPATCH=1 MOCK_STATUS=17 "${ENTRYPOINT}" --version "${MOCK_VERSION}" "${action}" --config missing.yaml >"${TEST_DIR}/out"; then fail 'lost child exit code'; else test "$?" = 17; fi
   assert_clean
 done
+: >"${MOCK_REQUESTS}"
+for dependency_action in install remove; do
+  env MOCK_DISPATCH=1 "${ENTRYPOINT}" deps "${dependency_action}" --version 2.5 >"${TEST_DIR}/out"
+  grep -Fxq "arg:<${dependency_action}>" "${TEST_DIR}/out"
+  grep -Fq '/v2.5/scripts/deploy/dependencies.sh' "${MOCK_REQUESTS}"
+  if grep -Fq '/scripts/deploy/install.sh' "${MOCK_REQUESTS}"; then fail 'dependency command fetched installer'; fi
+  assert_clean
+  if env MOCK_DISPATCH=1 MOCK_STATUS=17 "${ENTRYPOINT}" deps "${dependency_action}" >"${TEST_DIR}/out"; then fail 'lost dependency child exit code'; else test "$?" = 17; fi
+  assert_clean
+done
+for failure in fail empty html syntax version term; do
+  assert_fails env MOCK_TARGET=dependencies.sh MOCK_FAILURE="${failure}" "${ENTRYPOINT}" deps install
+done
+"${ENTRYPOINT}" deps --help >"${TEST_DIR}/out"
+grep -Fq 'Existing Docker and compatible yq are reused' "${TEST_DIR}/out"
+assert_clean
 : >"${MOCK_REQUESTS}"
 env MOCK_DISPATCH=1 "${ENTRYPOINT}" --version 2.5 install --config ignored.yaml >/dev/null
 grep -Fq '/v2.5/scripts/deploy/uninstall.sh' "${MOCK_REQUESTS}"
