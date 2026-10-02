@@ -73,6 +73,7 @@
           <thead>
             <tr>
               <th>账号</th>
+              <th v-if="canViewRemarks">{{ $t('table.accountRemark') }}</th>
               <th>角色</th>
               <th class="traffic-reset-column">
                 <div class="traffic-reset-column-head">
@@ -97,16 +98,17 @@
           </thead>
           <tbody>
             <tr v-if="!listLoading && listError" class="tbl-empty">
-              <td colspan="8">{{ listError }}</td>
+              <td :colspan="tableColumnCount">{{ listError }}</td>
             </tr>
             <tr v-else-if="!listLoading && !list.length" class="tbl-empty">
-              <td colspan="8">暂无数据</td>
+              <td :colspan="tableColumnCount">暂无数据</td>
             </tr>
             <tr v-for="(row, index) in list" :key="row.id">
               <td class="primary-cell">
                 <strong>{{ row.username }}</strong
                 ><small>{{ row.email || '未绑定邮箱' }}</small>
               </td>
+              <td v-if="canViewRemarks" class="account-remark-cell">{{ row.remark || '—' }}</td>
               <td>
                 <span
                   class="chip"
@@ -252,6 +254,13 @@
             clearable
           />
         </liquid-form-item>
+        <liquid-form-item
+          v-if="dialogStatus === 'update' && canViewRemarks"
+          :label="$t('table.accountRemark')"
+          prop="remark"
+        >
+          <liquid-input v-model="temp.remark" type="textarea" :rows="3" clearable />
+        </liquid-form-item>
         <liquid-form-item :label="$t('table.status')" prop="deleted">
           <liquid-switch
             v-model="temp.deleted"
@@ -345,6 +354,11 @@ export default {
         callback()
       }
     }
+    const validateAccountRemark = (rule, value, callback) => {
+      if (!checkPermission(['sysadmin']) || value === undefined || value === null) { callback(); return }
+      callback(typeof value === 'string' && Array.from(value).length <= 500
+        ? undefined : new Error(this.$t('valid.accountRemarkRange')))
+    }
     return {
       tableKey: 0,
       listLoading: true,
@@ -369,6 +383,7 @@ export default {
         username: undefined,
         pass: undefined,
         email: undefined,
+        remark: undefined,
         roleId: 3,
         deleted: 0,
         lastLoginTime: 0,
@@ -486,6 +501,7 @@ export default {
         ]
       },
       updateRules: {
+        remark: [{ validator: validateAccountRemark, trigger: ['change', 'blur'] }],
         username: [
           {
             required: true,
@@ -571,7 +587,24 @@ export default {
     this.setRoleList()
     this.getList()
   },
+  computed: {
+    canViewRemarks() { return checkPermission(['sysadmin']) },
+    tableColumnCount() { return this.canViewRemarks ? 8 : 7 }
+  },
+  watch: {
+    canViewRemarks(allowed) {
+      if (allowed) return
+      if (Array.isArray(this.list)) this.list = this.list.map(this.accountForRole)
+      this.$delete(this.temp, 'remark')
+      this.dialogFormVisible = false
+    }
+  },
   methods: {
+    accountForRole(account) {
+      const result = { ...account }
+      if (!checkPermission(['sysadmin'])) delete result.remark
+      return result
+    },
     handleResetAllAccountTraffic() {
       this.$message({
         type: 'info',
@@ -611,7 +644,7 @@ export default {
       this.listQuery.orderFields = this.orderFieldArr.join(',')
       return selectAccountPage(this.listQuery).then((response) => {
         if (!this.ownsListRequest(request)) return
-        this.list = response.data.accounts
+        this.list = response.data.accounts.map(this.accountForRole)
         this.total = response.data.total
       }).catch(() => {
         if (!this.ownsListRequest(request)) return
@@ -629,6 +662,7 @@ export default {
         username: undefined,
         pass: undefined,
         email: undefined,
+        remark: undefined,
         roleId: 3,
         deleted: 0,
         expireTime: new Date().getTime(),
@@ -655,7 +689,7 @@ export default {
       })
     },
     handleUpdate(row) {
-      this.temp = Object.assign({}, row)
+      this.temp = this.accountForRole(row)
       this.temp.quota = byteToMb(row.quota)
       this.dialogStatus = 'update'
       this.dialogFormVisible = true
@@ -674,6 +708,7 @@ export default {
         }
       ).then(() => {
         const tempData = Object.assign({}, row)
+        delete tempData.remark
         deleteAccountById(tempData).then(() => {
           this.list.splice(index, 1)
           this.$notify({
@@ -688,7 +723,9 @@ export default {
     createData() {
       this.$refs['dataForm'].validate((valid) => {
         if (valid) {
-          createAccount(this.temp).then(() => {
+          const tempData = { ...this.temp }
+          delete tempData.remark
+          createAccount(tempData).then(() => {
             this.getList()
             this.dialogFormVisible = false
             this.$notify({
@@ -705,10 +742,12 @@ export default {
       this.$refs['dataForm'].validate((valid) => {
         if (valid) {
           const tempData = Object.assign({}, this.temp)
+          if (!checkPermission(['sysadmin']) || tempData.remark === undefined || tempData.remark === null) delete tempData.remark
           updateAccountById(tempData).then(() => {
-            const index = this.list.findIndex((v) => v.id === this.temp.id)
-            this.temp.quota = mbToByte(this.temp.quota)
-            this.list.splice(index, 1, this.temp)
+            const index = this.list.findIndex((v) => v.id === tempData.id)
+            if (index >= 0) this.list.splice(index, 1, this.accountForRole({
+              ...this.list[index], ...tempData, quota: mbToByte(tempData.quota)
+            }))
             this.dialogFormVisible = false
             this.$notify({
               title: 'Success',
@@ -739,6 +778,7 @@ export default {
         }
       ).then(() => {
         const tempData = Object.assign({}, row)
+        delete tempData.remark
         resetAccountDownloadAndUpload(tempData).then(() => {
           this.getList()
           this.$notify({
@@ -847,5 +887,11 @@ export default {
 <style scoped>
 .liquid-button {
   margin-left: 10px;
+}
+.account-remark-cell {
+  min-width: 160px;
+  max-width: 320px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 </style>

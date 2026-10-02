@@ -16,7 +16,7 @@ const page = (key, rows) => ({
 const account = {
   id: 2,
   username: 'glassdemo',
-  email: 'demo@example.com',
+  email: 'demo@gmail.com',
   roleId: 3,
   roles: ['user'],
   deleted: 0,
@@ -31,9 +31,10 @@ const accounts = Array.from({ length: 36 }, (_, index) => ({
   ...account,
   id: index + 2,
   username: index === 0 ? account.username : `glassuser${index + 1}`,
-  email: index === 0 ? account.email : `user${index + 1}@example.com`,
+  email: index === 0 ? account.email : `user${index + 1}@gmail.com`,
   download: account.download + index * 268435456,
-  upload: account.upload + index * 67108864
+  upload: account.upload + index * 67108864,
+  remark: index === 0 ? '续费前联系客户确认套餐。' : index === 1 ? '<img src=x onerror=alert(1)>仅供系统管理员查看' : ''
 }))
 
 const captchaSvg =
@@ -213,6 +214,13 @@ const server = http.createServer((req, res) => {
   const path = url.pathname.replace(/^\/api/, '')
   const trafficRankDate = url.searchParams.get('date') || 'total'
   const isUserSession = req.headers.authorization === 'Bearer user-token'
+  const isAdminSession = req.headers.authorization === 'Bearer admin-token'
+  const isSysadminSession = !isUserSession && !isAdminSession
+  const accountForRole = (account) => {
+    const result = { ...account }
+    if (!isSysadminSession) delete result.remark
+    return result
+  }
   const isUserLogin = (req.headers.referer || '').startsWith(
     'http://localhost:'
   )
@@ -224,6 +232,29 @@ const server = http.createServer((req, res) => {
     return
   }
   res.setHeader('Content-Type', 'application/json; charset=utf-8')
+
+  if (path === '/account/updateAccountById') {
+    let body = ''
+    req.on('data', (chunk) => { body += chunk })
+    req.on('end', () => {
+      let params
+      try { params = JSON.parse(body || '{}') } catch (_) {
+        res.end(JSON.stringify({ code: 50000, message: 'Invalid request JSON' })); return
+      }
+      if (!isSysadminSession) { res.end(JSON.stringify({ code: 50401, message: 'System administrator required' })); return }
+      const existing = accounts.find((account) => account.id === params.id)
+      if (!existing) { res.end(JSON.stringify({ code: 50000, message: 'Account not found' })); return }
+      if (params.remark !== undefined && params.remark !== null && (typeof params.remark !== 'string' || Array.from(params.remark).length > 500)) {
+        res.end(JSON.stringify({ code: 50000, message: 'Remark must not exceed 500 characters' })); return
+      }
+      const changes = { ...params }
+      if (changes.remark === undefined || changes.remark === null) delete changes.remark
+      if (changes.quota > 0) changes.quota *= 1048576
+      Object.assign(existing, changes)
+      res.end(ok(null))
+    })
+    return
+  }
 
   if (path === '/node/createNode' || path === '/node/updateNodeById') {
     let body = ''
@@ -319,14 +350,14 @@ const server = http.createServer((req, res) => {
     '/auth/register': null,
     '/account/getAccountInfo': isUserSession
       ? { id: account.id, username: account.username, roles: account.roles }
-      : {
+      : isAdminSession ? { id: 3, username: 'administrator', roles: ['admin', 'user'] } : {
           id: 1,
           username: 'sysadmin',
           roles: ['sysadmin', 'admin', 'user']
         },
     '/account/logout': null,
-    '/account/selectAccountPage': page('accounts', accounts),
-    '/account/selectAccountById': account,
+    '/account/selectAccountPage': page('accounts', accounts.map(accountForRole)),
+    '/account/selectAccountById': accountForRole(accounts.find((account) => account.id === Number(url.searchParams.get('id'))) || accounts[0]),
     '/account/exportOptions': [
       {
         id: 'sing-box',

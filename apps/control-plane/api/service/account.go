@@ -14,6 +14,7 @@ import (
 	"trojan-panel/model/dto"
 	"trojan-panel/model/vo"
 	"trojan-panel/util"
+	"unicode/utf8"
 )
 
 func CreateAccount(accountCreateDto dto.AccountCreateDto) error {
@@ -54,8 +55,8 @@ func CreateAccount(accountCreateDto dto.AccountCreateDto) error {
 	return nil
 }
 
-func SelectAccountById(id *uint) (*model.Account, error) {
-	return dao.SelectAccountById(id)
+func SelectAccountById(id *uint, includeRemark ...bool) (*model.Account, error) {
+	return dao.SelectAccountById(id, includeRemark...)
 }
 
 func CountAccountByUsername(username *string) (int, error) {
@@ -69,8 +70,9 @@ func SelectAccountPage(
 	orderFields *string,
 	orderBy *string,
 	pageNum *uint,
-	pageSize *uint) (*vo.AccountPageVo, error) {
-	return dao.SelectAccountPage(username, deleted, lastLoginTime, orderFields, orderBy, pageNum, pageSize)
+	pageSize *uint,
+	includeRemark ...bool) (*vo.AccountPageVo, error) {
+	return dao.SelectAccountPage(username, deleted, lastLoginTime, orderFields, orderBy, pageNum, pageSize, includeRemark...)
 }
 
 func DeleteAccountById(token string, id *uint) error {
@@ -156,7 +158,36 @@ func GetAccountInfo(c *gin.Context) (*vo.AccountInfo, error) {
 	return &userInfo, nil
 }
 
+// CanManageAccountRemarks checks the signed identity and its current role.
+// Account roles in a JWT may outlive a role change made during that session.
+func CanManageAccountRemarks(token string) (bool, error) {
+	claims, err := ParseToken(token)
+	if err != nil {
+		return false, err
+	}
+	if !util.IsSysAdmin(claims.AccountVo.Roles) {
+		return false, nil
+	}
+	account, err := dao.SelectAccountById(&claims.AccountVo.Id)
+	if err != nil {
+		return false, err
+	}
+	return account.RoleId != nil && *account.RoleId == constant.SYSADMIN && account.Deleted != nil && *account.Deleted == 0, nil
+}
+
 func UpdateAccountById(token string, account *model.Account) error {
+	if account.Remark != nil {
+		if utf8.RuneCountInString(*account.Remark) > 500 {
+			return errors.New(constant.ValidateFailed)
+		}
+		allowed, err := CanManageAccountRemarks(token)
+		if err != nil {
+			return err
+		}
+		if !allowed {
+			return errors.New(constant.ForbiddenError)
+		}
+	}
 	mutex, err := redis.RsLock(constant.UpdateAccountByIdLock)
 	if err != nil {
 		return err

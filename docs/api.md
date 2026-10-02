@@ -6,6 +6,7 @@
 
 - [请求与鉴权](#authentication)
 - [接口入口](#endpoints)
+- [用户备注](#account-remarks)
 - [服务器卸载与删除](#server-removal)
 - [Node 管理通道](#node-management)
 - [接口模型](#models)
@@ -42,6 +43,13 @@ JSON 响应包含 `code`、`type`、`message` 和 `data`。成功业务码为 `2
 | 文件任务 | `/api/fileTask/` | [file_task.go](../apps/control-plane/api/router/file_task.go) |
 
 接口定义及模型随当前版本源码发布。完整路由参见 [router/](../apps/control-plane/api/router/)，Web 调用示例参见 [src/api/](../apps/control-plane/web/src/api/)。
+
+<a id="account-remarks"></a>
+## 用户备注
+
+`sysadmin` 请求 `GET /api/account/selectAccountPage` 或 `GET /api/account/selectAccountById` 时，账户数据包含 `remark` 纯文本字段。其他角色的响应不包含该字段；个人资料、登录身份和客户端订阅也不返回备注。
+
+`POST /api/account/updateAccountById` 的现有账户编辑请求可附加 `remark`，最多 500 个字符。只有 `sysadmin` 可设置：省略字段或传 `null` 保留原备注，传空字符串清空备注。其他角色提交备注会被拒绝。
 
 <a id="server-removal"></a>
 ## 服务器卸载与删除

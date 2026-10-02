@@ -1329,3 +1329,174 @@ test('node cards and details show the public endpoint and its actual listener wi
   assert.equal(utils.nodeConnectionPort(node), 443)
   view.$destroy()
 })
+
+function accountRemarkFixture(api = {}, initialRoles = ['sysadmin']) {
+  const Vue = require('vue/dist/vue.common.js')
+  const roles = Vue.observable({ value: initialRoles })
+  const descriptor = compiler.parse({ source: read('src/views/account/list/index.vue') })
+  const component = loadModule(descriptor.script.content, new Proxy({}, {
+    has: () => true,
+    get: (_, name) => {
+      if (name === '@/api/account') return { selectAccountPage: async () => ({ data: { accounts: [], total: 0 } }), ...api }
+      if (name === '@/utils/permission') return (wanted) => wanted.some((role) => roles.value.includes(role))
+      if (name === '@/utils/account') return loadModule(read('src/utils/account.js'), {})
+      if (name === '@/utils') return { timeStampToDate: () => '2026-10-02 12:00' }
+      if (name === '@/mixins/latest-list-request') return loadModule(read('src/mixins/latest-list-request.js'), {}).default
+      if (name === 'copy-to-clipboard') return () => true
+      return {}
+    }
+  })).default
+  const compiled = compileRender(descriptor.template.content)
+  const locale = loadModule(read('src/lang/zh.js'), {}).default
+  const View = Vue.extend({ ...component, components: {}, created: undefined,
+    beforeCreate() {
+      this.$t = (key) => key.split('.').reduce((result, part) => result && result[part], locale) || key
+      this.$notify = () => {}
+    },
+    render: compiled.render, staticRenderFns: compiled.staticRenderFns })
+  const view = new View()
+  view.listLoading = false
+  view.list = []
+  view.roleList = [{ id: 3, desc: 'User' }]
+  return { view, roles, Vue }
+}
+
+test('account remarks are sysadmin-only escaped text and empty states match the visible columns', async () => {
+  const { view, roles, Vue } = accountRemarkFixture()
+  const privateText = '<img src=x onerror=alert(1)>\n<script>window.privateLeak=1</script>'
+  view.list = [{ id: 42, username: 'sampleuser', roleId: 3, deleted: 0, lastLoginTime: 0, quota: 1048576, remark: privateText }]
+  view.temp = { ...view.list[0] }
+  view.dialogStatus = 'update'
+  view.dialogFormVisible = true
+  let rendered = view._render()
+  const cell = vnodeTree(rendered).find((node) => node.data && node.data.staticClass === 'account-remark-cell')
+  assert.equal(vnodeText(cell).trim(), privateText)
+  assert.equal(vnodeTree(cell).some((node) => node.tag === 'img' || node.tag === 'script'), false, 'markup stays in text VNodes')
+  assert.equal(vnodeTree(cell).some((node) => node.data && node.data.domProps && node.data.domProps.innerHTML), false)
+  const field = vnodeTree(rendered).find((node) => node.data && node.data.attrs && node.data.attrs.prop === 'remark')
+  assert.equal(field.data.attrs.label, '备注')
+  assert.equal(vnodeTree(field).find((node) => node.tag === 'liquid-input').data.attrs.type, 'textarea')
+  assert.equal(vnodeTree(field).some((node) => node.data && node.data.attrs && node.data.attrs.maxlength), false, 'Unicode length uses the existing validator')
+  assert.equal(vnodeTree(rendered).filter((node) => node.tag === 'th').length, 8)
+  view.dialogStatus = 'create'
+  assert.equal(vnodeTree(view._render()).some((node) => node.data && node.data.attrs && node.data.attrs.prop === 'remark'), false)
+  view.dialogStatus = 'update'
+  roles.value = ['admin', 'user']
+  await Vue.nextTick()
+  assert.equal('remark' in view.temp, false)
+  assert.equal('remark' in view.list[0], false)
+  assert.equal(view.dialogFormVisible, false, 'losing privilege closes the private editor')
+  rendered = view._render()
+  assert.equal(vnodeText(rendered).includes(privateText), false)
+  assert.equal(vnodeTree(rendered).filter((node) => node.tag === 'th').length, 7)
+  assert.equal(vnodeTree(rendered).some((node) => node.data && node.data.attrs && node.data.attrs.prop === 'remark'), false)
+  for (const role of ['sysadmin', 'admin', 'user']) {
+    roles.value = [role]
+    view.list = []
+    view.listError = role === 'admin' ? 'request failed' : ''
+    await Vue.nextTick()
+    const tree = vnodeTree(view._render())
+    const count = tree.filter((node) => node.tag === 'th').length
+    assert.equal(count, role === 'sysadmin' ? 8 : 7)
+    assert.equal(tree.find((node) => node.data && node.data.attrs && node.data.attrs.colspan).data.attrs.colspan, count)
+  }
+  view.$destroy()
+})
+
+test('account fetches and editors discard private fields for non-sysadmin, including a response after role loss', async () => {
+  let complete
+  const { view, roles, Vue } = accountRemarkFixture({ selectAccountPage: () => new Promise((resolve) => { complete = resolve }) })
+  const row = { id: 42, username: 'sampleuser', quota: 1048576, remark: 'private account note' }
+  view.$refs.dataForm = { clearValidate() {} }
+  view.handleUpdate(row)
+  assert.equal(view.temp.remark, row.remark)
+  assert.equal(view.temp.quota, 1)
+  const pending = view.getList()
+  roles.value = ['admin']
+  await Vue.nextTick()
+  complete({ data: { accounts: [row], total: 1 } })
+  await pending
+  assert.equal('remark' in view.list[0], false)
+  view.handleUpdate(row)
+  assert.equal('remark' in view.temp, false, 'opening a stale privileged row cannot expose its note')
+  view.resetTemp()
+  assert.equal(view.temp.remark, undefined)
+  assert.equal(row.remark, 'private account note', 'sanitization does not mutate the source response')
+  view.$destroy()
+})
+
+test('account editing saves and clears remarks while omitted values preserve notes and other accounts', async () => {
+  const requests = []
+  const { view, roles, Vue } = accountRemarkFixture({
+    updateAccountById: async (payload) => { requests.push({ action: 'update', ...payload }) },
+    createAccount: async (payload) => { requests.push({ action: 'create', ...payload }) }
+  })
+  view.list = [
+    { id: 42, username: 'sampleuser', quota: 1048576, remark: 'existing note' },
+    { id: 43, username: 'otheruser', quota: 1048576, remark: 'other private note' }
+  ]
+  view.$refs.dataForm = { clearValidate() {}, validate(callback) { callback(true) } }
+  const submit = async (action = 'updateData') => { view[action](); await new Promise((resolve) => setImmediate(resolve)) }
+  view.handleUpdate(view.list[0])
+  view.temp.remark = 'new note\nwith detail'
+  await submit()
+  assert.equal(requests[0].id, 42)
+  assert.equal(requests[0].remark, 'new note\nwith detail')
+  assert.equal(requests[0].quota, 1)
+  assert.equal(view.list[0].remark, requests[0].remark)
+  assert.equal(view.list[0].quota, 1048576)
+  for (const preserved of [undefined, null]) {
+    view.handleUpdate(view.list[0])
+    view.temp.remark = preserved
+    await submit()
+    assert.equal('remark' in requests.at(-1), false)
+    assert.equal(view.list[0].remark, 'new note\nwith detail')
+  }
+  view.handleUpdate(view.list[0])
+  view.temp.remark = ''
+  await submit()
+  assert.equal(requests.at(-1).remark, '')
+  assert.equal(view.list[0].remark, '')
+  assert.equal(view.list[1].remark, 'other private note')
+  roles.value = ['admin']
+  await Vue.nextTick()
+  view.temp.remark = 'stale private note'
+  await submit()
+  assert.equal('remark' in requests.at(-1), false, 'a stale value cannot be sent without sysadmin privilege')
+  assert.equal('remark' in view.list[0], false)
+  roles.value = ['sysadmin']
+  await Vue.nextTick()
+  view.getList = () => {}
+  view.resetTemp()
+  view.temp.remark = 'stale value from previous editing'
+  await submit('createData')
+  assert.equal(requests.at(-1).action, 'create')
+  assert.equal('remark' in requests.at(-1), false, 'creation never exposes the private editing field')
+  view.$destroy()
+})
+
+test('account remark validation counts Unicode characters and blocks overlong saves through the Liquid form rule', async () => {
+  const requests = []
+  const { view, Vue } = accountRemarkFixture({ updateAccountById: async (payload) => { requests.push(payload) } })
+  const field = loadModule(read('src/components/LiquidStructural/index.js'), { vue: Vue }).LiquidFormItem
+  view.list = [{ id: 42, username: 'sampleuser', quota: 1048576, remark: '' }]
+  view.temp = { ...view.list[0], quota: 1 }
+  view.$refs.dataForm = {
+    async validate(callback) {
+      callback(await field.methods.validate.call({ appliedRules: view.updateRules.remark, value: view.temp.remark, error: '' }))
+    }
+  }
+  const submit = async () => { view.updateData(); await new Promise((resolve) => setImmediate(resolve)) }
+  for (const value of ['', '字'.repeat(500), '😀'.repeat(500)]) {
+    view.temp.remark = value
+    await submit()
+    assert.equal(requests.at(-1).remark, value)
+  }
+  assert.equal(requests.length, 3, '500 emoji characters are allowed despite 1000 UTF-16 code units')
+  for (const value of ['字'.repeat(501), '😀'.repeat(501), 7]) {
+    view.temp.remark = value
+    await submit()
+  }
+  assert.equal(requests.length, 3, 'invalid remarks cannot reach the API')
+  view.$destroy()
+})

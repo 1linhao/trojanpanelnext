@@ -11,6 +11,7 @@ type AccountVo struct {
 	Upload        int       `json:"upload"`
 	Username      string    `json:"username"`
 	Email         string    `json:"email"`
+	Remark        *string   `json:"remark,omitempty"`
 	RoleId        uint      `json:"roleId"`
 	Deleted       uint      `json:"deleted"`
 	PresetExpire  uint      `json:"presetExpire"`

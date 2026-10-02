@@ -18,7 +18,7 @@
 - [Hysteria2](https://v2.hysteria.network/)
 - [NaiveProxy](https://github.com/klzgrad/naiveproxy)
 
-账户及模板操作见[Web 使用指南](https://github.com/1linhao/trojanpanelnext/blob/v1.0.2-rc.9/docs/user-guide.md#accounts)。
+账户及模板操作见[Web 使用指南](https://github.com/1linhao/trojanpanelnext/blob/v1.0.2-rc.10/docs/user-guide.md#accounts)。
 
 ## 对外端口与实际端口
 
@@ -26,4 +26,4 @@
 
 这只保存映射，不自动安装或配置宿主机转发器。使用 TLS TCP 代理时，可自行设置 Nginx 根据独立域名 SNI 透传，后端证书必须覆盖客户端服务器名。Hysteria2 使用 UDP；TCP SNI 示例不能直接分流 QUIC，端口跳跃的公开集合也须完整转发到实际 UDP 端口。
 
-变更后刷新客户端订阅，并验证真正的公网连接。配置步骤、Nginx 示例与协议依据见[端口转发指南](https://github.com/1linhao/trojanpanelnext/blob/v1.0.2-rc.9/docs/port-forwarding.md)。
+变更后刷新客户端订阅，并验证真正的公网连接。配置步骤、Nginx 示例与协议依据见[端口转发指南](https://github.com/1linhao/trojanpanelnext/blob/v1.0.2-rc.10/docs/port-forwarding.md)。

@@ -47,6 +47,10 @@ func InitMySQL() {
 			panic(err)
 		}
 	}
+	if err = migrateAccountRemarkColumn(); err != nil {
+		logrus.Errorf("account remark database migration err: %v", err)
+		panic(err)
+	}
 	if err = migrateNodeExternalPortColumn(); err != nil {
 		logrus.Errorf("database migration err: %v", err)
 		panic(err)
@@ -88,6 +92,14 @@ func InitMySQL() {
 	if err = migrateNodeDeploymentPermissions(); err != nil {
 		panic(err)
 	}
+}
+
+func migrateAccountRemarkColumn() error {
+	_, err := db.Exec("ALTER TABLE `account` ADD COLUMN `remark` varchar(500) CHARACTER SET utf8mb4 NOT NULL DEFAULT '' COMMENT '仅系统管理员可见的账号备注' AFTER `email`")
+	if err != nil && strings.Contains(err.Error(), "Duplicate column name") {
+		return nil
+	}
+	return err
 }
 
 func migrateTrafficAccountingSchema() error {

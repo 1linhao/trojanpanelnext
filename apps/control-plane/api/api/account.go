@@ -172,7 +172,13 @@ func SelectAccountById(c *gin.Context) {
 		vo.Fail(constant.ValidateFailed, c)
 		return
 	}
-	account, err := service.SelectAccountById(accountRequiredIdDto.Id)
+	includeRemark, err := service.CanManageAccountRemarks(util.GetToken(c))
+	if err != nil {
+		vo.Fail(err.Error(), c)
+		return
+	}
+	c.Header("Cache-Control", "private, no-store")
+	account, err := service.SelectAccountById(accountRequiredIdDto.Id, includeRemark)
 	if err != nil {
 		vo.Fail(err.Error(), c)
 		return
@@ -190,6 +196,9 @@ func SelectAccountById(c *gin.Context) {
 		Download:     *account.Download,
 		Upload:       *account.Upload,
 	}
+	if includeRemark {
+		accountVo.Remark = account.Remark
+	}
 	vo.Success(accountVo, c)
 }
 
@@ -200,6 +209,12 @@ func SelectAccountPage(c *gin.Context) {
 		vo.Fail(constant.ValidateFailed, c)
 		return
 	}
+	includeRemark, err := service.CanManageAccountRemarks(util.GetToken(c))
+	if err != nil {
+		vo.Fail(err.Error(), c)
+		return
+	}
+	c.Header("Cache-Control", "private, no-store")
 	page, err := service.SelectAccountPage(
 		accountPageDto.Username,
 		accountPageDto.Deleted,
@@ -207,7 +222,8 @@ func SelectAccountPage(c *gin.Context) {
 		accountPageDto.OrderFields,
 		accountPageDto.OrderBy,
 		accountPageDto.PageNum,
-		accountPageDto.PageSize)
+		accountPageDto.PageSize,
+		includeRemark)
 	if err != nil {
 		vo.Fail(err.Error(), c)
 		return
@@ -292,10 +308,24 @@ func GetAccountInfo(c *gin.Context) {
 
 func UpdateAccountById(c *gin.Context) {
 	var accountUpdateDto dto.AccountUpdateDto
-	_ = c.ShouldBindJSON(&accountUpdateDto)
+	if err := c.ShouldBindJSON(&accountUpdateDto); err != nil {
+		vo.Fail(constant.ValidateFailed, c)
+		return
+	}
 	if err := validate.Struct(&accountUpdateDto); err != nil {
 		vo.Fail(constant.ValidateFailed, c)
 		return
+	}
+	if accountUpdateDto.Remark != nil {
+		allowed, err := service.CanManageAccountRemarks(util.GetToken(c))
+		if err != nil {
+			vo.Fail(err.Error(), c)
+			return
+		}
+		if !allowed {
+			vo.Fail(constant.ForbiddenError, c)
+			return
+		}
 	}
 
 	if accountUpdateDto.Deleted != nil && *accountUpdateDto.Deleted != 0 {
@@ -318,6 +348,7 @@ func UpdateAccountById(c *gin.Context) {
 		Username:   accountUpdateDto.Username,
 		Pass:       accountUpdateDto.Pass,
 		Email:      accountUpdateDto.Email,
+		Remark:     accountUpdateDto.Remark,
 		RoleId:     accountUpdateDto.RoleId,
 		Deleted:    accountUpdateDto.Deleted,
 		ExpireTime: accountUpdateDto.ExpireTime,

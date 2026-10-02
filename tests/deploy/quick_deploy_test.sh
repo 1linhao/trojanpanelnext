@@ -68,7 +68,7 @@ quick_prompt() {
 (quick_deploy web --hostname panel.example.com --email admin@example.com --output "${TEST_DIR}/web config.yaml") >"${TEST_DIR}/out"
 test "$(stat -c %a "${TEST_DIR}/web config.yaml")" = 600
 test "$(yq -r '.trojanpanelnext.hostname' "${TEST_DIR}/web config.yaml")" = panel.example.com
-test "$(yq -r '.trojanpanelnext.release' "${TEST_DIR}/web config.yaml")" = 1.0.2-rc.9
+test "$(yq -r '.trojanpanelnext.release' "${TEST_DIR}/web config.yaml")" = 1.0.2-rc.10
 grep -Fxq "<${TEST_DIR}/web config.yaml>" "${MOCK_INSTALL_LOG}"
 assert_fails quick_deploy web --hostname panel.example.com --email admin@example.com --output "${TEST_DIR}/web config.yaml"
 assert_fails quick_deploy web --config "${TEST_DIR}/web config.yaml" --hostname ignored.example.com

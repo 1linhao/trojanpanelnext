@@ -10,6 +10,7 @@ type Account struct {
 	Hash               *string    `ddb:"hash" json:"hash"`
 	RoleId             *uint      `ddb:"role_id" json:"roleId"`
 	Email              *string    `ddb:"email" json:"email"`
+	Remark             *string    `ddb:"remark" json:"-"`
 	PresetExpire       *uint      `ddb:"preset_expire" json:"presetExpire"`
 	PresetQuota        *int       `ddb:"preset_quota" json:"presetQuota"`
 	LastLoginTime      *uint      `ddb:"last_login_time" json:"lastLoginTime"`

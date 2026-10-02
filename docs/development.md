@@ -47,6 +47,10 @@ go test ./dao -run '^TestNodeRemovalIntegration$' -count=1
 
 DSN 用户需具备创建和删除测试数据库的权限；每个子测试使用独立数据库并在结束后清理，不修改 DSN 中指定的数据库。未设置该变量时集成测试跳过；这些 DAO 测试使用共享连接，不能并行运行。测试覆盖纯 Web 删除、远程卸载两种数据模式、失败回滚、重复删除及跨服务器共享记录的隔离。
 
+用户备注 DAO 测试也使用 `TP_REMOVAL_TEST_DSN`，执行 `go test ./dao -run '^TestAccountRemarkMigrationAndDAO$' -count=1`，覆盖新旧表迁移、Unicode 文本和省略更新保留备注。
+
+备注 API 权限测试使用专用的一次性 MariaDB 和 Redis 实例。设置 `TP_ACCOUNT_REMARK_TEST_DSN`（MariaDB DSN）及 `TP_ACCOUNT_REMARK_TEST_REDIS`（Redis `主机:端口`）后，执行 `go test ./api -run '^TestAccountRemarkAPIPrivacy$' -count=1`。测试会创建并在结束后删除 `trojan_panel_db`；该数据库已存在时拒绝运行。Redis 测试实例需无需认证、仅用于测试。覆盖 sysadmin / admin / 普通用户、旧会话降权、备注保存与清空，以及登录、个人资料和订阅不泄漏备注。未设置变量时跳过该集成测试。
+
 Node 宿主机维护服务的入口是 `apps/node-agent/cmd/host-agent/`。运行服务需要对应的数据库、Redis、配置及证书；部署参数见[部署指南](deployment.md)。
 
 <a id="web-ui"></a>

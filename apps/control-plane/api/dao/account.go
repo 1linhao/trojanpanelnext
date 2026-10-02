@@ -12,12 +12,15 @@ import (
 	"trojan-panel/util"
 )
 
-func SelectAccountById(id *uint) (*model.Account, error) {
+func SelectAccountById(id *uint, includeRemark ...bool) (*model.Account, error) {
 	var account model.Account
 
 	where := map[string]interface{}{"id": *id}
 	selectFields := []string{"id", "username", "role_id", "email", "preset_expire", "preset_quota", "expire_time", "deleted", "quota",
 		"download", "upload"}
+	if len(includeRemark) > 0 && includeRemark[0] {
+		selectFields = append(selectFields, "remark")
+	}
 	buildSelect, values, err := builder.BuildSelect("account", where, selectFields)
 	if err != nil {
 		logrus.Errorln(err.Error())
@@ -127,7 +130,8 @@ func SelectAccountPage(
 	orderFields *string,
 	orderBy *string,
 	pageNum *uint,
-	pageSize *uint) (*vo.AccountPageVo, error) {
+	pageSize *uint,
+	includeRemark ...bool) (*vo.AccountPageVo, error) {
 	var (
 		total    uint
 		accounts []model.Account
@@ -180,6 +184,9 @@ func SelectAccountPage(
 	}
 	selectFields := []string{"id", "username", "role_id", "email", "preset_expire", "preset_quota", "last_login_time", "expire_time", "deleted",
 		"quota", "upload", "download", "create_time"}
+	if len(includeRemark) > 0 && includeRemark[0] {
+		selectFields = append(selectFields, "remark")
+	}
 	selectSQL, values, err := builder.BuildSelect("account", where, selectFields)
 	if err != nil {
 		logrus.Errorln(err.Error())
@@ -205,6 +212,7 @@ func SelectAccountPage(
 			Username:      *item.Username,
 			RoleId:        *item.RoleId,
 			Email:         *item.Email,
+			Remark:        item.Remark,
 			PresetExpire:  *item.PresetExpire,
 			PresetQuota:   *item.PresetQuota,
 			LastLoginTime: *item.LastLoginTime,
@@ -322,6 +330,9 @@ func UpdateAccountProperty(oldUsername *string, pass *string, username *string, 
 func UpdateAccountById(account *model.Account) error {
 	where := map[string]interface{}{"id": *account.Id}
 	update := map[string]interface{}{}
+	if account.Remark != nil {
+		update["remark"] = *account.Remark
+	}
 	if account.Pass != nil && *account.Pass != "" {
 		sha1String := util.Sha1String(fmt.Sprintf("%s%s", *account.Username, *account.Pass))
 		update["pass"] = sha1String
