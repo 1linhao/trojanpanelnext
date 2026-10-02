@@ -176,6 +176,17 @@
                     <app-icon name="refresh" />
                   </button>
                   <button
+                    v-if="checkPermission(['sysadmin'])"
+                    class="icon-btn"
+                    type="button"
+                    :title="$t('table.resetAccountLoginLimit')"
+                    :aria-label="$t('table.resetAccountLoginLimit')"
+                    :disabled="resettingLoginLimitId !== 0"
+                    @click="handleResetLoginLimit(row)"
+                  >
+                    <app-icon name="refresh-left" />
+                  </button>
+                  <button
                     v-if="
                       checkPermission(['sysadmin', 'admin']) &&
                       row.lastLoginTime !== 0
@@ -316,6 +327,7 @@ import {
   exportSubscribe,
   importAccount,
   resetAccountDownloadAndUpload,
+  resetAccountLoginLimit,
   selectAccountPage,
   updateAccountById
 } from '@/api/account'
@@ -365,6 +377,7 @@ export default {
       listError: '',
       list: null,
       total: 0,
+      resettingLoginLimitId: 0,
       orderFieldArr: ['role_id', 'create_time'],
       listQuery: {
         pageNum: 1,
@@ -789,6 +802,35 @@ export default {
           })
         })
       })
+    },
+    async handleResetLoginLimit(row) {
+      if (this.resettingLoginLimitId || !checkPermission(['sysadmin']) ||
+          !row || !Number.isSafeInteger(row.id) || row.id <= 0) return
+      const id = row.id
+      this.resettingLoginLimitId = id
+      try {
+        await MessageBox.confirm(
+          this.$t('confirm.resetAccountLoginLimit', { username: row.username }),
+          this.$t('confirm.warn'),
+          {
+            confirmButtonText: this.$t('confirm.yes'),
+            cancelButtonText: this.$t('confirm.cancel'),
+            type: 'warning'
+          }
+        )
+        if (!checkPermission(['sysadmin'])) return
+        await resetAccountLoginLimit({ id })
+        this.$notify({
+          title: 'Success',
+          message: this.$t('confirm.resetAccountLoginLimitSuccess'),
+          type: 'success',
+          duration: 2000
+        })
+      } catch (_) {
+        // Cancellation sends no request; API failures use the shared feedback.
+      } finally {
+        this.resettingLoginLimitId = 0
+      }
     },
     async importData(params) {
       const valid = await this.$refs.importTip.$refs.dataForm.validate()

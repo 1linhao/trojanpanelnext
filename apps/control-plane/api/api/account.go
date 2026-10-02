@@ -1,9 +1,14 @@
 package api
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/gin-gonic/gin"
 	"github.com/mojocn/base64Captcha"
+	"io"
+	"net/http"
+	"strings"
 	"time"
 	"trojan-panel/dao"
 	"trojan-panel/dao/redis"
@@ -172,7 +177,7 @@ func SelectAccountById(c *gin.Context) {
 		vo.Fail(constant.ValidateFailed, c)
 		return
 	}
-	includeRemark, err := service.CanManageAccountRemarks(util.GetToken(c))
+	includeRemark, err := service.IsCurrentSysAdmin(accountManagementToken(c))
 	if err != nil {
 		vo.Fail(err.Error(), c)
 		return
@@ -209,7 +214,7 @@ func SelectAccountPage(c *gin.Context) {
 		vo.Fail(constant.ValidateFailed, c)
 		return
 	}
-	includeRemark, err := service.CanManageAccountRemarks(util.GetToken(c))
+	includeRemark, err := service.IsCurrentSysAdmin(accountManagementToken(c))
 	if err != nil {
 		vo.Fail(err.Error(), c)
 		return
@@ -316,16 +321,15 @@ func UpdateAccountById(c *gin.Context) {
 		vo.Fail(constant.ValidateFailed, c)
 		return
 	}
-	if accountUpdateDto.Remark != nil {
-		allowed, err := service.CanManageAccountRemarks(util.GetToken(c))
-		if err != nil {
-			vo.Fail(err.Error(), c)
-			return
-		}
-		if !allowed {
-			vo.Fail(constant.ForbiddenError, c)
-			return
-		}
+	token := accountManagementToken(c)
+	allowed, err := service.IsCurrentSysAdmin(token)
+	if err != nil {
+		vo.Fail(err.Error(), c)
+		return
+	}
+	if !allowed {
+		vo.Fail(constant.ForbiddenError, c)
+		return
 	}
 
 	if accountUpdateDto.Deleted != nil && *accountUpdateDto.Deleted != 0 {
@@ -356,11 +360,49 @@ func UpdateAccountById(c *gin.Context) {
 		//UploadSpeedLimit:   accountUpdateDto.UploadSpeedLimit,
 		//DownloadSpeedLimit: accountUpdateDto.DownloadSpeedLimit,
 	}
-	if err := service.UpdateAccountById(util.GetToken(c), &account); err != nil {
+	if err := service.UpdateAccountById(token, &account); err != nil {
 		vo.Fail(err.Error(), c)
 		return
 	}
 	vo.Success(nil, c)
+}
+
+func ResetAccountLoginLimit(c *gin.Context) {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 1024)
+	decoder := json.NewDecoder(c.Request.Body)
+	decoder.DisallowUnknownFields()
+	var request dto.RequiredIdDto
+	if err := decoder.Decode(&request); err != nil || request.Id == nil || *request.Id == 0 {
+		vo.Fail(constant.ValidateFailed, c)
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		vo.Fail(constant.ValidateFailed, c)
+		return
+	}
+	token := accountManagementToken(c)
+	allowed, err := service.IsCurrentSysAdmin(token)
+	if err != nil {
+		vo.Fail(err.Error(), c)
+		return
+	}
+	if !allowed {
+		vo.Fail(constant.ForbiddenError, c)
+		return
+	}
+	if err := service.ResetAccountLoginLimit(token, request.Id); err != nil {
+		vo.Fail(err.Error(), c)
+		return
+	}
+	vo.Success(nil, c)
+}
+
+func accountManagementToken(c *gin.Context) string {
+	fields := strings.Fields(c.GetHeader("Authorization"))
+	if len(fields) != 2 || !strings.EqualFold(fields[0], "Bearer") {
+		return ""
+	}
+	return fields[1]
 }
 
 // ResetAccountDownloadAndUpload 重设下载和上传流量

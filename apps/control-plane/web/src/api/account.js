@@ -177,6 +177,14 @@ export function resetAccountDownloadAndUpload(data) {
   })
 }
 
+export function resetAccountLoginLimit(data) {
+  return request({
+    url: '/account/resetAccountLoginLimit',
+    method: 'post',
+    data: { id: data.id }
+  })
+}
+
 /**
  * 导出用户
  * @param data

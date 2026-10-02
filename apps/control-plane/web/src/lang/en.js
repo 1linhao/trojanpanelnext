@@ -172,6 +172,7 @@ export default {
     status: 'Status',
     username: 'Username',
     accountRemark: 'Remark',
+    resetAccountLoginLimit: 'Reset login failures',
     role: 'Role',
     quota: 'Quota',
     download: 'Download',
@@ -552,6 +553,8 @@ export default {
     deleteUser: 'Are you sure to delete this user?',
     handleReset:
       "Are you sure to reset the user's download and upload traffic?",
+    resetAccountLoginLimit: 'Clear login failures and the temporary lock for account “{username}”?',
+    resetAccountLoginLimitSuccess: 'Login failures and the temporary lock cleared',
     deleteNode: 'Are you sure to delete this node?',
     deleteNodeServer: 'Are you sure you want to delete this server?',
     deleteBlack: 'Are you sure to delete this IP?',

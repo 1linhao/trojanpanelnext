@@ -7,6 +7,7 @@
 - [请求与鉴权](#authentication)
 - [接口入口](#endpoints)
 - [用户备注](#account-remarks)
+- [重置账号登录失败次数](#account-login-reset)
 - [服务器卸载与删除](#server-removal)
 - [Node 管理通道](#node-management)
 - [接口模型](#models)
@@ -50,6 +51,13 @@ JSON 响应包含 `code`、`type`、`message` 和 `data`。成功业务码为 `2
 `sysadmin` 请求 `GET /api/account/selectAccountPage` 或 `GET /api/account/selectAccountById` 时，账户数据包含 `remark` 纯文本字段。其他角色的响应不包含该字段；个人资料、登录身份和客户端订阅也不返回备注。
 
 `POST /api/account/updateAccountById` 的现有账户编辑请求可附加 `remark`，最多 500 个字符。只有 `sysadmin` 可设置：省略字段或传 `null` 保留原备注，传空字符串清空备注。其他角色提交备注会被拒绝。
+
+<a id="account-login-reset"></a>
+## 重置账号登录失败次数
+
+`POST /api/account/resetAccountLoginLimit` 接收 `{ "id": 12 }`，清除该账号的登录失败计数及临时锁定。只有数据库当前仍为 `sysadmin` 的有效登录身份可以执行；降权后的旧会话也会被拒绝。
+
+服务端按 ID 查询当前用户名，只清除对应登录限制，不改变其他账号、密码、禁用状态、流量、备注或会话。不存在限制时重复请求仍返回成功；账号不存在或重置失败时返回错误。成功响应使用标准业务码 `20000`，`data` 为 `null`。
 
 <a id="server-removal"></a>
 ## 服务器卸载与删除

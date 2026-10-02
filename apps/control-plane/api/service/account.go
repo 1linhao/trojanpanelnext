@@ -158,9 +158,9 @@ func GetAccountInfo(c *gin.Context) (*vo.AccountInfo, error) {
 	return &userInfo, nil
 }
 
-// CanManageAccountRemarks checks the signed identity and its current role.
+// IsCurrentSysAdmin checks the signed identity and its current role.
 // Account roles in a JWT may outlive a role change made during that session.
-func CanManageAccountRemarks(token string) (bool, error) {
+func IsCurrentSysAdmin(token string) (bool, error) {
 	claims, err := ParseToken(token)
 	if err != nil {
 		return false, err
@@ -180,7 +180,11 @@ func UpdateAccountById(token string, account *model.Account) error {
 		if utf8.RuneCountInString(*account.Remark) > 500 {
 			return errors.New(constant.ValidateFailed)
 		}
-		allowed, err := CanManageAccountRemarks(token)
+	}
+	// Management edits always contain RoleId. Login bookkeeping does not:
+	// it only records login time and activates preset quota/expiry fields.
+	if account.RoleId != nil || account.Remark != nil {
+		allowed, err := IsCurrentSysAdmin(token)
 		if err != nil {
 			return err
 		}
@@ -366,6 +370,27 @@ func SelectConnectPassword(id *uint, username *string) (string, error) {
 // ResetAccountDownloadAndUpload 重设下载和上传流量
 func ResetAccountDownloadAndUpload(id *uint, roleIds *[]uint) error {
 	return dao.ResetAccountDownloadAndUpload(id, roleIds)
+}
+
+func ResetAccountLoginLimit(token string, id *uint) error {
+	if id == nil || *id == 0 {
+		return errors.New(constant.ValidateFailed)
+	}
+	allowed, err := IsCurrentSysAdmin(token)
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return errors.New(constant.ForbiddenError)
+	}
+	account, err := dao.SelectAccountById(id)
+	if err != nil {
+		return err
+	}
+	if _, err := redis.Client.Key.Del(fmt.Sprintf("trojan-panel:login-limit:%s", *account.Username)).Result(); err != nil {
+		return errors.New(constant.SysError)
+	}
+	return nil
 }
 
 func LoginLimit(username string) {

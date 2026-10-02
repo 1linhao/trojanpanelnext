@@ -113,3 +113,19 @@ func TestAccountRemarkMigrationAndDAO(t *testing.T) {
 		t.Fatal("explicit empty remark did not clear note")
 	}
 }
+
+func TestAccountLoginLimitResetPermissions(t *testing.T) {
+	dsn := os.Getenv("TP_REMOVAL_TEST_DSN")
+	if dsn == "" {
+		t.Skip("TP_REMOVAL_TEST_DSN is not set")
+	}
+	testDB := newNodeRemovalTestDB(t, dsn)
+	removalExec(t, testDB, `CREATE TABLE casbin_rule (p_type varchar(32),v0 varchar(255),v1 varchar(255),v2 varchar(255),v3 varchar(255),v4 varchar(255),v5 varchar(255))`)
+	removalExec(t, testDB, `INSERT INTO casbin_rule VALUES ('p','admin','/api/account/selectAccountPage','GET','','','')`)
+	for i := 0; i < 2; i++ {
+		if err := migrateAccountLoginLimitResetPermissions(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	assertRemovalRows(t, testDB, `SELECT v0,v1,v2 FROM casbin_rule ORDER BY v0`, [][]string{{"admin", "/api/account/selectAccountPage", "GET"}, {"sysadmin", "/api/account/resetAccountLoginLimit", "POST"}})
+}

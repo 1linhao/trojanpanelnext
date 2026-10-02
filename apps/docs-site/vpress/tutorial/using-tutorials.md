@@ -28,6 +28,10 @@
 
 只有 `sysadmin` 可在用户列表查看 **备注**，并在账户 **编辑** 弹窗中设置。备注为最多 500 个字符的纯文本，清空后保存即可删除。`admin` 和普通用户的页面、个人资料和接口响应不包含备注。详见[用户备注](https://github.com/1linhao/trojanpanelnext/blob/v1.0.2-rc.10/docs/user-guide.md#account-remarks)。
 
+## 重置账号登录失败次数
+
+`sysadmin` 可在用户列表点击所选账号的 **重置登录失败次数** 图标，确认后清除该账号的失败计数和临时锁定。重置不改变密码或禁用状态，也不影响其他账号。详见[登录失败次数重置](https://github.com/1linhao/trojanpanelnext/blob/v1.0.2-rc.10/docs/user-guide.md#account-login-reset)。
+
 ## 代理端口转发
 
 使用 Nginx / NAT 入口时，在原节点表单中配置对外和实际端口，按 TCP / UDP 协议维护外部转发。TCP TLS 分流要求客户端 SNI 与 Node 提供的证书域名一致；Hysteria2 的 UDP 和公开跳跃范围需独立规划。见[端口转发](https://github.com/1linhao/trojanpanelnext/blob/v1.0.2-rc.10/docs/port-forwarding.md)。

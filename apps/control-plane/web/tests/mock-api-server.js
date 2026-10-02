@@ -36,6 +36,10 @@ const accounts = Array.from({ length: 36 }, (_, index) => ({
   upload: account.upload + index * 67108864,
   remark: index === 0 ? '续费前联系客户确认套餐。' : index === 1 ? '<img src=x onerror=alert(1)>仅供系统管理员查看' : ''
 }))
+const accountLoginLimits = new Map(accounts.map((account) => [account.username, {
+  failedAttempts: account.id === 2 ? -1 : account.id === 3 ? 4 : 0,
+  lockedUntil: account.id === 2 ? Date.now() + 30 * 60000 : 0
+}]))
 
 const captchaSvg =
   'data:image/svg+xml;charset=utf-8,' +
@@ -232,6 +236,36 @@ const server = http.createServer((req, res) => {
     return
   }
   res.setHeader('Content-Type', 'application/json; charset=utf-8')
+
+  if (path === '/__fixture/accountLoginLimit') {
+    if (!isSysadminSession) { res.end(JSON.stringify({ code: 50401, message: 'System administrator required' })); return }
+    const target = accounts.find((account) => account.id === Number(url.searchParams.get('id')))
+    if (!target) { res.end(JSON.stringify({ code: 50000, message: 'Account not found' })); return }
+    res.end(ok({ id: target.id, ...accountLoginLimits.get(target.username) }))
+    return
+  }
+
+  if (path === '/account/resetAccountLoginLimit') {
+    let body = ''
+    req.on('data', (chunk) => { body += chunk })
+    req.on('end', () => {
+      let params
+      try { params = JSON.parse(body || '{}') } catch (_) {
+        res.end(JSON.stringify({ code: 50000, message: 'Invalid request JSON' })); return
+      }
+      if (!isSysadminSession) { res.end(JSON.stringify({ code: 50401, message: 'System administrator required' })); return }
+      const target = accounts.find((account) => account.id === params.id)
+      if (req.method !== 'POST' || !Number.isSafeInteger(params.id) || params.id <= 0 || Object.keys(params).length !== 1 || !target) {
+        res.end(JSON.stringify({ code: 50000, message: 'Invalid account ID' })); return
+      }
+      if (process.env.MOCK_LOGIN_LIMIT_RESET_ERROR) {
+        res.end(JSON.stringify({ code: 50000, message: process.env.MOCK_LOGIN_LIMIT_RESET_ERROR })); return
+      }
+      accountLoginLimits.set(target.username, { failedAttempts: 0, lockedUntil: 0 })
+      res.end(ok(null))
+    })
+    return
+  }
 
   if (path === '/account/updateAccountById') {
     let body = ''

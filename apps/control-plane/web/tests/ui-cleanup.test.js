@@ -1330,7 +1330,7 @@ test('node cards and details show the public endpoint and its actual listener wi
   view.$destroy()
 })
 
-function accountRemarkFixture(api = {}, initialRoles = ['sysadmin']) {
+function accountRemarkFixture(api = {}, initialRoles = ['sysadmin'], feedback = {}) {
   const Vue = require('vue/dist/vue.common.js')
   const roles = Vue.observable({ value: initialRoles })
   const descriptor = compiler.parse({ source: read('src/views/account/list/index.vue') })
@@ -1339,6 +1339,7 @@ function accountRemarkFixture(api = {}, initialRoles = ['sysadmin']) {
     get: (_, name) => {
       if (name === '@/api/account') return { selectAccountPage: async () => ({ data: { accounts: [], total: 0 } }), ...api }
       if (name === '@/utils/permission') return (wanted) => wanted.some((role) => roles.value.includes(role))
+      if (name === '@/utils/liquid-feedback') return feedback
       if (name === '@/utils/account') return loadModule(read('src/utils/account.js'), {})
       if (name === '@/utils') return { timeStampToDate: () => '2026-10-02 12:00' }
       if (name === '@/mixins/latest-list-request') return loadModule(read('src/mixins/latest-list-request.js'), {}).default
@@ -1350,7 +1351,10 @@ function accountRemarkFixture(api = {}, initialRoles = ['sysadmin']) {
   const locale = loadModule(read('src/lang/zh.js'), {}).default
   const View = Vue.extend({ ...component, components: {}, created: undefined,
     beforeCreate() {
-      this.$t = (key) => key.split('.').reduce((result, part) => result && result[part], locale) || key
+      this.$t = (key, params = {}) => {
+        const message = key.split('.').reduce((result, part) => result && result[part], locale) || key
+        return Object.entries(params).reduce((result, [name, value]) => result.split(`{${name}}`).join(String(value)), message)
+      }
       this.$notify = () => {}
     },
     render: compiled.render, staticRenderFns: compiled.staticRenderFns })
@@ -1499,4 +1503,113 @@ test('account remark validation counts Unicode characters and blocks overlong sa
   }
   assert.equal(requests.length, 3, 'invalid remarks cannot reach the API')
   view.$destroy()
+})
+
+test('account login-limit reset is an accessible sysadmin icon action separate from traffic reset', async () => {
+  const { view, roles, Vue } = accountRemarkFixture()
+  view.list = [{ id: 42, username: 'sampleuser', roleId: 3, deleted: 0, quota: 1048576, lastLoginTime: 0 }]
+  const resetButton = () => vnodeTree(view._render()).find((node) => node.tag === 'button' && node.data.attrs.title === '重置登录失败次数')
+  const button = resetButton()
+  assert.equal(button.data.staticClass, 'icon-btn')
+  assert.equal(button.data.attrs['aria-label'], '重置登录失败次数')
+  assert.equal(vnodeText(button).trim(), '')
+  assert.ok(vnodeTree(button).some((node) => node.tag === 'app-icon' && node.data.attrs.name === 'refresh-left'))
+  const traffic = vnodeTree(view._render()).find((node) => node.tag === 'button' && node.data.attrs.title === '重置流量')
+  assert.ok(vnodeTree(traffic).some((node) => node.tag === 'app-icon' && node.data.attrs.name === 'refresh'))
+  const clicks = []
+  view.handleResetLoginLimit = (row) => { clicks.push(row.id) }
+  button.data.on.click()
+  assert.deepEqual(clicks, [42])
+  view.resettingLoginLimitId = 42
+  assert.equal(resetButton().data.attrs.disabled, true)
+  for (const role of ['admin', 'user']) {
+    roles.value = [role]
+    await Vue.nextTick()
+    assert.equal(resetButton(), undefined)
+  }
+  view.$destroy()
+})
+
+test('login-limit reset confirms once, sends only its captured ID, and handles cancel, failure, and role loss', async () => {
+  const requests = [], confirmations = [], notices = []
+  const failures = new Map([[42, -1], [43, 4]])
+  let decision, fail = false
+  const { view, roles, Vue } = accountRemarkFixture({
+    resetAccountLoginLimit: async (request) => {
+      requests.push(request)
+      if (fail) throw new Error('Redis unavailable')
+      failures.set(request.id, 0)
+    }
+  }, ['sysadmin'], {
+    MessageBox: {
+      confirm(message, title, options) {
+        confirmations.push({ message, title, options })
+        return new Promise((resolve, reject) => { decision = { resolve, reject } })
+      }
+    }
+  })
+  view.$notify = (notice) => notices.push(notice)
+  view.list = [
+    { id: 42, username: 'sampleuser', pass: 'unchanged', remark: 'private note', deleted: 1, upload: 12, download: 34, quota: 1048576 },
+    { id: 43, username: 'otheruser', remark: 'other note', deleted: 0, upload: 56, download: 78, quota: 2097152 }
+  ]
+  const before = JSON.stringify(view.list)
+  const target = { ...view.list[0] }
+  let pending = view.handleResetLoginLimit(target)
+  assert.equal(view.resettingLoginLimitId, 42)
+  assert.equal(requests.length, 0)
+  assert.match(confirmations[0].message, /sampleuser.*登录失败次数和临时锁定/)
+  assert.equal(confirmations[0].options.type, 'warning')
+  assert.equal(confirmations[0].options.cancelButtonText, '取消')
+  await view.handleResetLoginLimit(target)
+  await view.handleResetLoginLimit(view.list[1])
+  assert.equal(confirmations.length, 1, 'a pending confirmation cannot be submitted twice')
+  target.id = 99
+  target.username = 'changed after confirmation'
+  decision.resolve()
+  await pending
+  assert.deepEqual(JSON.parse(JSON.stringify(requests[0])), { id: 42 })
+  assert.equal(failures.get(42), 0)
+  assert.equal(failures.get(43), 4)
+  assert.equal(JSON.stringify(view.list), before, 'resetting login counters preserves all account fields and other users')
+  assert.equal(notices.length, 1)
+  assert.equal(notices[0].type, 'success')
+  assert.equal(view.resettingLoginLimitId, 0)
+  pending = view.handleResetLoginLimit(view.list[0])
+  decision.reject('cancel')
+  await pending
+  assert.equal(requests.length, 1, 'cancel sends no request')
+  assert.equal(notices.length, 1)
+  fail = true
+  pending = view.handleResetLoginLimit(view.list[0])
+  decision.resolve()
+  await pending
+  assert.equal(requests.length, 2)
+  assert.equal(notices.length, 1, 'failure does not show a success notification')
+  assert.equal(view.resettingLoginLimitId, 0)
+  pending = view.handleResetLoginLimit(view.list[0])
+  roles.value = ['admin']
+  await Vue.nextTick()
+  decision.resolve()
+  await pending
+  assert.equal(requests.length, 2, 'permission is checked again after confirmation')
+  await view.handleResetLoginLimit(view.list[0])
+  roles.value = ['user']
+  await Vue.nextTick()
+  await view.handleResetLoginLimit(view.list[0])
+  roles.value = ['sysadmin']
+  await Vue.nextTick()
+  for (const invalid of [null, { id: 0 }, { id: -1 }, { id: 1.5 }, { id: '42' }]) await view.handleResetLoginLimit(invalid)
+  assert.equal(confirmations.length, 4)
+  assert.equal(view.resettingLoginLimitId, 0)
+  view.$destroy()
+})
+
+test('the login-limit API only posts the account ID, excluding copied row fields', async () => {
+  const requests = []
+  const api = loadModule(read('src/api/account.js'), { '@/utils/request': async (request) => { requests.push(request) } })
+  await api.resetAccountLoginLimit({ id: 42, username: 'sampleuser', remark: 'private note', pass: 'secret', deleted: 1, upload: 12 })
+  assert.equal(requests[0].url, '/account/resetAccountLoginLimit')
+  assert.equal(requests[0].method, 'post')
+  assert.deepEqual(JSON.parse(JSON.stringify(requests[0].data)), { id: 42 })
 })
