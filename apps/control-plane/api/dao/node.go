@@ -14,7 +14,7 @@ import (
 func SelectNodeById(id *uint) (*model.Node, error) {
 	var node model.Node
 	where := map[string]interface{}{"id": *id}
-	selectFields := []string{"id", "node_server_id", "`node_sub_id`", "node_type_id", "name", "node_server_ip", "node_server_grpc_port", "domain", "port", "priority", "client_types", "naive_uot_enable", "naive_uot_version", "create_time"}
+	selectFields := []string{"id", "node_server_id", "`node_sub_id`", "node_type_id", "name", "node_server_ip", "node_server_grpc_port", "domain", "port", "external_port", "priority", "client_types", "naive_uot_enable", "naive_uot_version", "create_time"}
 	buildSelect, values, err := builder.BuildSelect("node", where, selectFields)
 	if err != nil {
 		logrus.Errorln(err.Error())
@@ -56,6 +56,9 @@ func CreateNode(node *model.Node) error {
 	}
 	if node.Port != nil && *node.Port != 0 {
 		nodeEntity["port"] = *node.Port
+	}
+	if node.ExternalPort != nil {
+		nodeEntity["external_port"] = *node.ExternalPort
 	}
 	if node.Priority != nil {
 		nodeEntity["priority"] = *node.Priority
@@ -128,7 +131,7 @@ func SelectNodePage(queryName *string, nodeServerId *uint, pageNum *uint, pageSi
 	if nodeServerId != nil && *nodeServerId != 0 {
 		where["node_server_id"] = *nodeServerId
 	}
-	selectFields := []string{"id", "node_server_id", "`node_sub_id`", "node_type_id", "name", "node_server_ip", "node_server_grpc_port", "domain", "port", "priority", "client_types", "naive_uot_enable", "naive_uot_version", "create_time"}
+	selectFields := []string{"id", "node_server_id", "`node_sub_id`", "node_type_id", "name", "node_server_ip", "node_server_grpc_port", "domain", "port", "external_port", "priority", "client_types", "naive_uot_enable", "naive_uot_version", "create_time"}
 	selectSQL, values, err := builder.BuildSelect("node", where, selectFields)
 	if err != nil {
 		logrus.Errorln(err.Error())
@@ -219,6 +222,9 @@ func UpdateNodeById(node *model.Node) error {
 	}
 	if node.Port != nil {
 		update["port"] = *node.Port
+	}
+	if node.ExternalPort != nil {
+		update["external_port"] = *node.ExternalPort
 	}
 	if node.Priority != nil {
 		update["priority"] = *node.Priority
@@ -311,7 +317,7 @@ func SelectNodes() ([]model.Node, error) {
 		"node_type_id not in": []uint{constant.TrojanGo, constant.Hysteria},
 		"_orderby":            "priority desc,create_time desc"}
 	buildSelect, values, err := builder.BuildSelect("node", where, []string{
-		"id", "node_sub_id", "node_type_id", "name", "domain", "port", "client_types", "naive_uot_enable", "naive_uot_version"})
+		"id", "node_sub_id", "node_type_id", "name", "domain", "port", "external_port", "client_types", "naive_uot_enable", "naive_uot_version"})
 	if err != nil {
 		logrus.Errorln(err.Error())
 		return nodes, errors.New(constant.SysError)

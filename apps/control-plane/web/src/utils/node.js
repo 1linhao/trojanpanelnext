@@ -102,6 +102,10 @@ export function nodeServerFind(nodeServers, nodeServerId) {
   }
 }
 
+export function nodeConnectionPort(node) {
+  return node.externalPort > 0 ? node.externalPort : node.port
+}
+
 export function showUUID(temp) {
   return isXrayVless(temp) || isXrayVmess(temp)
 }
@@ -119,6 +123,7 @@ export function isXrayStreamSettingsSecurityReality(temp) {
 }
 
 export function handleNodeDetail(nodeDetail, responseData) {
+  nodeDetail.externalPort = responseData.externalPort || 0
   nodeDetail.password = responseData.password
   nodeDetail.clients = Array.isArray(responseData.clients)
     ? responseData.clients
@@ -185,6 +190,7 @@ export function handleNodeDetail(nodeDetail, responseData) {
 }
 
 export function handleNodeUpdate(temp, responseData) {
+  temp.externalPort = responseData.externalPort || 0
   temp.clients = Array.isArray(responseData.clients)
     ? responseData.clients
     : ['sing-box', 'clash-meta', 'v2ray', 'shadowrocket']

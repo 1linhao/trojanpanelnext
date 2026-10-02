@@ -40,6 +40,7 @@ func SelectNodeById(id *uint) (*vo.NodeOneVo, error) {
 			Name:            *node.Name,
 			Domain:          *node.Domain,
 			Port:            *node.Port,
+			ExternalPort:    nodeUintValue(node.ExternalPort, 0),
 			Priority:        *node.Priority,
 			Clients:         clientcompat.Decode(node.ClientTypes),
 			NaiveUotEnable:  nodeUintValue(node.NaiveUotEnable, 0),
@@ -159,6 +160,9 @@ func CreateNode(token string, nodeCreateDto dto.NodeCreateDto) error {
 	// 校验端口
 	if nodeCreateDto.Port != nil && (*nodeCreateDto.Port <= 100 || *nodeCreateDto.Port >= 30000) {
 		return errors.New(constant.PortRangeError)
+	}
+	if nodeCreateDto.ExternalPort != nil && *nodeCreateDto.ExternalPort > 65535 {
+		return errors.New("externalPort must be between 0 and 65535")
 	}
 
 	// 校验名称
@@ -287,6 +291,7 @@ func CreateNode(token string, nodeCreateDto dto.NodeCreateDto) error {
 		NodeServerGrpcPort: nodeServer.GrpcPort,
 		Domain:             nodeCreateDto.Domain,
 		Port:               nodeCreateDto.Port,
+		ExternalPort:       nodeCreateDto.ExternalPort,
 		Priority:           nodeCreateDto.Priority,
 		ClientTypes:        &clientTypes,
 		NaiveUotEnable:     nodeCreateDto.NaiveUotEnable,
@@ -333,6 +338,7 @@ func SelectNodePage(queryName *string, nodeServerId *uint, pageNum *uint, pageSi
 			GrpcTLSServerName:  transport.ServerName,
 			Domain:             *item.Domain,
 			Port:               *item.Port,
+			ExternalPort:       nodeUintValue(item.ExternalPort, 0),
 			Priority:           *item.Priority,
 			Clients:            clientcompat.Decode(item.ClientTypes),
 			NaiveUotEnable:     nodeUintValue(item.NaiveUotEnable, 0),
@@ -396,6 +402,7 @@ func SelectNodePage(queryName *string, nodeServerId *uint, pageNum *uint, pageSi
 			Name:            item.Name,
 			Domain:          item.Domain,
 			Port:            item.Port,
+			ExternalPort:    item.ExternalPort,
 			Priority:        item.Priority,
 			Clients:         item.Clients,
 			NaiveUotEnable:  item.NaiveUotEnable,
@@ -486,6 +493,9 @@ func UpdateNodeById(token string, nodeUpdateDto *dto.NodeUpdateDto) error {
 	// 校验端口
 	if nodeUpdateDto.Port != nil && (*nodeUpdateDto.Port <= 100 || *nodeUpdateDto.Port >= 30000) {
 		return errors.New(constant.PortRangeError)
+	}
+	if nodeUpdateDto.ExternalPort != nil && *nodeUpdateDto.ExternalPort > 65535 {
+		return errors.New("externalPort must be between 0 and 65535")
 	}
 
 	// 校验名称
@@ -623,6 +633,7 @@ func UpdateNodeById(token string, nodeUpdateDto *dto.NodeUpdateDto) error {
 			*nodeEntity.NodeServerIp != *nodeServer.Ip ||
 			*nodeEntity.Domain != *nodeUpdateDto.Domain ||
 			*nodeEntity.Port != *nodeUpdateDto.Port ||
+			(nodeUpdateDto.ExternalPort != nil && nodeUintValue(nodeEntity.ExternalPort, 0) != *nodeUpdateDto.ExternalPort) ||
 			*nodeEntity.Priority != *nodeUpdateDto.Priority ||
 			(clientTypes != nil && stringValue(nodeEntity.ClientTypes) != *clientTypes) ||
 			nodeUintValue(nodeEntity.NaiveUotEnable, 0) != nodeUintValue(nodeUpdateDto.NaiveUotEnable, 0) ||
@@ -634,6 +645,7 @@ func UpdateNodeById(token string, nodeUpdateDto *dto.NodeUpdateDto) error {
 				NodeServerIp:    nodeServer.Ip,
 				Domain:          nodeUpdateDto.Domain,
 				Port:            nodeUpdateDto.Port,
+				ExternalPort:    nodeUpdateDto.ExternalPort,
 				Priority:        nodeUpdateDto.Priority,
 				ClientTypes:     clientTypes,
 				NaiveUotEnable:  nodeUpdateDto.NaiveUotEnable,
@@ -739,6 +751,7 @@ func UpdateNodeById(token string, nodeUpdateDto *dto.NodeUpdateDto) error {
 			NodeServerGrpcPort: nodeServer.GrpcPort,
 			Domain:             nodeUpdateDto.Domain,
 			Port:               nodeUpdateDto.Port,
+			ExternalPort:       nodeUpdateDto.ExternalPort,
 			Priority:           nodeUpdateDto.Priority,
 			ClientTypes:        clientTypes,
 			NaiveUotEnable:     nodeUpdateDto.NaiveUotEnable,
@@ -821,7 +834,7 @@ func nodeURLForClient(accountId *uint, username *string, id *uint, client string
 				connectPass = util.GenerateUUID(password)
 			}
 			headBuilder.WriteString(fmt.Sprintf("%s://%s@%s:%d?type=%s&security=%s", *nodeXray.Protocol,
-				url.PathEscape(connectPass), *node.Domain, *node.Port,
+				url.PathEscape(connectPass), *node.Domain, node.ClientPort(),
 				streamSettings.Network, streamSettings.Security))
 			if *nodeXray.Protocol == "vmess" {
 				headBuilder.WriteString("&alterId=0")
@@ -870,7 +883,7 @@ func nodeURLForClient(accountId *uint, username *string, id *uint, client string
 			}
 		} else if *nodeXray.Protocol == "shadowsocks" {
 			headBuilder.WriteString(fmt.Sprintf("ss://%s", base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%s@%s:%d", *nodeXray.XraySSMethod,
-				connectPass, *node.Domain, *node.Port)))))
+				connectPass, *node.Domain, node.ClientPort())))))
 		} else if *nodeXray.Protocol == "socks" {
 			settings := bo.Settings{}
 			if nodeXray.Settings != nil && *nodeXray.Settings != "" {
@@ -879,7 +892,7 @@ func nodeURLForClient(accountId *uint, username *string, id *uint, client string
 				}
 			}
 			headBuilder.WriteString(fmt.Sprintf("socks://%s", base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%s@%s:%d", settings.Accounts[0].User,
-				settings.Accounts[0].Pass, *node.Domain, *node.Port)))))
+				settings.Accounts[0].Pass, *node.Domain, node.ClientPort())))))
 		}
 	} else if *nodeType.Id == constant.TrojanGo {
 		nodeTrojanGo, err := dao.SelectNodeTrojanGoById(node.NodeSubId)
@@ -887,7 +900,7 @@ func nodeURLForClient(accountId *uint, username *string, id *uint, client string
 			return "", 0, errors.New(constant.NodeURLError)
 		}
 		headBuilder.WriteString(fmt.Sprintf("trojan-go://%s@%s:%d?", url.PathEscape(password),
-			*node.Domain, *node.Port))
+			*node.Domain, node.ClientPort()))
 		var sni string
 		if nodeTrojanGo.Sni != nil && *nodeTrojanGo.Sni != "" {
 			sni = *nodeTrojanGo.Sni
@@ -916,7 +929,7 @@ func nodeURLForClient(accountId *uint, username *string, id *uint, client string
 		}
 		headBuilder.WriteString(fmt.Sprintf("hysteria://%s:%d?protocol=%s&auth=%s&upmbps=%d&downmbps=%d",
 			*node.Domain,
-			*node.Port,
+			node.ClientPort(),
 			*nodeHysteria.Protocol,
 			password,
 			*nodeHysteria.UpMbps,
@@ -946,7 +959,7 @@ func nodeURLForClient(accountId *uint, username *string, id *uint, client string
 			nodeURL, err := clientcompat.V2RayNHysteria2URI(clientcompat.V2RayNHysteria2Config{
 				Remarks:        *node.Name,
 				Address:        *node.Domain,
-				Port:           *node.Port,
+				Port:           node.ClientPort(),
 				Password:       password,
 				SNI:            stringValue(nodeHysteria2.ServerName),
 				AllowInsecure:  uintValue(nodeHysteria2.Insecure) == 1,
@@ -961,7 +974,7 @@ func nodeURLForClient(accountId *uint, username *string, id *uint, client string
 			}
 			return nodeURL, *nodeType.Id, nil
 		}
-		server := fmt.Sprintf("%s:%d", *node.Domain, *node.Port)
+		server := fmt.Sprintf("%s:%d", *node.Domain, node.ClientPort())
 		portHopping := normalizedHysteria2PortHopping(nodeHysteria2.PortHopping)
 		if client == clientcompat.V2RaySubscriptionStandard {
 			hopInterval := ""
@@ -971,7 +984,7 @@ func nodeURLForClient(accountId *uint, username *string, id *uint, client string
 			return clientcompat.V2RayNGHysteria2URI(clientcompat.V2RayNHysteria2Config{
 				Remarks:        *node.Name,
 				Address:        *node.Domain,
-				Port:           *node.Port,
+				Port:           node.ClientPort(),
 				Password:       password,
 				SNI:            stringValue(nodeHysteria2.ServerName),
 				AllowInsecure:  uintValue(nodeHysteria2.Insecure) == 1,
@@ -998,7 +1011,7 @@ func nodeURLForClient(accountId *uint, username *string, id *uint, client string
 			headBuilder.WriteString(fmt.Sprintf("&sni=%s", *nodeHysteria2.ServerName))
 		}
 	} else if *nodeType.Id == constant.NaiveProxy {
-		headBuilder.WriteString(fmt.Sprintf("naive+https://%s:%s@%s:%d", *username, password, *node.Domain, *node.Port))
+		headBuilder.WriteString(fmt.Sprintf("naive+https://%s:%s@%s:%d", *username, password, *node.Domain, node.ClientPort()))
 	}
 
 	if node.Name != nil && *node.Name != "" {

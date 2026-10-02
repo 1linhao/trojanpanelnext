@@ -64,11 +64,14 @@
               <h3>{{ row.name }}</h3>
               <span class="muted"
                 >{{ nodeServerFind(nodeServers, row.nodeServerId) }} ·
-                {{ row.domain }}:{{ row.port }}</span
+                {{ row.domain }}:{{ nodeConnectionPort(row) }}</span
               >
             </div>
           </div>
           <div class="node-meta">
+            <span v-if="row.externalPort > 0" class="chip plain">{{
+              $t('table.nodePortMapping', { external: row.externalPort, actual: row.port })
+            }}</span>
             <span class="chip plain">{{
               row.xrayProtocol || nodeTypeFind(nodeTypes, row.nodeTypeId)
             }}</span>
@@ -162,7 +165,10 @@
               <span>域名</span><b class="mono">{{ nodeDetail.domain }}</b>
             </div>
             <div class="kv">
-              <span>端口</span><b class="mono">{{ nodeDetail.port }}</b>
+              <span>{{ $t(nodeDetail.externalPort > 0 ? 'table.nodeExternalPort' : 'table.nodePort') }}</span><b class="mono">{{ nodeConnectionPort(nodeDetail) }}</b>
+            </div>
+            <div v-if="nodeDetail.externalPort > 0" class="kv">
+              <span>{{ $t('table.nodeActualPort') }}</span><b class="mono">{{ nodeDetail.port }}</b>
             </div>
             <div class="kv">
               <span>连接密码</span
@@ -223,6 +229,7 @@ import { selectNodeTypeList } from '@/api/node-type'
 import {
   handleNodeDetail,
   handleNodeUpdate,
+  nodeConnectionPort,
   nodeServerFind,
   nodeTypeFind
 } from '@/utils/node'
@@ -276,6 +283,7 @@ export default {
         name: '',
         domain: '',
         port: 443,
+        externalPort: 0,
         priority: 100,
         clients: ['sing-box', 'clash-meta', 'v2ray', 'shadowrocket'],
 
@@ -368,6 +376,7 @@ export default {
         name: '',
         domain: '',
         port: 443,
+        externalPort: 0,
         priority: 100,
         clients: ['sing-box', 'clash-meta', 'v2ray', 'shadowrocket'],
 
@@ -499,6 +508,7 @@ export default {
     timeStampToDate,
     checkPermission,
     nodeServerFind,
+    nodeConnectionPort,
     nodeTypeFind,
     setNodeTypes() {
       selectNodeTypeList().then((response) => {
@@ -521,6 +531,7 @@ export default {
         name: '',
         domain: '',
         port: 443,
+        externalPort: 0,
         priority: 100,
         clients: ['sing-box', 'clash-meta', 'v2ray', 'shadowrocket'],
 

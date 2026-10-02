@@ -16,6 +16,7 @@ type NodeCreateDto struct {
 	Name         *string   `json:"name" form:"name" validate:"required,min=2,max=20"`
 	Domain       *string   `json:"domain" form:"domain" validate:"required,ip|fqdn,min=4,max=64"`
 	Port         *uint     `json:"port" form:"port" validate:"required,validatePort"`
+	ExternalPort *uint     `json:"externalPort" form:"externalPort" validate:"omitempty,lte=65535"`
 	Priority     *int      `json:"priority" form:"priority" validate:"required,validateInt"`
 	Clients      *[]string `json:"clients" form:"clients" validate:"omitempty,dive,oneof=sing-box clash-meta v2ray shadowrocket"`
 
@@ -70,6 +71,7 @@ type NodeUpdateDto struct {
 	Name         *string   `json:"name" form:"name" validate:"required,min=2,max=20"`
 	Domain       *string   `json:"domain" form:"domain" validate:"required,ip|fqdn,min=4,max=64"`
 	Port         *uint     `json:"port" form:"port" validate:"required,validatePort"`
+	ExternalPort *uint     `json:"externalPort" form:"externalPort" validate:"omitempty,lte=65535"`
 	Priority     *int      `json:"priority" form:"priority" validate:"required,validateInt"`
 	Clients      *[]string `json:"clients" form:"clients" validate:"omitempty,dive,oneof=sing-box clash-meta v2ray shadowrocket"`
 

@@ -43,7 +43,7 @@ const captchaSvg =
   )
 
 const logoSvg = Buffer.from(
-  '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><rect width="64" height="64" rx="18" fill="#1767ba"/><text x="32" y="39" text-anchor="middle" font-family="Arial,sans-serif" font-size="22" font-weight="700" fill="white">TP</text></svg>'
+  '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><text x="32" y="39" text-anchor="middle" font-family="Arial,sans-serif" font-size="22" font-weight="700" fill="#1767ba">TP</text></svg>'
 )
 
 const node = {
@@ -53,7 +53,8 @@ const node = {
   nodeTypeId: 1,
   name: 'Tokyo Reality',
   domain: 'jp.example.com',
-  port: 443,
+  port: 8443,
+  externalPort: 443,
   priority: 100,
   clients: ['sing-box', 'clash-meta', 'v2ray', 'shadowrocket'],
   status: 1,
@@ -76,6 +77,7 @@ const nodes = [
     name: 'Singapore WebSocket',
     domain: 'sg.example.com',
     port: 8443,
+    externalPort: 0,
     priority: 90,
     clients: ['sing-box', 'clash-meta', 'v2ray']
   },
@@ -88,6 +90,7 @@ const nodes = [
     name: 'Frankfurt Hysteria2 High Performance',
     domain: 'de.example.com',
     port: 2443,
+    externalPort: 0,
     priority: 80,
     clients: ['sing-box', 'shadowrocket']
   },
@@ -100,6 +103,7 @@ const nodes = [
     name: 'San Francisco NaiveProxy',
     domain: 'us.example.com',
     port: 443,
+    externalPort: 0,
     priority: 70,
     clients: ['sing-box', 'v2ray']
   },
@@ -111,6 +115,7 @@ const nodes = [
     name: 'Hong Kong VLESS Reality',
     domain: 'hk.example.com',
     port: 10443,
+    externalPort: 0,
     priority: 60,
     clients: ['sing-box', 'clash-meta', 'shadowrocket']
   }
@@ -220,6 +225,28 @@ const server = http.createServer((req, res) => {
   }
   res.setHeader('Content-Type', 'application/json; charset=utf-8')
 
+  if (path === '/node/createNode' || path === '/node/updateNodeById') {
+    let body = ''
+    req.on('data', (chunk) => { body += chunk })
+    req.on('end', () => {
+      let params
+      try { params = JSON.parse(body || '{}') } catch (_) {
+        res.end(JSON.stringify({ code: 50000, message: 'Invalid request JSON' })); return
+      }
+      if (isUserSession) { res.end(JSON.stringify({ code: 50401, message: 'Administrator required' })); return }
+      if (path === '/node/createNode') {
+        const created = { ...params, id: Math.max(0, ...nodes.map((node) => node.id)) + 1, status: 1 }
+        nodes.push(created)
+      } else {
+        const existing = nodes.find((node) => node.id === params.id)
+        if (!existing) { res.end(JSON.stringify({ code: 50000, message: 'Node not found' })); return }
+        Object.assign(existing, params)
+      }
+      res.end(ok(null))
+    })
+    return
+  }
+
   if (path === '/nodeServer/resetNodeServerTraffic') {
     let body = ''
     req.on('data', (chunk) => { body += chunk })
@@ -275,6 +302,7 @@ const server = http.createServer((req, res) => {
     return
   }
 
+  const selectedNode = nodes.find((node) => node.id === Number(url.searchParams.get('id'))) || node
   const responses = {
     '/auth/setting': {
       registerEnable: 1,
@@ -372,7 +400,7 @@ const server = http.createServer((req, res) => {
       total: 3
     },
     '/node/selectNodePage': page('nodes', nodes),
-    '/node/selectNodeById': Object.assign({}, node, {
+    '/node/selectNodeById': Object.assign({
       password: 'demo',
       uuid: '00000000-0000-0000-0000-000000000000',
       alterId: 0,
@@ -398,8 +426,8 @@ const server = http.createServer((req, res) => {
         },
         wsSettings: { path: '/', headers: {} }
       }
-    }),
-    '/node/selectNodeInfo': Object.assign({}, node, {
+    }, selectedNode),
+    '/node/selectNodeInfo': Object.assign({
       password: 'demo',
       uuid: '00000000-0000-0000-0000-000000000000',
       xrayProtocol: 'vless',
@@ -411,7 +439,7 @@ const server = http.createServer((req, res) => {
         realitySettings: {},
         wsSettings: {}
       }
-    }),
+    }, selectedNode),
     '/node/nodeDefault': {
       publicKey: 'mock-public',
       privateKey: 'mock-private',

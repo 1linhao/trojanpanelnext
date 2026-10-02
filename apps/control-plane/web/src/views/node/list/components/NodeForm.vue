@@ -47,9 +47,35 @@
         <liquid-form-item :label="$t('table.nodeDomain').toString()" prop="domain">
           <liquid-input v-model="formModel.domain" clearable />
         </liquid-form-item>
-        <liquid-form-item :label="$t('table.nodePort').toString()" prop="port">
+        <liquid-form-item :label="$t('table.nodePortForwarding').toString()">
+          <liquid-switch
+            v-model="portForwardingEnabled"
+            :active-text="$t('table.enable')"
+            :inactive-text="$t('table.disable')"
+            @change="handlePortForwardingChange"
+          />
+        </liquid-form-item>
+        <liquid-form-item
+          v-if="portForwardingEnabled"
+          :label="$t('table.nodeExternalPort').toString()"
+          prop="externalPort"
+        >
+          <liquid-number-input
+            v-model.number="formModel.externalPort"
+            :min="1"
+            :max="65535"
+            controls-position="right"
+            type="number"
+          />
+        </liquid-form-item>
+        <liquid-form-item
+          :label="$t(portForwardingEnabled ? 'table.nodeActualPort' : 'table.nodePort').toString()"
+          prop="port"
+        >
           <liquid-number-input
             v-model.number="formModel.port"
+            :min="101"
+            :max="29999"
             controls-position="right"
             type="number"
           />
@@ -370,8 +396,22 @@ export default {
       }
       callback()
     }
+    const validateNodePort = (rule, value, callback) => {
+      callback(Number.isInteger(value) && value >= 101 && value <= 29999
+        ? undefined : new Error(this.$t('valid.nodePortRange').toString()))
+    }
+    const validateExternalPort = (rule, value, callback) => {
+      if (!this.portForwardingEnabled) { callback(); return }
+      if (value === undefined || value === null || value === '') {
+        callback(new Error(this.$t('valid.nodeExternalPort').toString()))
+        return
+      }
+      callback(Number.isInteger(value) && value >= 1 && value <= 65535
+        ? undefined : new Error(this.$t('valid.nodeExternalPortRange').toString()))
+    }
     return {
-      formModel: JSON.parse(JSON.stringify(this.nodeProps)),
+      formModel: { ...JSON.parse(JSON.stringify(this.nodeProps)), externalPort: this.nodeProps.externalPort || 0 },
+      portForwardingEnabled: this.nodeProps.externalPort > 0,
       fallback: {
         name: '',
         alpn: '',
@@ -426,12 +466,11 @@ export default {
             trigger: ['change', 'blur']
           },
           {
-            pattern:
-              /^([0-9]|[1-9]\d{1,3}|[1-5]\d{4}|6[0-4]\d{4}|65[0-4]\d{2}|655[0-2]\d|6553[0-5])$/,
-            message: this.$t('valid.nodePortRange'),
+            validator: validateNodePort,
             trigger: ['change', 'blur']
           }
         ],
+        externalPort: [{ validator: validateExternalPort, trigger: ['change', 'blur'] }],
         priority: [
           {
             required: true,
@@ -851,12 +890,11 @@ export default {
             trigger: ['change', 'blur']
           },
           {
-            pattern:
-              /^([0-9]|[1-9]\d{1,3}|[1-5]\d{4}|6[0-4]\d{4}|65[0-4]\d{2}|655[0-2]\d|6553[0-5])$/,
-            message: this.$t('valid.nodePortRange'),
+            validator: validateNodePort,
             trigger: ['change', 'blur']
           }
         ],
+        externalPort: [{ validator: validateExternalPort, trigger: ['change', 'blur'] }],
         priority: [
           {
             required: true,
@@ -1203,12 +1241,17 @@ export default {
   methods: {
     resetFormModel() {
       const source = JSON.parse(JSON.stringify(this.nodeProps))
+      source.externalPort = source.externalPort || 0
+      this.portForwardingEnabled = source.externalPort > 0
       Object.keys(this.formModel).forEach((key) => {
         this.$delete(this.formModel, key)
       })
       Object.entries(source).forEach(([key, value]) => {
         this.$set(this.formModel, key, value)
       })
+    },
+    handlePortForwardingChange(enabled) {
+      if (enabled && !(this.formModel.externalPort > 0)) this.formModel.externalPort = undefined
     },
     isXray,
     isTrojanGo,
@@ -1222,7 +1265,7 @@ export default {
           this.formModel.xrayStreamSettings = handleXrayStreamSettings(
             this.formModel
           )
-          createNode(this.formModel).then(() => {
+          createNode({ ...this.formModel, externalPort: this.portForwardingEnabled ? this.formModel.externalPort : 0 }).then(() => {
             this.getListProps()
             this.$emit('update:dialogFormVisibleProps', false)
             this.$notify({
@@ -1243,6 +1286,7 @@ export default {
             this.formModel
           )
           const formModelData = Object.assign({}, this.formModel)
+          formModelData.externalPort = this.portForwardingEnabled ? this.formModel.externalPort : 0
           updateNodeById(formModelData).then(() => {
             this.getListProps()
             this.$emit('update:dialogFormVisibleProps', false)

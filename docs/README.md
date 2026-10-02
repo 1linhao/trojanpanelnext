@@ -2,7 +2,7 @@
 
 简体中文 | [English](README_EN.md)
 
-本文档面向 TrojanPanel Next **v1.0.2-rc.8** 用户。
+本文档面向 TrojanPanel Next **v1.0.2-rc.9** 用户。
 
 | 主题 | 文档 |
 | --- | --- |
@@ -19,6 +19,7 @@
 | 证书续签与 mTLS 信任 | [证书维护](certificates.md) |
 | 日常维护与排错 | [维护](deployment.md#operations) · [故障排查](deployment.md#troubleshooting) |
 | Web 日常操作 | [用户指南](user-guide.md) |
+| 代理对外与实际端口、SNI 和 UDP 转发 | [端口转发](port-forwarding.md) |
 | API 访问 | [API 指南](api.md) |
 | 产品架构与模块关系 | [架构](architecture/domain-context.md) |
 | 构建、测试与贡献 | [开发指南](development.md) |

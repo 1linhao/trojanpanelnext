@@ -3,7 +3,7 @@
 # shellcheck disable=SC2034
 set -Eeuo pipefail
 
-SCRIPT_VERSION="1.0.2-rc.8"
+SCRIPT_VERSION="1.0.2-rc.9"
 TP_SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 if [[ ! -f "${TP_SCRIPT_DIR}/install.sh" || ! -f "${TP_SCRIPT_DIR}/uninstall.sh" ]]; then
   printf 'Missing matching install.sh/uninstall.sh. Use tp.sh update.\n' >&2

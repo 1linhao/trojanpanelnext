@@ -6,7 +6,7 @@ Web 主控后端，提供账户、节点服务器、代理节点、订阅、流�
 
 ## 部署
 
-通过 [v1.0.2-rc.8 脚本入口](../../../scripts/README.md)部署 Web。网络、数据库和证书准备见[部署指南](../../../docs/deployment.md#web)。
+通过 [v1.0.2-rc.9 脚本入口](../../../scripts/README.md)部署 Web。网络、数据库和证书准备见[部署指南](../../../docs/deployment.md#web)。
 
 ## 源码
 

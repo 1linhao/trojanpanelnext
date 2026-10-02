@@ -11,6 +11,7 @@ type NodeVo struct {
 	Name            string    `json:"name"`
 	Domain          string    `json:"domain"`
 	Port            uint      `json:"port"`
+	ExternalPort    uint      `json:"externalPort"`
 	Priority        int       `json:"priority"`
 	Clients         []string  `json:"clients"`
 	NaiveUotEnable  uint      `json:"naiveUotEnable"`
@@ -35,6 +36,7 @@ type NodeOneVo struct {
 	Name            string    `json:"name"`
 	Domain          string    `json:"domain"`
 	Port            uint      `json:"port"`
+	ExternalPort    uint      `json:"externalPort"`
 	Priority        int       `json:"priority"`
 	Clients         []string  `json:"clients"`
 	NaiveUotEnable  uint      `json:"naiveUotEnable"`

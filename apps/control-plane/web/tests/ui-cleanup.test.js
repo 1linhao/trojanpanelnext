@@ -1184,3 +1184,148 @@ test('traffic reset confirms once, preserves its target ID, and refreshes list a
   await reset.call(context, row)
   assert.equal(confirmations, 3, 'creation, wrong IDs, and denied permission never reset data')
 })
+
+function nodeFormFixture(api = {}) {
+  const Vue = require('vue/dist/vue.common.js')
+  const descriptor = compiler.parse({ source: read('src/views/node/list/components/NodeForm.vue') })
+  const utils = loadModule(read('src/utils/node.js'), {})
+  const component = loadModule(descriptor.script.content, new Proxy({}, {
+    has: () => true,
+    get: (_, name) => name === '@/api/node' ? api : name === '@/utils/node' ? utils : {}
+  })).default
+  const compiled = compileRender(descriptor.template.content)
+  const Form = Vue.extend({ ...component, components: {},
+    beforeCreate() { this.$t = (key) => key; this.$notify = () => {} },
+    render: compiled.render, staticRenderFns: compiled.staticRenderFns })
+  const list = loadModule(compiler.parse({ source: read('src/views/node/list/index.vue') }).script.content,
+    new Proxy({}, { has: () => true, get: () => ({}) })).default
+  const node = { ...list.data.call({ $t: (key) => key }).temp, id: 42, name: 'Mapped Node', domain: 'mapped.example.com', port: 8443, externalPort: 443 }
+  return new Form({ propsData: { nodeProps: node, dialogStatusProps: 'update', dialogFormVisibleProps: true,
+    nodeServersProps: [], nodeTypesProps: [], getListProps: () => {} } })
+}
+
+test('the existing node form restores forwarding, preserves its provided model, and validates both port ranges', async () => {
+  const form = nodeFormFixture()
+  const original = form.formModel
+  assert.equal(form.portForwardingEnabled, true)
+  const items = vnodeTree(form._render()).filter((node) => node.tag === 'liquid-form-item')
+  const external = items.find((node) => node.data.attrs.prop === 'externalPort')
+  assert.equal(external.data.attrs.label, 'table.nodeExternalPort')
+  const actual = items.find((node) => node.data.attrs.prop === 'port')
+  assert.equal(actual.data.attrs.label, 'table.nodeActualPort')
+  assert.equal(vnodeTree(external).find((node) => node.tag === 'liquid-number-input').data.attrs.max, 65535)
+  assert.equal(vnodeTree(actual).find((node) => node.tag === 'liquid-number-input').data.attrs.min, 101)
+  const validate = (rule, value) => new Promise((resolve) => rule.validator(rule, value, resolve))
+  for (const rules of [form.createRules, form.updateRules]) {
+    for (const value of [101, 29999]) assert.equal(await validate(rules.port[1], value), undefined)
+    for (const value of [100, 30000, 8443.5, '443', undefined]) assert.ok(await validate(rules.port[1], value))
+    for (const value of [1, 65535]) assert.equal(await validate(rules.externalPort[0], value), undefined)
+    for (const value of [0, 65536, 443.5, '443', undefined]) assert.ok(await validate(rules.externalPort[0], value))
+  }
+  form.nodeProps = { ...form.nodeProps, id: 43, externalPort: 0, port: 2443 }
+  form.resetFormModel()
+  assert.equal(form.formModel, original, 'protocol children retain the same provided model object')
+  assert.equal(form.portForwardingEnabled, false)
+  assert.equal(form.formModel.port, 2443)
+  assert.equal(form.formModel.externalPort, 0)
+  assert.equal(vnodeTree(form._render()).some((node) => node.data && node.data.attrs && node.data.attrs.prop === 'externalPort'), false)
+  assert.equal(vnodeTree(form._render()).find((node) => node.data && node.data.attrs && node.data.attrs.prop === 'port').data.attrs.label, 'table.nodePort')
+  assert.equal(await validate(form.updateRules.externalPort[0], undefined), undefined, 'disabled forwarding does not require a hidden port')
+  form.portForwardingEnabled = true
+  form.handlePortForwardingChange(true)
+  assert.equal(form.formModel.externalPort, undefined, 'new forwarding requires the user to enter its external port')
+  form.$destroy()
+})
+
+test('node creation and editing submit actual and external ports separately and block invalid ports', async () => {
+  const Vue = require('vue/dist/vue.common.js')
+  const requests = []
+  const form = nodeFormFixture({
+    createNode: async (payload) => { requests.push({ action: 'create', ...payload }) },
+    updateNodeById: async (payload) => { requests.push({ action: 'update', ...payload }) }
+  })
+  const item = loadModule(read('src/components/LiquidStructural/index.js'), { vue: Vue }).LiquidFormItem
+  form.$refs.dataForm = {
+    async validate(callback) {
+      const rules = form.dialogStatusProps === 'create' ? form.createRules : form.updateRules
+      const fields = form.portForwardingEnabled ? ['port', 'externalPort'] : ['port']
+      const results = await Promise.all(fields.map((field) => item.methods.validate.call({
+        appliedRules: rules[field], value: form.formModel[field], error: ''
+      })))
+      callback(results.every(Boolean))
+    }
+  }
+  const submit = async (action) => { form[action](); await new Promise((resolve) => setImmediate(resolve)) }
+  form.dialogStatusProps = 'create'
+  await submit('createData')
+  assert.equal(requests[0].action, 'create')
+  assert.equal(requests[0].port, 8443)
+  assert.equal(requests[0].externalPort, 443)
+  assert.equal('portForwardingEnabled' in requests[0], false, 'the switch is local UI state')
+  form.dialogStatusProps = 'update'
+  form.portForwardingEnabled = false
+  await submit('updateData')
+  assert.equal(requests[1].id, 42)
+  assert.equal(requests[1].port, 8443)
+  assert.equal(requests[1].externalPort, 0)
+  form.portForwardingEnabled = true
+  form.formModel.externalPort = 65535
+  form.formModel.port = 29999
+  await submit('updateData')
+  assert.equal(requests[2].externalPort, 65535)
+  assert.equal(requests[2].port, 29999)
+  form.formModel.externalPort = 65536
+  await submit('updateData')
+  form.formModel.externalPort = 443
+  form.formModel.port = 100
+  await submit('createData')
+  assert.equal(requests.length, 3, 'invalid actual or external ports cannot reach either API')
+  form.$destroy()
+})
+
+test('node cards and details show the public endpoint and its actual listener without changing plain nodes', () => {
+  const Vue = require('vue/dist/vue.common.js')
+  const utils = loadModule(read('src/utils/node.js'), {})
+  const descriptor = compiler.parse({ source: read('src/views/node/list/index.vue') })
+  const component = loadModule(descriptor.script.content, new Proxy({}, {
+    has: () => true,
+    get: (_, name) => {
+      if (name === '@/utils/node') return utils
+      if (name === '@/utils/permission') return () => true
+      if (name === '@/utils/account') return loadModule(read('src/utils/account.js'), {})
+      if (name === '@/utils') return { timeStampToDate: (value) => value }
+      return {}
+    }
+  })).default
+  const compiled = compileRender(descriptor.template.content)
+  const translations = loadModule(read('src/lang/zh.js'), {}).default.table
+  const View = Vue.extend({ ...component, components: {}, mixins: [], created: undefined,
+    beforeCreate() {
+      this.$t = (key, params = {}) => String(translations[key.replace(/^table\./, '')] || key)
+        .replace('{external}', params.external).replace('{actual}', params.actual)
+    },
+    render: compiled.render, staticRenderFns: compiled.staticRenderFns })
+  const view = new View()
+  view.nodeTypes = [{ id: 1, name: 'Xray' }]
+  view.nodeServers = [{ id: 1, name: 'Fixture server' }]
+  view.listLoading = false
+  view.list = [
+    { id: 1, nodeServerId: 1, nodeTypeId: 1, name: 'Mapped', domain: 'mapped.example.com', port: 8443, externalPort: 443 },
+    { id: 2, nodeServerId: 1, nodeTypeId: 1, name: 'Plain', domain: 'plain.example.com', port: 2443, externalPort: 0 }
+  ]
+  view.nodeDetail = { ...view.list[0] }
+  view.detailId = 1
+  const rendered = view._render()
+  assert.match(vnodeText(rendered), /mapped\.example\.com:443/)
+  assert.match(vnodeText(rendered), /plain\.example\.com:2443/)
+  assert.match(vnodeText(rendered), /端口 443 → 8443/)
+  const details = vnodeTree(rendered).filter((node) => node.data && node.data.staticClass === 'kv')
+  assert.ok(details.some((node) => vnodeText(node).trim() === '对外端口443'))
+  assert.ok(details.some((node) => vnodeText(node).trim() === '实际端口8443'))
+  const node = { nodeTypeId: 0, port: 8443, externalPort: 443 }
+  utils.handleNodeDetail(node, { externalPort: 0 })
+  assert.equal(utils.nodeConnectionPort(node), 8443)
+  utils.handleNodeUpdate(node, { externalPort: 443 })
+  assert.equal(utils.nodeConnectionPort(node), 443)
+  view.$destroy()
+})

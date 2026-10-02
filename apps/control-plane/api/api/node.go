@@ -42,7 +42,10 @@ func SelectNodeInfo(c *gin.Context) {
 
 func CreateNode(c *gin.Context) {
 	var nodeCreateDto dto.NodeCreateDto
-	_ = c.ShouldBindJSON(&nodeCreateDto)
+	if err := c.ShouldBindJSON(&nodeCreateDto); err != nil {
+		vo.Fail(constant.ValidateFailed, c)
+		return
+	}
 	if err := validate.Struct(&nodeCreateDto); err != nil {
 		vo.Fail(constant.ValidateFailed, c)
 		return
@@ -88,7 +91,10 @@ func DeleteNodeById(c *gin.Context) {
 
 func UpdateNodeById(c *gin.Context) {
 	var nodeUpdateDto dto.NodeUpdateDto
-	_ = c.ShouldBindJSON(&nodeUpdateDto)
+	if err := c.ShouldBindJSON(&nodeUpdateDto); err != nil {
+		vo.Fail(constant.ValidateFailed, c)
+		return
+	}
 	if err := validate.Struct(&nodeUpdateDto); err != nil {
 		vo.Fail(constant.ValidateFailed, c)
 		return

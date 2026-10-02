@@ -2,7 +2,7 @@
 
 [简体中文](README.md) | English
 
-These guides describe TrojanPanel Next **v1.0.2-rc.8**.
+These guides describe TrojanPanel Next **v1.0.2-rc.9**.
 
 | Topic | Guide |
 | --- | --- |
@@ -19,6 +19,7 @@ These guides describe TrojanPanel Next **v1.0.2-rc.8**.
 | Renewal and mTLS trust | [Certificate maintenance](certificates.md) |
 | Operations and troubleshooting | [Operations](deployment_EN.md#operations) · [Troubleshooting](deployment_EN.md#troubleshooting) |
 | Web operations | [User guide](user-guide.md) |
+| Proxy external/actual ports, SNI, and UDP forwarding | [Port forwarding](port-forwarding_EN.md) |
 | API access | [API guide](api.md) |
 | Architecture and module relationships | [Architecture](architecture/domain-context.md) |
 | Building, testing, and contributing | [Development](development_EN.md) |
