@@ -2131,3 +2131,70 @@ test('registered LiquidDescriptions items render labels, values and nested conte
   descriptions.$destroy()
   view.$destroy()
 })
+
+test('LiquidDescriptions uses declared item spans within its current column count without creating extra tracks', () => {
+  const Vue = require('vue/dist/vue.common.js')
+  const { LiquidDescriptions, LiquidDescriptionsItem } = loadModule(read('src/components/LiquidStructural/index.js'), { vue: Vue })
+  const compiled = compileRender('<liquid-descriptions :column="columns"><liquid-descriptions-item label="ID">{{ jobId }}</liquid-descriptions-item><liquid-descriptions-item label="Status">Succeeded</liquid-descriptions-item><liquid-descriptions-item label="Image" :span="imageSpan">{{ image }}</liquid-descriptions-item></liquid-descriptions>')
+  const View = Vue.extend({ components: { LiquidDescriptions, LiquidDescriptionsItem },
+    data: () => ({ columns: 2, imageSpan: 2, jobId: 'a'.repeat(64), image: 'ghcr.io/1linhao/trojanpanelnext-node-agent:1.0.2-rc.12' }),
+    render: compiled.render, staticRenderFns: compiled.staticRenderFns })
+  const view = new View()
+  const Descriptions = Vue.extend(LiquidDescriptions)
+  const descriptions = new Descriptions({ parent: view })
+  const render = () => {
+    const vnode = view._render()
+    const item = vnode.componentOptions.children.find((child) => child.componentOptions && child.componentOptions.propsData.label === 'Image')
+    assert.equal(item.componentOptions.propsData.span, view.imageSpan, 'span belongs to the item props, not an ignored attribute')
+    descriptions.column = view.columns
+    descriptions.$slots.default = vnode.componentOptions.children
+    return descriptions._render()
+  }
+  let output = render()
+  assert.equal(output.data.style['--liquid-description-columns'], 2)
+  assert.deepEqual(output.children.map((item) => item.data.style['--liquid-description-span']), [1, 1, 2])
+  assert.equal(vnodeText(output.children[0]), 'ID' + view.jobId)
+  assert.equal(vnodeText(output.children[1]), 'StatusSucceeded')
+  assert.equal(vnodeText(output.children[2]), 'Image' + view.image)
+  view.imageSpan = 99
+  assert.equal(render().children[2].data.style['--liquid-description-span'], 2, 'an oversized span cannot introduce implicit columns')
+  view.columns = 1
+  assert.equal(render().children[2].data.style['--liquid-description-span'], 1, 'span follows a changed column count')
+  for (const invalid of [0, -1, 1.5, NaN, Infinity]) {
+    view.imageSpan = invalid
+    assert.equal(render().children[2].data.style['--liquid-description-span'], 1)
+  }
+  view.columns = 0
+  output = render()
+  assert.equal(output.data.style['--liquid-description-columns'], 1)
+  assert.equal(output.children[2].data.style['--liquid-description-span'], 1)
+  descriptions.$destroy()
+  view.$destroy()
+})
+
+test('description layouts wrap long job IDs and image references while mobile spans remain inside a single column', () => {
+  const css = require('postcss').parse(read('src/styles/liquid-structural.scss'))
+  const rule = (selector, mobile = false) => {
+    let result
+    css.walkRules((current) => {
+      const inMobile = current.parent.type === 'atrule' && current.parent.name === 'media' && current.parent.params === '(max-width: 760px)'
+      if (current.selector === selector && inMobile === mobile) result = Object.fromEntries(current.nodes.filter((node) => node.type === 'decl').map((node) => [node.prop, node.value]))
+    })
+    assert.ok(result, selector)
+    return result
+  }
+  assert.equal(rule('.liquid-descriptions')['grid-template-columns'], 'repeat(var(--liquid-description-columns, 3), minmax(0, 1fr))')
+  assert.equal(rule('.liquid-descriptions__item')['grid-column'], 'span var(--liquid-description-span, 1)')
+  const value = rule('.liquid-descriptions dd')
+  assert.equal(value['overflow-wrap'], 'anywhere', '64-character IDs cannot overflow into the adjacent status cell')
+  assert.equal(value['white-space'], 'normal')
+  assert.equal(value['min-width'], '0')
+  assert.equal(rule('.liquid-descriptions', true)['grid-template-columns'], '1fr')
+  assert.equal(rule('.liquid-descriptions__item', true)['grid-column'], '1 / -1', 'desktop spans cannot create extra mobile tracks')
+  const source = compiler.parse({ source: read('src/views/kernel-upgrade/NodeContainerManagement.vue') })
+  const imageCss = require('postcss').parse(source.styles[0].content)
+  let imageWrap
+  imageCss.walkRules('.image-name', (current) => { imageWrap = Object.fromEntries(current.nodes.map((node) => [node.prop, node.value])) })
+  assert.equal(imageWrap['overflow-wrap'], 'anywhere')
+  assert.equal(imageWrap['word-break'], undefined, 'image references prefer natural break opportunities')
+})

@@ -57,10 +57,10 @@
 .liquid-form.is-label-right .liquid-form-item__label { text-align: left; }
 .liquid-form.is-label-top .liquid-form-item__label { padding: 0 0 7px; text-align: left; }
 
-.liquid-descriptions { display: grid; gap: 1px; overflow: hidden; border-radius: 14px; background: var(--hairline); }
-.liquid-descriptions__item { min-width: 0; background: var(--glass); }
+.liquid-descriptions { display: grid; grid-template-columns: repeat(var(--liquid-description-columns, 3), minmax(0, 1fr)); gap: 1px; overflow: hidden; border-radius: 14px; background: var(--hairline); }
+.liquid-descriptions__item { grid-column: span var(--liquid-description-span, 1); min-width: 0; background: var(--glass); }
 .liquid-descriptions dt { padding: 10px 12px 4px; color: var(--ink-2); font-size: 12px; }
-.liquid-descriptions dd { min-height: 38px; margin: 0; padding: 3px 12px 10px; color: var(--ink); }
+.liquid-descriptions dd { min-width: 0; overflow-wrap: anywhere; white-space: normal; min-height: 38px; margin: 0; padding: 3px 12px 10px; color: var(--ink); }
 
 .liquid-message-host { position: fixed; z-index: 7000; top: 20px; left: 50%; display: flex; flex-direction: column; gap: 10px; width: min(92vw, 440px); transform: translateX(-50%); pointer-events: none; }
 .liquid-message { padding: 12px 16px; border: 1px solid var(--rim); border-radius: 14px; color: var(--ink); background: var(--glass-popover); box-shadow: var(--shadow-soft); opacity: 0; transform: translateY(-8px); transition: var(--ui-motion-normal) var(--ui-motion-easing-standard); backdrop-filter: var(--ui-backdrop-message); }
@@ -70,6 +70,7 @@
 .liquid-message.is-error { border-color: var(--bad-fg); }
 @media (max-width: 760px) {
   .liquid-descriptions { grid-template-columns: 1fr; }
+  .liquid-descriptions__item { grid-column: 1 / -1; }
 }
 
 /* Content only: geometry and material belong to the shared dialog packages. */

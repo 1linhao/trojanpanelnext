@@ -1,5 +1,5 @@
 trojanpanelnext:
-  release: "1.0.2-rc.12"
+  release: "1.0.2-rc.13"
   schema_version: 1
   purpose: node
 
@@ -8,7 +8,7 @@ trojanpanelnext:
   email: admin@example.com
 
   caddy_image: caddy:2.8.4
-  core_image: ghcr.io/1linhao/trojanpanelnext-node-agent:1.0.2-rc.12
+  core_image: ghcr.io/1linhao/trojanpanelnext-node-agent:1.0.2-rc.13
   # caddy (default) requests certificates; external uses existing host PEM files.
   node_certificate_mode: caddy
   # Required only in external mode. Use fullchain.pem and its unencrypted key.

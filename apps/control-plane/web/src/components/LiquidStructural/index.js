@@ -262,16 +262,31 @@ export const LiquidFormItem = {
 }
 
 // Preserve declaration VNodes so LiquidDescriptions can read their labels and slot content.
-export const LiquidDescriptionsItem = { name: 'LiquidDescriptionsItem', props: { label: [String, Number] }, render: () => null }
+export const LiquidDescriptionsItem = {
+  name: 'LiquidDescriptionsItem',
+  props: { label: [String, Number], span: { type: Number, default: 1 } },
+  render: () => null
+}
 export const LiquidDescriptions = {
   name: 'LiquidDescriptions',
   props: { column: { type: Number, default: 3 }, border: Boolean },
   render(h) {
-    const items = (this.$slots.default || []).filter((vnode) => vnode && vnode.componentOptions).map((vnode) => ({
-      label: vnode.componentOptions.propsData && vnode.componentOptions.propsData.label,
-      content: vnode.componentOptions.children || []
-    }))
-    return h('dl', { class: ['liquid-descriptions', { 'is-bordered': this.border }], style: { gridTemplateColumns: `repeat(${this.column}, minmax(0, 1fr))` } }, items.map((item) => h('div', { class: 'liquid-descriptions__item' }, [h('dt', [String(item.label || '')]), h('dd', item.content)])))
+    const columns = Number.isSafeInteger(this.column) && this.column > 0 ? this.column : 1
+    const items = (this.$slots.default || []).filter((vnode) => vnode && vnode.componentOptions).map((vnode) => {
+      const props = vnode.componentOptions.propsData || {}
+      return {
+        label: props.label,
+        span: Number.isSafeInteger(props.span) && props.span > 0 ? Math.min(props.span, columns) : 1,
+        content: vnode.componentOptions.children || []
+      }
+    })
+    return h('dl', {
+      class: ['liquid-descriptions', { 'is-bordered': this.border }],
+      style: { '--liquid-description-columns': columns }
+    }, items.map((item) => h('div', {
+      class: 'liquid-descriptions__item',
+      style: { '--liquid-description-span': item.span }
+    }, [h('dt', [String(item.label || '')]), h('dd', item.content)])))
   }
 }
 

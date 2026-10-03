@@ -256,6 +256,6 @@ export default {
 .section { margin-bottom: 20px; }
 .section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; padding-bottom: 14px; border-bottom: 1px solid var(--hairline); color: var(--ink); font-weight: 700; }
 .container-error { margin-bottom: 20px; color: var(--bad-fg); }
-.image-name { word-break: break-all; }
+.image-name { overflow-wrap: anywhere; }
 .submit { margin-top: 20px; }
 </style>
