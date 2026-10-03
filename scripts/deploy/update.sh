@@ -3,7 +3,7 @@
 # shellcheck disable=SC2034
 set -Eeuo pipefail
 
-SCRIPT_VERSION="1.0.2-rc.11"
+SCRIPT_VERSION="1.0.2-rc.12"
 TP_SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 if [[ ! -f "${TP_SCRIPT_DIR}/install.sh" || ! -f "${TP_SCRIPT_DIR}/uninstall.sh" ]]; then
   printf 'Missing matching install.sh/uninstall.sh. Use tp.sh update.\n' >&2
@@ -38,8 +38,9 @@ update_error() { printf 'Update refused: %s\n' "$1" >&2; return 1; }
 version_can_update() {
   local installed="$1" target="$2" i a b installed_pre target_pre
   local -a installed_core target_core old_ids new_ids
-  [[ "${installed}" =~ ^[1-9][0-9]*\.[0-9]+(\.[0-9]+)?(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]] || return 1
-  [[ "${target}" =~ ^[1-9][0-9]*\.[0-9]+(\.[0-9]+)?(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]] || return 1
+  ((${#installed} <= 64 && ${#target} <= 64)) || return 1
+  [[ "${installed}" =~ ^[1-9][0-9]*\.(0|[1-9][0-9]*)(\.(0|[1-9][0-9]*))?(-rc\.[1-9][0-9]*)?$ ]] || return 1
+  [[ "${target}" =~ ^[1-9][0-9]*\.(0|[1-9][0-9]*)(\.(0|[1-9][0-9]*))?(-rc\.[1-9][0-9]*)?$ ]] || return 1
   IFS=. read -r -a installed_core <<<"${installed%%-*}"
   IFS=. read -r -a target_core <<<"${target%%-*}"
   for i in 0 1 2; do
@@ -185,14 +186,117 @@ assert_update_mount_count() {
 }
 
 check_pending_host_removal() {
-  local path
+  local path job=/etc/trojanpanelnext-host/update.json
   # The host helper snapshots TLS before launching remove, and writes the
   # result/finalize receipts only afterward. Any such file means an operation
   # has started; an update must not erase or replace that state.
   for path in /etc/trojanpanelnext-host/{result.json,finalize.json,server.crt,server.key,client-ca.crt} /usr/local/lib/trojanpanelnext-host/cleanup-ready; do
     [[ ! -e "${path}" ]] || { update_error 'Node maintenance removal is pending; finish it before updating'; return 1; }
   done
+  if [[ -e "${job}" || -L "${job}" ]]; then
+    [[ -f "${job}" && ! -L "${job}" ]] || { update_error 'Invalid host update state'; return 1; }
+    case "$(yq -r '.job.status' "${job}")" in
+    queued | running)
+      [[ "${TP_HOST_UPDATE_JOB:-}" =~ ^[0-9a-f]{64}$ &&
+         "${TP_HOST_UPDATE_JOB}" == "$(yq -r '.job.id' "${job}")" &&
+         "${INSTALLER_VERSION}" == "$(yq -r '.job.targetVersion' "${job}")" &&
+         "${NODE_SERVER_ID}" == "$(yq -r '.nodeId' "${job}")" ]] || {
+        update_error 'Node container update is active; wait for its worker'; return 1;
+      } ;;
+    succeeded | failed) ;;
+    *) update_error 'Invalid host update state'; return 1 ;;
+    esac
+  fi
 }
+
+admit_node_update() {
+  [[ "${TP_PURPOSE}" == node ]] || return 0
+  if [[ -z "${TP_HOST_UPDATE_JOB:-}" ]]; then UPDATE_CLI_TOKEN="${UPDATE_WORKSPACE##*.}"; fi
+  admit_node_update_locked
+}
+
+admit_node_update_locked() (
+  local marker="${KERNEL_RUNTIME_PATH}/container-update.json" operation stage="" owner status
+  require_commands flock sync
+  [[ -d "${KERNEL_RUNTIME_PATH}" && ! -L "${KERNEL_RUNTIME_PATH}" && ! -L "${KERNEL_RUNTIME_PATH}/maintenance.lock" ]] || {
+    update_error 'Invalid Node runtime maintenance directory'; exit 1;
+  }
+  exec {maintenance_fd}>"${KERNEL_RUNTIME_PATH}/maintenance.lock"
+  flock -n "${maintenance_fd}" || { update_error 'Node maintenance admission is busy'; exit 1; }
+  check_pending_host_removal || exit 1
+  if [[ -e "${marker}" || -L "${marker}" ]]; then
+    [[ -f "${marker}" && ! -L "${marker}" ]] || { update_error 'Invalid container update marker'; exit 1; }
+    status="$(yq -r '.status' "${marker}")"
+    owner="$(yq -r '.owner // ""' "${marker}")"
+    case "${status}" in
+    queued | running)
+      [[ -n "${TP_HOST_UPDATE_JOB:-}" && "${owner}" == "" &&
+         "$(yq -r '.jobId' "${marker}")" == "${TP_HOST_UPDATE_JOB}" ]] || {
+        update_error 'Node container update is active'; exit 1;
+      } ;;
+    succeeded | failed) ;;
+    *) update_error 'Invalid container update marker'; exit 1 ;;
+    esac
+  elif [[ -n "${TP_HOST_UPDATE_JOB:-}" ]]; then
+    update_error 'The admitted worker marker is missing'; exit 1
+  fi
+  shopt -s nullglob
+  for operation in "${KERNEL_RUNTIME_PATH}/operations/"*.json; do
+    [[ -f "${operation}" && ! -L "${operation}" ]] || { update_error 'Invalid kernel operation state'; exit 1; }
+    case "$(yq -r '.stage' "${operation}")" in
+    succeeded | failed | rolled_back) ;;
+    *) update_error 'A kernel operation is active; wait before updating containers'; exit 1 ;;
+    esac
+  done
+  [[ -z "${TP_HOST_UPDATE_JOB:-}" ]] || exit 0
+  chmod 700 -- "${KERNEL_RUNTIME_PATH}"
+  stage="$(mktemp "${KERNEL_RUNTIME_PATH}/.container-update.XXXXXX")"
+  trap '[[ -z "${stage}" ]] || rm -f -- "${stage}"' EXIT
+  TP_CLI_TOKEN="${UPDATE_CLI_TOKEN}" TP_CLI_NODE_ID="${NODE_SERVER_ID}" yq -n -o=json '{
+    "status":"running", "owner":"cli", "token":strenv(TP_CLI_TOKEN),
+    "nodeId":(strenv(TP_CLI_NODE_ID) | tonumber)
+  }' >"${stage}"
+  chmod 600 -- "${stage}"
+  mv -T -- "${stage}" "${marker}"
+  stage=""
+  sync -f "${KERNEL_RUNTIME_PATH}"
+)
+
+clear_cli_update_marker() (
+  [[ -n "${UPDATE_CLI_TOKEN:-}" ]] || exit 0
+  local marker="${KERNEL_RUNTIME_PATH}/container-update.json"
+  [[ -d "${KERNEL_RUNTIME_PATH}" && ! -L "${KERNEL_RUNTIME_PATH}" && ! -L "${KERNEL_RUNTIME_PATH}/maintenance.lock" ]] || exit 1
+  exec {maintenance_fd}>"${KERNEL_RUNTIME_PATH}/maintenance.lock"
+  flock -w 10 "${maintenance_fd}" || exit 1
+  if [[ -f "${marker}" && ! -L "${marker}" &&
+        "$(yq -r '.owner' "${marker}")" == cli &&
+        "$(yq -r '.token' "${marker}")" == "${UPDATE_CLI_TOKEN}" ]]; then
+    rm -f -- "${marker}"
+    sync -f "${KERNEL_RUNTIME_PATH}"
+  fi
+)
+
+restore_host_maintenance() (
+  local entry name staged=""
+  trap '[[ -z "${staged}" ]] || rm -f -- "${staged}"' EXIT
+  shopt -s nullglob dotglob
+  for entry in "${UPDATE_WORKSPACE}/host-state/"*; do
+    name="${entry##*/}"
+    [[ "${name}" == update.json ]] && continue
+    cp -a -- "${entry}" /etc/trojanpanelnext-host/ || exit 1
+  done
+  for entry in "${UPDATE_WORKSPACE}/host-library/"*; do
+    name="${entry##*/}"
+    if [[ "${name}" == tp-host-agent ]]; then
+      staged="$(mktemp /usr/local/lib/trojanpanelnext-host/.tp-host-agent.XXXXXX)"
+      cp -a -- "${entry}" "${staged}" || exit 1
+      mv -T -- "${staged}" /usr/local/lib/trojanpanelnext-host/tp-host-agent || exit 1
+      staged=""
+    else
+      cp -a -- "${entry}" /usr/local/lib/trojanpanelnext-host/ || exit 1
+    fi
+  done
+)
 
 check_update_deployment() {
   local directory mount runtime
@@ -375,8 +479,7 @@ restore_update() {
   fi
   if [[ "${UPDATE_HELPER_STOPPED:-0}" == 1 ]]; then
     if [[ "${UPDATE_HELPER_REPLACED:-0}" == 1 ]]; then
-      cp -a -- "${UPDATE_WORKSPACE}/host-state/." /etc/trojanpanelnext-host/ || failed=1
-      cp -a -- "${UPDATE_WORKSPACE}/host-library/." /usr/local/lib/trojanpanelnext-host/ || failed=1
+      restore_host_maintenance || failed=1
       cp -a -- "${UPDATE_WORKSPACE}/host-service" /etc/systemd/system/trojanpanelnext-host.service || failed=1
     fi
     systemctl daemon-reload || failed=1
@@ -403,13 +506,24 @@ finish_update() {
     set -e
     ((status != 0)) || status=1
   fi
+  if [[ "${UPDATE_KEEP_WORKSPACE:-0}" != 1 ]]; then
+    if ! clear_cli_update_marker; then
+      printf 'Container update admission state needs manual recovery.\n' >&2
+      UPDATE_KEEP_WORKSPACE=1
+      status=1
+    fi
+  fi
   if [[ -n "${UPDATE_WORKSPACE:-}" && "${UPDATE_KEEP_WORKSPACE:-0}" != 1 ]]; then rm -rf -- "${UPDATE_WORKSPACE}"; fi
-  [[ -z "${UPDATE_LOCK_DIR:-}" ]] || rmdir -- "${UPDATE_LOCK_DIR}"
+  if [[ "${UPDATE_KEEP_WORKSPACE:-0}" != 1 && -n "${UPDATE_LOCK_DIR:-}" &&
+        "$(stat -c '%d:%i' "${UPDATE_LOCK_DIR}" 2>/dev/null)" == "${UPDATE_LOCK_ID}" ]]; then
+    rmdir -- "${UPDATE_LOCK_DIR}"
+  fi
   exit "${status}"
 }
 
 perform_update() {
   prepare_update_config
+  admit_node_update
   check_update_deployment
   local image i name saved
   for image in "${UPDATE_IMAGES[@]}"; do docker pull "${image}"; done
@@ -486,7 +600,7 @@ main() {
   if handle_metadata "$@"; then return; fi
   read_update_options "$@"
   require_root
-  require_commands docker curl openssl yq realpath mktemp install cp mv ln chmod rm cmp date grep awk seq
+  require_commands docker curl openssl yq realpath mktemp install cp mv ln chmod rm cmp date grep awk seq stat
   require_yq
   docker info >/dev/null
   trap finish_update EXIT
@@ -499,6 +613,8 @@ main() {
     update_error "another update or stale update lock exists: ${lock}"; return 1
   fi
   UPDATE_LOCK_DIR="${lock}"
+  UPDATE_LOCK_ID="$(stat -c '%d:%i' "${lock}")"
+  exec {UPDATE_GLOBAL_LOCK_FD}<"${lock}"
   perform_update
 }
 

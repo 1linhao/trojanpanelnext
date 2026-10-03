@@ -134,6 +134,46 @@ const nodeServers = [
   { id: 5, name: 'Hong Kong', ip: 'hk.example.com', grpcPort: 8104, grpcTLSMode: 'mtls', grpcTLSServerName: 'core-hk.example.com', trafficPeriod: 'month', trafficLimitMode: 'combined', trafficTotalLimit: 1649267441664, trafficUploadLimit: 0, trafficDownloadLimit: 0, status: 1, trojanPanelCoreVersion: '2.3.0', kernelSummary: 'xray 25.8.3' }
 ]
 
+// Container state changes only in the local fixture; no host operations run.
+const containerStates = new Map(nodeServers.map((server) => [server.id, {
+  currentVersion: server.id === 5 ? productVersion : '1.0', job: null, queuedAt: 0,
+  outcome: server.id === 2 ? 'failed' : 'succeeded'
+}]))
+let containerJobId = 0
+const containerSnapshot = (id) => {
+  const state = containerStates.get(id)
+  if (!state) throw new Error('Node server not found')
+  if (id === 3) throw new Error('Old Node: upgrade Node and host maintenance service using CLI')
+  if (id === 4) throw new Error('Node is offline; restore connectivity before updating')
+  if (state.job && ['queued', 'running'].includes(state.job.status)) {
+    const elapsed = Date.now() - state.queuedAt
+    if (elapsed >= Number(process.env.MOCK_CONTAINER_UPDATE_MS || 5000)) {
+      state.job.status = state.outcome
+      state.job.finishedAt = new Date().toISOString()
+      if (state.outcome === 'succeeded') state.currentVersion = state.job.targetVersion
+      else state.job.error = 'Fixture health check failed; previous Agent container restored'
+    } else if (elapsed >= 500) {
+      state.job.status = 'running'
+      state.job.startedAt = new Date(state.queuedAt + 500).toISOString()
+    }
+  }
+  return {
+    nodeId: id, currentVersion: state.currentVersion,
+    image: `ghcr.io/1linhao/trojanpanelnext-node-agent:${state.currentVersion}`,
+    updateSupported: true, targetVersion: productVersion,
+    job: state.job ? { ...state.job } : null
+  }
+}
+const startContainerUpdate = (id) => {
+  const inventory = containerSnapshot(id)
+  if (inventory.job && ['queued', 'running'].includes(inventory.job.status)) throw new Error('Node container update already in progress')
+  const state = containerStates.get(id)
+  state.queuedAt = Date.now()
+  state.job = { id: ++containerJobId, fromVersion: state.currentVersion, targetVersion: productVersion,
+    status: 'queued', error: '', startedAt: '', finishedAt: '' }
+  return { ...state.job }
+}
+
 const clearedServerTraffic = new Set()
 const serverTrafficStatus = (server) => {
   const unlimited = server.trafficPeriod === 'none'
@@ -237,6 +277,30 @@ const server = http.createServer((req, res) => {
     return
   }
   res.setHeader('Content-Type', 'application/json; charset=utf-8')
+
+  if (path === '/container/inventory') {
+    if (!isSysadminSession) { res.end(JSON.stringify({ code: 50401, message: 'System administrator required' })); return }
+    try {
+      const id = Number(url.searchParams.get('nodeServerId'))
+      if (req.method !== 'GET' || !Number.isSafeInteger(id) || id <= 0) throw new Error('Invalid node server ID')
+      res.end(ok(containerSnapshot(id)))
+    } catch (error) { res.end(JSON.stringify({ code: 50000, type: 'error', message: error.message })) }
+    return
+  }
+
+  if (path === '/container/update') {
+    let body = ''
+    req.on('data', (chunk) => { body += chunk })
+    req.on('end', () => {
+      if (!isSysadminSession) { res.end(JSON.stringify({ code: 50401, message: 'System administrator required' })); return }
+      try {
+        const params = JSON.parse(body || '{}')
+        if (req.method !== 'POST' || Object.keys(params).length !== 1 || !Number.isSafeInteger(params.nodeServerId) || params.nodeServerId <= 0) throw new Error('Only a valid node server ID is accepted')
+        res.end(ok(startContainerUpdate(params.nodeServerId)))
+      } catch (error) { res.end(JSON.stringify({ code: 50000, type: 'error', message: error.message })) }
+    })
+    return
+  }
 
   if (path === '/__fixture/accountLoginLimit') {
     if (!isSysadminSession) { res.end(JSON.stringify({ code: 50401, message: 'System administrator required' })); return }
@@ -535,10 +599,10 @@ const server = http.createServer((req, res) => {
     '/kernel/inventory': {
       os: 'linux',
       arch: 'amd64',
-      kernels: {
-        xray: { version: '25.8.3', sha256: 'mock-xray', inUse: true },
-        hysteria2: { version: '2.6.3', sha256: 'mock-hysteria2', inUse: false }
-      }
+      kernels: [
+        { kernel: 1, supported: true, currentVersion: '25.8.3', currentSha256: 'mock-xray', inUse: true, versions: [] },
+        { kernel: 2, supported: true, currentVersion: '2.6.3', currentSha256: 'mock-hysteria2', inUse: false, versions: [] }
+      ]
     },
     '/kernel/selectTaskPage': page('tasks', []),
     '/emailRecord/selectEmailRecordPage': page('emailRecords', []),

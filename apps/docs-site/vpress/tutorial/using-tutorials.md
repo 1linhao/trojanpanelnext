@@ -7,11 +7,11 @@
 ## 操作顺序
 
 1. 在服务器管理中登记 Node 主机；**ID** 列显示 Web 数据库生成的整数（≥ `1`），与 IP / 域名分列，也不是代理 ID。
-2. 保存后在 **部署 Node** 下载包；包内有 `node.yaml`、公开 `client-ca.crt`、`install-dependencies.sh`、`install-node.sh` 和使用说明五个文件。先在目标 Node 的 root Bash 中按[最小引导](https://github.com/1linhao/trojanpanelnext/blob/v1.0.2-rc.11/docs/deployment.md#dependency-bootstrap)准备基础工具并确认 systemd 运行，再安全传输、设置归档 `0600` 权限并以 `umask 077` 解包。
-3. 从解压目录先运行 `bash ./tpnext/install-dependencies.sh` 准备 Docker、mikefarah/yq v4 等依赖，再运行 `bash ./tpnext/install-node.sh`；安装入口自动准备公开 CA，按已填真实 ID 的 YAML 安装。自动依赖入口不安装 Node、不读取含凭据的 YAML，复用已有管理记录；其他 Linux 手动准备依赖后跳过依赖入口。步骤见[部署包安装](https://github.com/1linhao/trojanpanelnext/blob/v1.0.2-rc.11/docs/deployment.md#node-deployment-package)，安装后确认服务器在线。
+2. 保存后在 **部署 Node** 下载包；包内有 `node.yaml`、公开 `client-ca.crt`、`install-dependencies.sh`、`install-node.sh` 和使用说明五个文件。先在目标 Node 的 root Bash 中按[最小引导](https://github.com/1linhao/trojanpanelnext/blob/v1.0.2-rc.12/docs/deployment.md#dependency-bootstrap)准备基础工具并确认 systemd 运行，再安全传输、设置归档 `0600` 权限并以 `umask 077` 解包。
+3. 从解压目录先运行 `bash ./tpnext/install-dependencies.sh` 准备 Docker、mikefarah/yq v4 等依赖，再运行 `bash ./tpnext/install-node.sh`；安装入口自动准备公开 CA，按已填真实 ID 的 YAML 安装。自动依赖入口不安装 Node、不读取含凭据的 YAML，复用已有管理记录；其他 Linux 手动准备依赖后跳过依赖入口。步骤见[部署包安装](https://github.com/1linhao/trojanpanelnext/blob/v1.0.2-rc.12/docs/deployment.md#node-deployment-package)，安装后确认服务器在线。
 4. 在节点管理中选择该服务器，创建 Xray、Hysteria2 或 NaiveProxy 代理实例。使用外部转发入口时开启 **端口转发**：对外端口用于客户端，实际端口用于 Node 监听；转发规则自行维护。
 5. 配置用户角色、额度和有效期，导入账户对应的节点或订阅。
-6. 在首页查看流量，在内核管理中管理 Xray / Hysteria2 升级和回退任务。
+6. 在首页查看流量，在 **版本管理 → 内核版本管理** 中管理 Xray / Hysteria2 升级和回退任务；在 **TPNext 容器管理** 更新 Node Agent 到当前 Web 发布版本。
 
 ## 服务器卸载与删除
 
@@ -19,20 +19,24 @@
 
 “删除”不联系 Node，只清理 Web 中该服务器及关联代理、协议配置、流量、任务和连接记录，失联时也可执行。Node 主机上仍运行的项目服务不会停止，需要时在该主机执行本地卸载。
 
-删除一个代理实例只影响该实例。完整删除范围、离线处理与重新接入见[服务器删除指南](https://github.com/1linhao/trojanpanelnext/blob/v1.0.2-rc.11/docs/deployment.md#web-removal)。
+删除一个代理实例只影响该实例。完整删除范围、离线处理与重新接入见[服务器删除指南](https://github.com/1linhao/trojanpanelnext/blob/v1.0.2-rc.12/docs/deployment.md#web-removal)。
+
+## Node 容器更新
+
+系统管理员在 **版本管理 → TPNext 容器管理** 选择 Node，查看运行版本和最近更新结果，再确认更新。Node 维护服务需支持容器更新，Web 通过 mTLS 访问其 `grpc_port + 1`。旧版 Node 先用命令行升级一次；Web 镜像仍在 Web 主机更新。切换会短暂中断该 Node 的服务，更新保留数据和证书，失败时尝试恢复原部署。详见[镜像更新](https://github.com/1linhao/trojanpanelnext/blob/v1.0.2-rc.12/docs/deployment.md#updates)。
 
 ## 完整说明
 
-[Web 使用指南](https://github.com/1linhao/trojanpanelnext/blob/v1.0.2-rc.11/docs/user-guide.md)覆盖账户、订阅、代理、内核任务、系统设置和界面偏好。
+[Web 使用指南](https://github.com/1linhao/trojanpanelnext/blob/v1.0.2-rc.12/docs/user-guide.md)覆盖账户、订阅、代理、内核任务、系统设置和界面偏好。
 
 ## 用户备注
 
-只有 `sysadmin` 可在用户列表查看 **备注**，并在账户 **编辑** 弹窗中设置。备注为最多 500 个字符的纯文本，清空后保存即可删除。`admin` 和普通用户的页面、个人资料和接口响应不包含备注。详见[用户备注](https://github.com/1linhao/trojanpanelnext/blob/v1.0.2-rc.11/docs/user-guide.md#account-remarks)。
+只有 `sysadmin` 可在用户列表查看 **备注**，并在账户 **编辑** 弹窗中设置。备注为最多 500 个字符的纯文本，清空后保存即可删除。`admin` 和普通用户的页面、个人资料和接口响应不包含备注。详见[用户备注](https://github.com/1linhao/trojanpanelnext/blob/v1.0.2-rc.12/docs/user-guide.md#account-remarks)。
 
 ## 重置账号登录失败次数
 
-`sysadmin` 可在用户列表点击所选账号的 **重置登录失败次数** 图标，确认后清除该账号的失败计数和临时锁定。重置不改变密码或禁用状态，也不影响其他账号。详见[登录失败次数重置](https://github.com/1linhao/trojanpanelnext/blob/v1.0.2-rc.11/docs/user-guide.md#account-login-reset)。
+`sysadmin` 可在用户列表点击所选账号的 **重置登录失败次数** 图标，确认后清除该账号的失败计数和临时锁定。重置不改变密码或禁用状态，也不影响其他账号。详见[登录失败次数重置](https://github.com/1linhao/trojanpanelnext/blob/v1.0.2-rc.12/docs/user-guide.md#account-login-reset)。
 
 ## 代理端口转发
 
-使用 Nginx / NAT 入口时，在原节点表单中配置对外和实际端口，按 TCP / UDP 协议维护外部转发。TCP TLS 分流要求客户端 SNI 与 Node 提供的证书域名一致；Hysteria2 的 UDP 和公开跳跃范围需独立规划。见[端口转发](https://github.com/1linhao/trojanpanelnext/blob/v1.0.2-rc.11/docs/port-forwarding.md)。
+使用 Nginx / NAT 入口时，在原节点表单中配置对外和实际端口，按 TCP / UDP 协议维护外部转发。TCP TLS 分流要求客户端 SNI 与 Node 提供的证书域名一致；Hysteria2 的 UDP 和公开跳跃范围需独立规划。见[端口转发](https://github.com/1linhao/trojanpanelnext/blob/v1.0.2-rc.12/docs/port-forwarding.md)。

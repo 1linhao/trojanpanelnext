@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_VERSION="1.0.2-rc.11"
+SCRIPT_VERSION="1.0.2-rc.12"
 TP_SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 if [[ ! -f "${TP_SCRIPT_DIR}/common.sh" ]]; then
   printf 'Missing common.sh. Use tp.sh to download the command and its dependencies.\n' >&2
@@ -151,12 +151,54 @@ remove_project() {
   echo_content skyBlue "---> Trojan Panel ${TP_PURPOSE} side removed (purge data: ${TP_PURGE_DATA})"
 }
 
+finish_removal() {
+  local status="$?"
+  trap - EXIT INT TERM
+  if [[ -n "${TP_REMOVAL_LOCK_DIR:-}" &&
+        "$(stat -c '%d:%i' "${TP_REMOVAL_LOCK_DIR}" 2>/dev/null)" == "${TP_REMOVAL_LOCK_ID}" ]]; then
+    rmdir -- "${TP_REMOVAL_LOCK_DIR}"
+  fi
+  exit "${status}"
+}
+
+lock_removal() {
+  local lock=/run/trojanpanelnext-update.lock marker
+  if [[ "${TP_HOST_PRODUCT_LOCKED:-0}" != 1 ]]; then
+    mkdir -m 0700 -- "${lock}" || { printf 'Another update or removal is active.\n' >&2; return 1; }
+    TP_REMOVAL_LOCK_DIR="${lock}"
+    TP_REMOVAL_LOCK_ID="$(stat -c '%d:%i' "${lock}")"
+    exec {TP_REMOVAL_PRODUCT_LOCK_FD}<"${lock}"
+  fi
+  trap finish_removal EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  [[ "${TP_PURPOSE}" == node ]] || return 0
+  require_commands flock
+  [[ ! -L "${KERNEL_RUNTIME_PATH}" ]] || { printf 'Invalid Node runtime directory.\n' >&2; return 1; }
+  mkdir -p -- "${KERNEL_RUNTIME_PATH}"
+  if [[ "${TP_HOST_MAINTENANCE_LOCKED:-0}" != 1 ]]; then
+    [[ ! -L "${KERNEL_RUNTIME_PATH}/maintenance.lock" ]] || { printf 'Invalid maintenance lock.\n' >&2; return 1; }
+    exec {TP_REMOVAL_MAINTENANCE_FD}>"${KERNEL_RUNTIME_PATH}/maintenance.lock"
+    flock -n "${TP_REMOVAL_MAINTENANCE_FD}" || { printf 'Node maintenance is active.\n' >&2; return 1; }
+  fi
+  marker="${KERNEL_RUNTIME_PATH}/container-update.json"
+  if [[ -e "${marker}" || -L "${marker}" ]]; then
+    [[ -f "${marker}" && ! -L "${marker}" ]] || { printf 'Invalid container update state.\n' >&2; return 1; }
+    case "$(yq -r '.status' "${marker}")" in
+    queued | running) printf 'Node container update is active.\n' >&2; return 1 ;;
+    succeeded | failed) ;;
+    *) printf 'Invalid container update state.\n' >&2; return 1 ;;
+    esac
+  fi
+}
+
 main() {
   if handle_metadata "$@"; then return; fi
   parse_config_options remove "$@"
   validate_config
   echo_content skyBlue "Operation: remove; purpose: ${TP_PURPOSE}; config: ${TP_CONFIG_FILE}; release: ${INSTALLER_VERSION}"
-  require_commands docker realpath rm rmdir
+  require_commands docker realpath rm rmdir mkdir stat
+  lock_removal
   docker info >/dev/null
   remove_project
 }

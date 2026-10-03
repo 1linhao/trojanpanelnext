@@ -261,7 +261,8 @@ export const LiquidFormItem = {
   }
 }
 
-export const LiquidDescriptionsItem = { name: 'LiquidDescriptionsItem', functional: true, props: { label: [String, Number] }, render: () => null }
+// Preserve declaration VNodes so LiquidDescriptions can read their labels and slot content.
+export const LiquidDescriptionsItem = { name: 'LiquidDescriptionsItem', props: { label: [String, Number] }, render: () => null }
 export const LiquidDescriptions = {
   name: 'LiquidDescriptions',
   props: { column: { type: Number, default: 3 }, border: Boolean },

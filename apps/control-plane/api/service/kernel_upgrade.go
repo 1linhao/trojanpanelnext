@@ -15,6 +15,9 @@ import (
 
 var kernelNodeLocks sync.Map
 
+const kernelAdmissionTimeout = 55 * time.Second
+const kernelAdmissionConcurrency = 16
+
 func GetNodeKernelInventory(token string, nodeServerId uint) (*core.KernelInventoryVo, error) {
 	server, err := dao.SelectNodeServer(map[string]interface{}{"id": nodeServerId})
 	if err != nil {
@@ -24,20 +27,30 @@ func GetNodeKernelInventory(token string, nodeServerId uint) (*core.KernelInvent
 }
 
 func CreateKernelTask(request dto.KernelTaskCreateDto, operator vo.AccountVo, token string) (*model.KernelUpgradeTask, error) {
-	nodeLifecycle.RLock()
-	defer nodeLifecycle.RUnlock()
+	if !nodeMaintenanceAdmission.TryLock() {
+		return nil, errors.New("another Node maintenance request is being admitted; retry when it finishes")
+	}
+	defer nodeMaintenanceAdmission.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), kernelAdmissionTimeout)
+	defer cancel()
 	seenNodes := make(map[uint]bool)
 	var servers []*model.NodeServer
 	for _, id := range request.NodeServerIds {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if seenNodes[id] {
 			continue
 		}
 		seenNodes[id] = true
-		server, err := dao.SelectNodeServer(map[string]interface{}{"id": id})
+		server, err := selectKernelServerSnapshot(ctx, id)
 		if err != nil {
 			return nil, err
 		}
 		servers = append(servers, server)
+	}
+	if err := checkNodeContainersIdle(ctx, servers, fetchNodeContainerInventory); err != nil {
+		return nil, err
 	}
 	if request.CanaryNodeServerId != 0 && !seenNodes[request.CanaryNodeServerId] {
 		return nil, errors.New("canary node must be included in nodeServerIds")
@@ -76,6 +89,11 @@ func CreateKernelTask(request dto.KernelTaskCreateDto, operator vo.AccountVo, to
 			items = append(items, item)
 		}
 	}
+	nodeLifecycle.Lock()
+	defer nodeLifecycle.Unlock()
+	if err := recheckKernelServerSnapshots(ctx, servers); err != nil {
+		return nil, err
+	}
 	if err := dao.CreateKernelUpgradeTask(task, items); err != nil {
 		return nil, err
 	}
@@ -99,13 +117,57 @@ func SelectKernelTask(id uint64) (*model.KernelUpgradeTask, error) {
 }
 
 func RetryKernelTask(request dto.KernelTaskRetryDto, token string) error {
+	if !nodeMaintenanceAdmission.TryLock() {
+		return errors.New("another Node maintenance request is being admitted; retry when it finishes")
+	}
+	defer nodeMaintenanceAdmission.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), kernelAdmissionTimeout)
+	defer cancel()
 	nodeLifecycle.RLock()
-	defer nodeLifecycle.RUnlock()
 	task, err := dao.SelectKernelUpgradeTask(request.Id)
+	nodeLifecycle.RUnlock()
 	if err != nil {
 		return err
 	}
-	items, err := dao.ResetKernelTaskItems(request.Id, request.ItemIds)
+	selected := make(map[uint64]bool)
+	for _, id := range request.ItemIds {
+		selected[id] = true
+	}
+	checked := make(map[uint]bool)
+	var servers []*model.NodeServer
+	var retryItemIDs []uint64
+	for _, item := range task.Items {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if item.Stage != "failed" && item.Stage != "rolled_back" || len(selected) > 0 && !selected[item.Id] {
+			continue
+		}
+		retryItemIDs = append(retryItemIDs, item.Id)
+		if checked[item.NodeServerId] {
+			continue
+		}
+		server, selectErr := selectKernelServerSnapshot(ctx, item.NodeServerId)
+		if selectErr != nil {
+			return selectErr
+		}
+		servers = append(servers, server)
+		checked[item.NodeServerId] = true
+	}
+	if len(retryItemIDs) == 0 {
+		return errors.New("no failed task items selected")
+	}
+	if err = checkNodeContainersIdle(ctx, servers, fetchNodeContainerInventory); err != nil {
+		return err
+	}
+	nodeLifecycle.Lock()
+	defer nodeLifecycle.Unlock()
+	if err = recheckKernelServerSnapshots(ctx, servers); err != nil {
+		return err
+	}
+	// Only retry items represented by the checked snapshot. An item that fails
+	// during the network preflight belongs to a subsequent retry request.
+	items, err := dao.ResetKernelTaskItems(request.Id, retryItemIDs)
 	if err != nil {
 		return err
 	}
@@ -114,6 +176,90 @@ func RetryKernelTask(request dto.KernelTaskRetryDto, token string) error {
 	}
 	go runKernelTask(task.Id, 0, items, token)
 	return nil
+}
+
+func selectKernelServerSnapshot(ctx context.Context, id uint) (*model.NodeServer, error) {
+	nodeLifecycle.RLock()
+	defer nodeLifecycle.RUnlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return dao.SelectNodeServer(map[string]interface{}{"id": id})
+}
+
+// The caller holds the lifecycle write lock until Create/Reset commits. Server
+// edits also use this lifecycle lock, so no endpoint can change after recheck.
+func recheckKernelServerSnapshots(ctx context.Context, servers []*model.NodeServer) error {
+	for _, snapshot := range servers {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		current, err := dao.SelectNodeServer(map[string]interface{}{"id": *snapshot.Id})
+		if err != nil {
+			return err
+		}
+		if current.Id == nil || current.Ip == nil || current.GrpcPort == nil || *snapshot.Id != *current.Id || *snapshot.Ip != *current.Ip || *snapshot.GrpcPort != *current.GrpcPort || !sameKernelNodeString(snapshot.Name, current.Name) || !sameKernelNodeString(snapshot.GrpcTLSMode, current.GrpcTLSMode) || !sameKernelNodeString(snapshot.GrpcTLSServerName, current.GrpcTLSServerName) || !sameRemovalFlag(snapshot.Removing, current.Removing) {
+			return fmt.Errorf("node server %d changed during kernel task preflight; retry", *snapshot.Id)
+		}
+	}
+	return ctx.Err()
+}
+
+func sameKernelNodeString(left, right *string) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
+}
+
+func checkNodeContainersIdle(ctx context.Context, servers []*model.NodeServer, fetch func(context.Context, *model.NodeServer) (*core.HostContainerInventory, error)) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	jobs := make(chan *model.NodeServer)
+	var wait sync.WaitGroup
+	var firstError error
+	var once sync.Once
+	for worker := 0; worker < kernelAdmissionConcurrency && worker < len(servers); worker++ {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case server, ok := <-jobs:
+					if !ok {
+						return
+					}
+					// Waiting for a worker does not consume this Node's own budget.
+					nodeCtx, stop := context.WithTimeout(ctx, core.HostContainerTimeout)
+					err := checkNodeContainerIdle(nodeCtx, server, fetch)
+					stop()
+					if err != nil {
+						once.Do(func() {
+							firstError = fmt.Errorf("node server %d: %w", *server.Id, err)
+							cancel()
+						})
+						return
+					}
+				}
+			}
+		}()
+	}
+enqueue:
+	for _, server := range servers {
+		select {
+		case jobs <- server:
+		case <-ctx.Done():
+			break enqueue
+		}
+	}
+	close(jobs)
+	wait.Wait()
+	if firstError != nil {
+		return firstError
+	}
+	return ctx.Err()
 }
 
 func ProbeAndEnableNodeServerMTLS(ctx context.Context, nodeServerId uint, serverName string) error {

@@ -2,7 +2,7 @@
 
 [简体中文](README.md) | English
 
-These guides describe TrojanPanel Next **v1.0.2-rc.11**.
+These guides describe TrojanPanel Next **v1.0.2-rc.12**.
 
 | Topic | Guide |
 | --- | --- |
@@ -14,7 +14,7 @@ These guides describe TrojanPanel Next **v1.0.2-rc.11**.
 | Register Node in Web | [Server management and server ID](deployment_EN.md#node-registration) |
 | Generate and install a Node deployment package | [Credential-bearing package, public CA, and installation](deployment_EN.md#node-deployment-package) |
 | Existing host certificates | [External certificate mode](deployment_EN.md#external-certificates) |
-| Product image updates | [Web and Node updates](deployment_EN.md#updates) |
+| Product image updates | [Web and Node updates](deployment_EN.md#updates) · [Remote Node updates](user-guide.md#image-updates) |
 | Local removal and Web server removal | [Removal](deployment_EN.md#removal) · [Uninstall or delete Web records only](deployment_EN.md#web-removal) |
 | Renewal and mTLS trust | [Certificate maintenance](certificates.md) |
 | Operations and troubleshooting | [Operations](deployment_EN.md#operations) · [Troubleshooting](deployment_EN.md#troubleshooting) |

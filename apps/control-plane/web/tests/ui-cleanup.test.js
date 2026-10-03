@@ -1727,3 +1727,407 @@ test('the UI deployment archive includes private executable dependency and insta
   }
   assert.match(guide, /Docker must be running before step 4/)
 })
+
+function containerManagementFixture(api = {}, feedback = {}, initialRoles = ['sysadmin'], initialServerId = 1, language = 'zh') {
+  const Vue = require('vue/dist/vue.common.js')
+  const roles = Vue.observable({ value: initialRoles })
+  const timers = new Map(), notices = []
+  let timerId = 0
+  const version = read('public/version').trim().replace(/^v/, '')
+  const descriptor = compiler.parse({ source: read('src/views/kernel-upgrade/NodeContainerManagement.vue') })
+  const component = loadModule(descriptor.script.content, {
+    '@/api/node-server': { selectNodeServerList: async () => ({ data: [{ id: 1, name: 'Tokyo' }, { id: 2, name: 'Singapore' }] }), ...api },
+    '@/api/container-management': {
+      containerInventory: async (id) => ({ data: { nodeId: id, currentVersion: '1.0', image: 'ghcr.io/1linhao/trojanpanelnext-node-agent:1.0', targetVersion: version, updateSupported: true, job: null } }),
+      updateNodeContainer: async () => ({ data: { id: 7, fromVersion: '1.0', targetVersion: version, status: 'queued', error: '', startedAt: '', finishedAt: '' } }), ...api
+    },
+    '@/utils/liquid-feedback': { MessageBox: { confirm: async () => {}, ...feedback } },
+    '@/utils/permission': (wanted) => wanted.some((role) => roles.value.includes(role)),
+    '@/utils': { timeStampToDate: (timestamp) => new Date(timestamp).toISOString() }
+  }, {
+    setTimeout: (callback, delay) => { const id = ++timerId; timers.set(id, { callback, delay }); return id },
+    clearTimeout: (id) => timers.delete(id)
+  }).default
+  const compiled = compileRender(descriptor.template.content)
+  const locale = loadModule(read(`src/lang/${language}.js`), {}).default
+  const View = Vue.extend({ ...component, components: {}, created: undefined,
+    beforeCreate() {
+      this.$t = (key, params = {}) => {
+        const value = key.split('.').reduce((result, part) => result && result[part], locale) || key
+        return Object.entries(params).reduce((result, [name, value]) => result.split(`{${name}}`).join(String(value)), value)
+      }
+      this.$notify = (notice) => notices.push(notice)
+    }, render: compiled.render, staticRenderFns: compiled.staticRenderFns })
+  return { view: new View({ propsData: { initialServerId } }), roles, Vue, notices, timers, version,
+    async poll(expectedDelay = 2000) {
+      const [id, timer] = timers.entries().next().value
+      timers.delete(id)
+      assert.equal(timer.delay, expectedDelay)
+      timer.callback()
+      await new Promise((resolve) => setImmediate(resolve))
+    }
+  }
+}
+
+test('version management keeps legacy links and mounts only the selected tab with accessible panels', () => {
+  const Vue = require('vue/dist/vue.common.js')
+  const descriptor = compiler.parse({ source: read('src/views/kernel-upgrade/index.vue') })
+  const component = loadModule(descriptor.script.content, {
+    '@/utils/permission': () => true, './KernelVersionManagement.vue': {}, './NodeContainerManagement.vue': {}
+  }).default
+  const compiled = compileRender(descriptor.template.content)
+  const replacements = []
+  for (const language of ['zh', 'en']) {
+    const locale = loadModule(read(`src/lang/${language}.js`), {}).default
+    const View = Vue.extend({ ...component, components: {}, beforeCreate() {
+      this.$t = (key) => key.split('.').reduce((value, part) => value && value[part], locale)
+      this.$route = Vue.observable({ path: '/server-manage/kernel-upgrade', query: { serverId: '2', taskIds: '7,8' } })
+      this.$router = { replace: (route) => { replacements.push(route); return Promise.resolve() } }
+    }, render: compiled.render, staticRenderFns: compiled.staticRenderFns })
+    const view = new View()
+    assert.equal(view.activeTab, 'kernel', 'existing kernel/task links retain their default tab')
+    assert.equal(view.serverId, 2)
+    assert.equal(vnodeTree(view._render()).filter((node) => node.tag === 'kernel-version-management').length, 1)
+    assert.equal(vnodeTree(view._render()).filter((node) => node.tag === 'node-container-management').length, 0)
+    view.selectTab('container')
+    assert.deepEqual(JSON.parse(JSON.stringify(replacements.at(-1))), {
+      path: '/server-manage/kernel-upgrade', query: { serverId: '2', taskIds: '7,8', tab: 'container' }
+    })
+    Vue.set(view.$route.query, 'tab', 'container')
+    const tree = vnodeTree(view._render())
+    assert.equal(tree.filter((node) => node.tag === 'kernel-version-management').length, 0)
+    assert.equal(tree.find((node) => node.tag === 'node-container-management').data.attrs['initial-server-id'], 2)
+    const panel = tree.find((node) => node.data && node.data.attrs && node.data.attrs.role === 'tabpanel')
+    assert.equal(panel.data.attrs.id, 'version-management-panel-container')
+    assert.equal(panel.data.attrs['aria-labelledby'], 'version-management-tab-container')
+    assert.ok(view.tabs.every((tab) => typeof tab.label === 'string' && tab.label.length > 0))
+    assert.equal(locale.route.kernelUpgrade, language === 'zh' ? '版本管理' : 'Version Management')
+    assert.equal(locale.kernel.manage, locale.route.kernelUpgrade)
+    view.$destroy()
+  }
+})
+
+test('container inventory displays fixed Web target, escaped job errors and sysadmin-only single-server actions in both languages', async () => {
+  for (const language of ['zh', 'en']) {
+    let calls = 0
+    const { view, roles, Vue, version } = containerManagementFixture({ containerInventory: async (id) => {
+      calls++
+      return { data: { nodeId: id, currentVersion: version, targetVersion: version, image: 'ghcr.io/1linhao/trojanpanelnext-node-agent:' + version,
+        updateSupported: true, job: { id: 12, status: 'failed', fromVersion: version, targetVersion: version, startedAt: '', finishedAt: '', error: '<img src=x onerror=alert(1)>' } } }
+    } }, {}, ['sysadmin'], 2, language)
+    await view.loadServers()
+    assert.equal(view.selectedServerId, 2)
+    assert.equal(view.canUpdate, true, 'same-version repair remains available')
+    const tree = vnodeTree(view._render())
+    assert.equal(tree.filter((node) => node.tag === 'liquid-select').length, 1)
+    assert.equal(tree.filter((node) => node.tag === 'liquid-input').length, 0, 'the Web-bound version cannot be edited')
+    assert.ok(vnodeText(view._render()).includes(version))
+    assert.ok(vnodeText(view._render()).includes('<img src=x onerror=alert(1)>'))
+    assert.equal(tree.some((node) => node.tag === 'img' || node.tag === 'small' || (node.data && node.data.domProps && node.data.domProps.innerHTML)), false)
+    assert.equal(view.formatTime(''), '—')
+    assert.equal(view.formatTime('invalid date'), '—')
+    assert.equal(view.formatTime('2026-10-03T08:00:00Z'), '2026-10-03T08:00:00.000Z')
+    roles.value = ['admin']
+    await Vue.nextTick()
+    assert.equal(view.canUpdate, false)
+    assert.equal(view.inventory, null)
+    assert.equal(view.servers.length, 0)
+    assert.equal(vnodeTree(view._render()).some((node) => node.tag === 'liquid-select' || node.tag === 'liquid-button'), false)
+    await view.loadServers()
+    await view.loadInventory()
+    await view.submitUpdate()
+    assert.equal(calls, 1, 'role loss cannot trigger additional inventory or update requests')
+    view.$destroy()
+  }
+})
+
+test('container update confirms downtime and retention once, submits only one server ID, and polls through completion', async () => {
+  const requests = [], confirmations = []
+  let decision, phase = 'idle'
+  const fixture = containerManagementFixture({
+    containerInventory: async (id) => ({ data: { nodeId: id, currentVersion: phase === 'succeeded' ? fixture.version : '1.0', image: 'official-agent-image',
+      targetVersion: fixture.version, updateSupported: true, job: phase === 'idle' ? null : { id: 7, fromVersion: '1.0', targetVersion: fixture.version, status: phase, error: '', startedAt: '', finishedAt: '' } } }),
+    updateNodeContainer: async (request) => { requests.push(request); phase = 'queued'; return { data: { id: 7, fromVersion: '1.0', targetVersion: fixture.version, status: phase } } }
+  }, { confirm: (message, title, options) => {
+    confirmations.push({ message, title, options })
+    return new Promise((resolve, reject) => { decision = { resolve, reject } })
+  } })
+  const { view, timers, notices } = fixture
+  await view.loadServers()
+  const pending = view.submitUpdate()
+  assert.equal(view.submitting, true)
+  assert.equal(requests.length, 0)
+  assert.match(confirmations[0].message, /Tokyo.*当前 Web.*短暂中断.*数据、凭据和证书将保留/)
+  assert.equal(confirmations[0].options.type, 'warning')
+  await view.submitUpdate()
+  assert.equal(confirmations.length, 1, 'a pending confirmation or submission cannot be repeated')
+  decision.resolve()
+  await pending
+  assert.deepEqual(JSON.parse(JSON.stringify(requests)), [{ nodeServerId: 1 }])
+  assert.equal(view.canUpdate, false)
+  assert.equal(timers.size, 1)
+  phase = 'running'
+  await fixture.poll()
+  assert.equal(view.job.status, 'running')
+  assert.equal(timers.size, 1)
+  phase = 'succeeded'
+  await fixture.poll()
+  assert.equal(view.inventory.currentVersion, fixture.version)
+  assert.equal(view.job.status, 'succeeded')
+  assert.equal(view.canUpdate, true)
+  assert.equal(timers.size, 0)
+  assert.equal(notices.length, 1)
+  assert.equal(notices[0].type, 'success')
+  await view.loadInventory()
+  assert.equal(notices.length, 1, 'refreshing an already completed job does not repeat its toast')
+  view.$destroy()
+})
+
+test('container cancellation, failed update, old Node and offline polling preserve meaningful feedback without automatic retries', async () => {
+  let decision, failPost = false, failInventory = false
+  const requests = []
+  const fixture = containerManagementFixture({
+    updateNodeContainer: async (request) => { requests.push(request); if (failPost) throw new Error('health preflight failed'); return { data: { id: 7, status: 'queued', targetVersion: fixture.version } } },
+    containerInventory: async (id) => {
+      if (failInventory) throw new Error('Old Node endpoint missing')
+      return { data: { nodeId: id, currentVersion: '1.0', targetVersion: fixture.version, image: 'official-agent', updateSupported: true,
+        job: { id: 7, status: 'failed', targetVersion: fixture.version, error: 'health check failed; previous container restored' } } }
+    }
+  }, { confirm: () => new Promise((resolve, reject) => { decision = { resolve, reject } }) })
+  const { view, timers, notices } = fixture
+  await view.loadServers()
+  assert.equal(view.job.status, 'failed')
+  assert.match(vnodeText(view._render()), /previous container restored/)
+  assert.equal(timers.size, 0)
+  let pending = view.submitUpdate()
+  decision.reject('cancel')
+  await pending
+  assert.equal(requests.length, 0)
+  assert.equal(view.submitting, false)
+  failPost = true
+  pending = view.submitUpdate()
+  decision.resolve()
+  await pending
+  assert.equal(requests.length, 1)
+  assert.match(view.loadError, /health preflight failed/)
+  assert.equal(notices.length, 0)
+  assert.equal(view.submitting, false)
+  failInventory = true
+  await view.loadInventory()
+  assert.match(view.loadError, /CLI.*宿主机维护服务.*失联/)
+  assert.equal(view.canUpdate, false)
+  assert.equal(timers.size, 0, 'offline/unsupported inventory stops polling instead of retrying forever')
+  failInventory = false
+  await view.refresh()
+  assert.equal(view.loadError, '')
+  assert.equal(view.canUpdate, true)
+  view.$destroy()
+})
+
+test('container selection and unmount invalidate stale requests and timers, including confirmation after role loss', async () => {
+  const pendingInventory = new Map(), requests = []
+  let decision
+  const fixture = containerManagementFixture({
+    containerInventory: (id) => new Promise((resolve) => pendingInventory.set(id, resolve)),
+    updateNodeContainer: async (request) => { requests.push(request); return { data: { id: 7, status: 'queued' } } }
+  }, { confirm: () => new Promise((resolve) => { decision = resolve }) })
+  const { view, roles, Vue, timers } = fixture
+  view.servers = [{ id: 1, name: 'Tokyo' }, { id: 2, name: 'Singapore' }]
+  const first = view.selectServer(1)
+  const second = view.selectServer(2)
+  const data = (id) => ({ data: { nodeId: id, currentVersion: '1.0', targetVersion: fixture.version, image: 'agent', updateSupported: true, job: { id: id + 10, status: 'running' } } })
+  pendingInventory.get(2)(data(2))
+  await second
+  pendingInventory.get(1)(data(1))
+  await first
+  assert.equal(view.inventory.nodeId, 2)
+  assert.equal(timers.size, 1, 'the stale server cannot start an additional poll')
+  const third = view.loadInventory()
+  assert.equal(timers.size, 0)
+  view.$destroy()
+  pendingInventory.get(2)(data(2))
+  await third
+  assert.equal(timers.size, 0, 'a late response after unmount cannot reschedule polling')
+  const confirmation = containerManagementFixture({ updateNodeContainer: async (request) => { requests.push(request); return { data: { id: 7, status: 'queued' } } } }, { confirm: () => new Promise((resolve) => { decision = resolve }) })
+  await confirmation.view.loadServers()
+  const pending = confirmation.view.submitUpdate()
+  confirmation.roles.value = ['user']
+  await confirmation.Vue.nextTick()
+  decision()
+  await pending
+  assert.equal(confirmation.view.inventory, null)
+  assert.equal(confirmation.view.submitting, false)
+  assert.equal(confirmation.timers.size, 0)
+  assert.equal(requests.length, 0)
+  confirmation.view.$destroy()
+  roles.value = ['admin']
+  await Vue.nextTick()
+})
+
+test('container API binds the target at the backend and suppresses repetitive request toasts without hiding authentication', async () => {
+  const requests = []
+  const api = loadModule(read('src/api/container-management.js'), { '@/utils/request': async (request) => { requests.push(request) } })
+  await api.containerInventory(2)
+  await api.updateNodeContainer({ nodeServerId: 2, targetVersion: 'untrusted', image: 'untrusted', shell: 'untrusted' })
+  assert.equal(requests[0].url, '/container/inventory')
+  assert.deepEqual(JSON.parse(JSON.stringify(requests[0].params)), { nodeServerId: 2 })
+  assert.equal(requests[1].url, '/container/update')
+  assert.deepEqual(JSON.parse(JSON.stringify(requests[1].data)), { nodeServerId: 2 })
+  for (const request of requests) { assert.equal(request.timeout, 15000); assert.equal(request.silentError, true) }
+  const messages = [], confirmations = []
+  let onResponse, onError
+  const service = { interceptors: { request: { use() {} }, response: { use(success, failure) { onResponse = success; onError = failure } } } }
+  loadModule(read('src/utils/request.js').replace('import.meta.env.VITE_BASE_API', "'/api'"), {
+    axios: { create: () => service },
+    '@/utils/liquid-feedback': { Message: (notice) => messages.push(notice), MessageBox: { confirm: (...args) => { confirmations.push(args); return Promise.resolve() } } },
+    '@/store': { getters: {}, dispatch: () => Promise.resolve() }, '@/utils/auth': { getToken: () => '' }, '@/lang': { t: (key) => key }
+  }, { Blob, location: { reload() {} } })
+  await assert.rejects(onResponse({ data: { code: 50000, message: 'offline' }, config: { silentError: true } }), /offline/)
+  await assert.rejects(onError(Object.assign(new Error('network offline'), { config: { silentError: true } })), /network offline/)
+  assert.equal(messages.length, 0)
+  await assert.rejects(onResponse({ data: { code: 50000, message: 'normal failure' }, config: {} }), /normal failure/)
+  assert.equal(messages.length, 1, 'ordinary requests retain shared error feedback')
+  await assert.rejects(onResponse({ data: { code: 50014, message: 'expired' }, config: { silentError: true } }), /expired/)
+  assert.equal(confirmations.length, 1, 'authentication handling remains active for quiet polls')
+})
+
+test('container mock endpoints are role-gated, single-server and advance queued jobs to success or failure', () => {
+  const EventEmitter = require('node:events')
+  let handler
+  const fixture = loadModule(read('tests/mock-api-server.js') + '\nexports.containers = { containerSnapshot, startContainerUpdate, containerStates }', {
+    http: { createServer: (callback) => { handler = callback; return { listen() {} } } }, fs, path, zlib: require('node:zlib')
+  }, { Buffer, URL, __dirname: path.join(root, 'tests'), process: { env: {}, stdout: { write() {} } } })
+  const call = (url, role = 'sysadmin', body) => {
+    const req = Object.assign(new EventEmitter(), { url, method: body ? 'POST' : 'GET', headers: { authorization: `Bearer ${role === 'sysadmin' ? 'mock' : role}-token` } })
+    let result
+    handler(req, { setHeader() {}, end(value) { result = JSON.parse(value) } })
+    if (body) { req.emit('data', JSON.stringify(body)); req.emit('end') }
+    return result
+  }
+  const kernelInventory = call('/api/kernel/inventory?nodeServerId=1').data
+  assert.equal(Array.isArray(kernelInventory.kernels), true, 'the preserved kernel tab receives the real array contract')
+  assert.deepEqual(Array.from(kernelInventory.kernels, (item) => item.kernel), [1, 2])
+  assert.equal(call('/api/container/inventory?nodeServerId=1', 'admin').code, 50401)
+  assert.equal(call('/api/container/update', 'user', { nodeServerId: 1 }).code, 50401)
+  assert.equal(call('/api/container/update', 'sysadmin', { nodeServerId: 1, targetVersion: 'untrusted' }).code, 50000)
+  const first = call('/api/container/update', 'sysadmin', { nodeServerId: 1 })
+  assert.equal(first.data.status, 'queued')
+  assert.equal(call('/api/container/update', 'sysadmin', { nodeServerId: 1 }).code, 50000, 'duplicate active work is rejected')
+  fixture.containers.containerStates.get(1).queuedAt = Date.now() - 1000
+  assert.equal(call('/api/container/inventory?nodeServerId=1').data.job.status, 'running')
+  fixture.containers.containerStates.get(1).queuedAt = Date.now() - 6000
+  const completed = call('/api/container/inventory?nodeServerId=1').data
+  assert.equal(completed.job.status, 'succeeded')
+  assert.equal(completed.currentVersion, completed.targetVersion)
+  assert.equal(fixture.containers.containerStates.get(2).job, null)
+  call('/api/container/update', 'sysadmin', { nodeServerId: 2 })
+  fixture.containers.containerStates.get(2).queuedAt = Date.now() - 6000
+  const failed = call('/api/container/inventory?nodeServerId=2').data
+  assert.equal(failed.job.status, 'failed')
+  assert.equal(failed.currentVersion, '1.0')
+  assert.match(failed.job.error, /previous Agent container restored/)
+  assert.match(call('/api/container/inventory?nodeServerId=3').message, /CLI/)
+  assert.match(call('/api/container/inventory?nodeServerId=4').message, /offline/)
+})
+
+test('an active container job survives temporary disconnects with bounded quiet backoff and manual recovery', async () => {
+  let fail = false, phase = 'running'
+  const fixture = containerManagementFixture({ containerInventory: async (id) => {
+    if (fail) throw new Error('maintenance socket interrupted during switch')
+    return { data: { nodeId: id, currentVersion: phase === 'succeeded' ? fixture.version : '1.0', image: 'agent', targetVersion: fixture.version,
+      updateSupported: true, job: { id: 7, status: phase, targetVersion: fixture.version } } }
+  } })
+  await fixture.view.loadServers()
+  assert.equal(fixture.view.job.status, 'running', 'reopening the page restores its durable active job')
+  fail = true
+  await fixture.poll()
+  assert.match(fixture.view.loadError, /暂时中断.*重新查询/)
+  assert.equal(fixture.view.job.status, 'running')
+  assert.equal(fixture.view.canUpdate, false)
+  await fixture.poll(4000)
+  await fixture.poll(8000)
+  for (let index = 0; index < 4; index++) await fixture.poll(15000)
+  assert.equal(fixture.timers.size, 0, 'consecutive failures stop at the retry bound')
+  assert.match(fixture.view.loadError, /手动刷新.*未确认结束/)
+  assert.equal(fixture.notices.length, 0, 'transient failures never generate repeated error toasts')
+  fail = false
+  phase = 'succeeded'
+  await fixture.view.refresh()
+  assert.equal(fixture.view.job.status, 'succeeded')
+  assert.equal(fixture.view.pollFailures, 0)
+  assert.equal(fixture.view.canUpdate, true)
+  assert.equal(fixture.notices.length, 1)
+  fixture.view.$destroy()
+})
+
+test('version navigation and headings use translated labels while keeping the existing route and role filter', () => {
+  const { createTrojanPanelShellModel } = loadModule(read('src/adapters/trojan-panel-shell.js'), { '@tp-ui/contracts': { createShellModel: (value) => value } })
+  for (const language of ['zh', 'en']) {
+    const locale = loadModule(read(`src/lang/${language}.js`), {}).default
+    const options = { activePath: '/server-manage/kernel-upgrade', pageTitle: locale.route.kernelUpgrade,
+      branding: { systemName: 'Trojan Panel' }, versionLabel: locale.route.kernelUpgrade, versionMobileLabel: locale.route.versionManagementShort }
+    const model = createTrojanPanelShellModel({ ...options, roles: ['sysadmin'] })
+    const item = model.groups.flatMap((group) => group.items).find((item) => item.key === options.activePath)
+    assert.equal(item.label, options.pageTitle)
+    assert.equal(item.mobileLabel, options.versionMobileLabel)
+    assert.equal(model.pageTitle, options.pageTitle)
+    for (const role of ['admin', 'user']) {
+      const restricted = createTrojanPanelShellModel({ ...options, roles: [role] })
+      assert.equal(restricted.groups.flatMap((group) => group.items).some((item) => item.key === options.activePath), false)
+    }
+  }
+})
+
+test('cached container pages stop polling on navigation away and refresh the durable job on return', async () => {
+  let calls = 0
+  const fixture = containerManagementFixture({ containerInventory: async (id) => {
+    calls++
+    return { data: { nodeId: id, currentVersion: '1.0', targetVersion: fixture.version, image: 'agent', updateSupported: true, job: { id: 7, status: 'running' } } }
+  } })
+  await fixture.view.loadServers()
+  assert.equal(fixture.timers.size, 1)
+  fixture.view.$options.deactivated[0].call(fixture.view)
+  assert.equal(fixture.timers.size, 0)
+  await fixture.view.loadInventory()
+  assert.equal(calls, 1, 'a cached hidden page cannot issue background requests')
+  fixture.view.$options.activated[0].call(fixture.view)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(calls, 2)
+  assert.equal(fixture.timers.size, 1)
+  fixture.view.$destroy()
+  assert.equal(fixture.timers.size, 0)
+})
+
+test('registered LiquidDescriptions items render labels, values and nested content instead of disappearing as functional comments', () => {
+  const Vue = require('vue/dist/vue.common.js')
+  const { LiquidDescriptions, LiquidDescriptionsItem } = loadModule(read('src/components/LiquidStructural/index.js'), { vue: Vue })
+  const compiled = compileRender('<liquid-descriptions :column="2" border><liquid-descriptions-item label="Version">{{ version }}</liquid-descriptions-item><liquid-descriptions-item label="Image"><span>{{ image }}</span></liquid-descriptions-item><liquid-descriptions-item v-if="error" label="Error">{{ error }}</liquid-descriptions-item></liquid-descriptions>')
+  const View = Vue.extend({ components: { LiquidDescriptions, LiquidDescriptionsItem },
+    data: () => ({ version: '1.0', image: 'ghcr.io/1linhao/trojanpanelnext-node-agent:1.0', error: '' }),
+    render: compiled.render, staticRenderFns: compiled.staticRenderFns })
+  const view = new View()
+  const vnode = view._render()
+  const Descriptions = Vue.extend(LiquidDescriptions)
+  const descriptions = new Descriptions({ parent: view, propsData: vnode.componentOptions.propsData })
+  const render = () => {
+    descriptions.$slots.default = view._render().componentOptions.children
+    return descriptions._render()
+  }
+  let output = render()
+  assert.equal(output.tag, 'dl')
+  assert.equal(output.children.length, 2)
+  assert.deepEqual(vnodeTree(output).filter((node) => node.tag === 'dt').map(vnodeText), ['Version', 'Image'])
+  assert.match(vnodeText(output), /Version1\.0Imageghcr\.io\/1linhao\/trojanpanelnext-node-agent:1\.0/)
+  assert.equal(vnodeTree(output).some((node) => node.tag === 'span'), true, 'nested slot content survives')
+  view.version = '1.0.2'
+  view.error = '<script>window.privateLeak=1</script>'
+  output = render()
+  assert.equal(output.children.length, 3)
+  assert.match(vnodeText(output), /Version1\.0\.2/)
+  assert.ok(vnodeText(output).includes(view.error))
+  assert.equal(vnodeTree(output).some((node) => node.tag === 'script' || (node.data && node.data.domProps && node.data.domProps.innerHTML)), false)
+  view.error = ''
+  assert.equal(render().children.length, 2, 'conditional items follow the live parent values')
+  descriptions.$destroy()
+  view.$destroy()
+})

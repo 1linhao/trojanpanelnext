@@ -95,6 +95,9 @@ func InitMySQL() {
 	if err = migrateAccountLoginLimitResetPermissions(); err != nil {
 		panic(err)
 	}
+	if err = migrateNodeContainerPermissions(); err != nil {
+		panic(err)
+	}
 }
 
 func migrateAccountRemarkColumn() error {

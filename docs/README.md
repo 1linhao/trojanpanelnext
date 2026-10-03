@@ -2,7 +2,7 @@
 
 简体中文 | [English](README_EN.md)
 
-本文档面向 TrojanPanel Next **v1.0.2-rc.11** 用户。
+本文档面向 TrojanPanel Next **v1.0.2-rc.12** 用户。
 
 | 主题 | 文档 |
 | --- | --- |
@@ -14,7 +14,7 @@
 | 在 Web 登记 Node | [服务器管理入口与服务器 ID](deployment.md#node-registration) |
 | 生成并安装 Node 部署包 | [含凭据配置、公开 CA 与包内入口](deployment.md#node-deployment-package) |
 | 使用已有证书 | [外部证书模式](deployment.md#external-certificates) |
-| 更新产品镜像 | [Web 与 Node 更新](deployment.md#updates) |
+| 更新产品镜像 | [Web 与 Node 更新](deployment.md#updates) · [Web 远程更新 Node](user-guide.md#image-updates) |
 | 本地卸载与 Web 服务器移除 | [卸载](deployment.md#removal) · [卸载或只删除 Web 记录](deployment.md#web-removal) |
 | 证书续签与 mTLS 信任 | [证书维护](certificates.md) |
 | 日常维护与排错 | [维护](deployment.md#operations) · [故障排查](deployment.md#troubleshooting) |

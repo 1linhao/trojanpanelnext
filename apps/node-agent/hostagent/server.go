@@ -1,5 +1,5 @@
-// Package hostagent implements the host-side, mTLS-authenticated removal
-// endpoint. It accepts only removal modes, never command text or file paths.
+// Package hostagent implements mTLS-authenticated host maintenance. Requests
+// accept registered Node IDs, removal modes or releases, never commands or paths.
 package hostagent
 
 import (
@@ -53,25 +53,30 @@ type Result struct {
 }
 
 type Server struct {
-	Config           Config
-	Directory        string
-	Execute          func(context.Context, bool) error
-	Finalize         func() error
-	mu               sync.Mutex
-	result           *Result
-	finalized        bool
-	callback         *Request
-	workerRunning    bool
-	callbackClient   *http.Client
-	callbackInterval time.Duration
-	workerContext    context.Context
+	Config               Config
+	Directory            string
+	ProductLockDirectory string
+	Execute              func(context.Context, bool) error
+	InspectImage         func(context.Context) (string, error)
+	StartUpdate          func(context.Context, string) error
+	WorkerActive         func(context.Context, string) (bool, error)
+	ExecuteUpdate        func(context.Context, string) error
+	Finalize             func() error
+	mu                   sync.Mutex
+	result               *Result
+	finalized            bool
+	callback             *Request
+	workerRunning        bool
+	callbackClient       *http.Client
+	callbackInterval     time.Duration
+	workerContext        context.Context
 }
 
 func New(config Config, directory string) (*Server, error) {
 	if config.NodeID == 0 || config.Port == 0 || config.Port > 65535 {
 		return nil, errors.New("host removal requires a registered node ID and a valid port")
 	}
-	s := &Server{Config: config, Directory: directory, callbackInterval: 30 * time.Second, workerContext: context.Background()}
+	s := &Server{Config: config, Directory: directory, ProductLockDirectory: "/run/trojanpanelnext-update.lock", callbackInterval: 30 * time.Second, workerContext: context.Background()}
 	s.callbackClient = &http.Client{Timeout: 15 * time.Second, Transport: &http.Transport{Proxy: nil, TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}, TLSHandshakeTimeout: 10 * time.Second}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	data, err := os.ReadFile(filepath.Join(directory, "result.json"))
 	if err == nil {
@@ -94,6 +99,7 @@ func New(config Config, directory string) (*Server, error) {
 		return nil, err
 	}
 	s.Execute = s.execute
+	s.InspectImage, s.StartUpdate, s.WorkerActive, s.ExecuteUpdate = s.inspectImage, s.startUpdate, s.workerActive, s.executeUpdate
 	return s, nil
 }
 
@@ -103,7 +109,7 @@ func (s *Server) execute(ctx context.Context, purge bool) error {
 		args[len(args)-1] = "--purge"
 	}
 	command := exec.CommandContext(ctx, "/bin/bash", args...)
-	command.Env = append(os.Environ(), "TP_DEFER_HOST_CLEANUP=1", "TP_ORIGINAL_CONFIG_FILE="+s.Config.OriginalConfig)
+	command.Env = append(os.Environ(), "TP_DEFER_HOST_CLEANUP=1", "TP_HOST_MAINTENANCE_LOCKED=1", "TP_HOST_PRODUCT_LOCKED=1", "TP_ORIGINAL_CONFIG_FILE="+s.Config.OriginalConfig)
 	for key, value := range s.Config.Environment {
 		command.Env = append(command.Env, key+"="+value)
 	}
@@ -117,6 +123,8 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/remove", s.remove)
 	mux.HandleFunc("/finalize", s.finalize)
+	mux.HandleFunc("/container/inventory", s.containerInventory)
+	mux.HandleFunc("/container/update", s.containerUpdate)
 	return mux
 }
 
@@ -160,6 +168,57 @@ func (s *Server) remove(w http.ResponseWriter, r *http.Request) {
 		writeResult(w, s.result)
 		return
 	}
+	unlock, lockErr := s.lockMaintenance(r.Context())
+	if lockErr != nil {
+		http.Error(w, "maintenance_state_unavailable", 503)
+		return
+	}
+	defer unlock()
+	cliBusy, markerErr := s.cliUpdateActive()
+	if markerErr != nil {
+		http.Error(w, "maintenance_state_unavailable", 503)
+		return
+	}
+	if cliBusy {
+		http.Error(w, "container_update_active", 409)
+		return
+	}
+	job, jobErr := s.reconcileUpdate(r.Context())
+	if jobErr != nil {
+		http.Error(w, "maintenance_state_unavailable", 503)
+		return
+	}
+	if activeUpdate(job) {
+		http.Error(w, "container_update_active", 409)
+		return
+	}
+	// Reserve the CLI product lock before publishing removal snapshots. A CLI
+	// update may own this lock before its runtime marker has been published.
+	if err = os.Mkdir(s.ProductLockDirectory, 0700); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			http.Error(w, "container_update_active", 409)
+		} else {
+			http.Error(w, "maintenance_state_unavailable", 503)
+		}
+		return
+	}
+	productLock, lockErr := os.Open(s.ProductLockDirectory)
+	if lockErr != nil {
+		http.Error(w, "maintenance_state_unavailable", 503)
+		return
+	}
+	ownedLock, lockErr := productLock.Stat()
+	if lockErr != nil {
+		_ = productLock.Close()
+		http.Error(w, "maintenance_state_unavailable", 503)
+		return
+	}
+	defer func() {
+		if current, err := os.Stat(s.ProductLockDirectory); err == nil && os.SameFile(ownedLock, current) {
+			_ = os.Remove(s.ProductLockDirectory)
+		}
+		_ = productLock.Close()
+	}()
 	// Preserve the authenticated endpoint until Web commits its transaction and
 	// acknowledges the result. These copies are deleted by /finalize.
 	if err = s.snapshotTLS(); err != nil {
@@ -372,6 +431,12 @@ func (s *Server) TLSConfig() *tls.Config {
 
 func Run(config Config) error {
 	s, err := New(config, Directory)
+	if err != nil {
+		return err
+	}
+	recoveryCtx, recoveryCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	err = s.RecoverUpdate(recoveryCtx)
+	recoveryCancel()
 	if err != nil {
 		return err
 	}

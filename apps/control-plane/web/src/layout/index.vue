@@ -52,6 +52,7 @@ export default {
     },
     activePath() { return this.$route.path },
     pageTitle() {
+      if (this.activePath === '/server-manage/kernel-upgrade') return this.$t('route.kernelUpgrade')
       if (!this.isAdmin && this.activePath === '/dashboard/index') return '我的首页'
       if (!this.isAdmin && this.activePath === '/node-manage/node-list') return '我的节点'
       return PAGE_TITLES[this.activePath] || this.$t(`route.${this.$route.meta.title}`)
@@ -60,7 +61,8 @@ export default {
     shellModel() {
       return createTrojanPanelShellModel({
         roles: this.roles, username: this.username, activePath: this.activePath,
-        pageTitle: this.pageTitle, branding: this.branding
+        pageTitle: this.pageTitle, branding: this.branding,
+        versionLabel: this.$t('route.kernelUpgrade'), versionMobileLabel: this.$t('route.versionManagementShort')
       })
     }
   },

@@ -19,5 +19,6 @@ func initApiRouter(router *gin.Engine) {
 		initEmailRecordRouter(trojanApi)
 		initFileTaskRouter(trojanApi)
 		initKernelUpgradeRouter(trojanApi)
+		initNodeContainerRouter(trojanApi)
 	}
 }

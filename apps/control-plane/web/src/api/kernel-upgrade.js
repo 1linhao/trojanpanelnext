@@ -9,7 +9,7 @@ export function kernelInventory(params) {
 }
 
 export function createKernelTask(data) {
-  return request({ url: '/kernel/createTask', method: 'post', data })
+  return request({ url: '/kernel/createTask', method: 'post', data, timeout: 90000 })
 }
 
 export function selectKernelTaskPage(params) {
@@ -21,7 +21,7 @@ export function selectKernelTaskById(params) {
 }
 
 export function retryKernelTask(data) {
-  return request({ url: '/kernel/retryTask', method: 'post', data })
+  return request({ url: '/kernel/retryTask', method: 'post', data, timeout: 90000 })
 }
 
 export function probeKernelMTLS(data) {

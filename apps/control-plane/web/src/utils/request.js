@@ -30,11 +30,13 @@ service.interceptors.response.use(
     } else if (res instanceof Blob) {
       return response
     } else {
-      Message({
-        message: res.message || 'Error',
-        type: 'error',
-        duration: 5 * 1000
-      })
+      if (!response.config || !response.config.silentError) {
+        Message({
+          message: res.message || 'Error',
+          type: 'error',
+          duration: 5 * 1000
+        })
+      }
 
       if (res.code === 50014 || res.code === 50008 || res.code === 50401) {
         MessageBox.confirm(i18n.t('confirm.logoutPrompt'), 'Confirm logout', {
@@ -52,11 +54,13 @@ service.interceptors.response.use(
   },
   (error) => {
     // console.log('err' + error)
-    Message({
-      message: error.message,
-      type: 'error',
-      duration: 5 * 1000
-    })
+    if (!error.config || !error.config.silentError) {
+      Message({
+        message: error.message,
+        type: 'error',
+        duration: 5 * 1000
+      })
+    }
     return Promise.reject(error)
   }
 )

@@ -178,7 +178,8 @@
                     v-if="checkPermission(['sysadmin'])"
                     class="icon-btn"
                     type="button"
-                    title="内核管理"
+                    :title="$t('kernel.manage')"
+                    :aria-label="$t('kernel.manage')"
                     @click="handleKernelManage(row)"
                   >
                     <app-icon name="top" />

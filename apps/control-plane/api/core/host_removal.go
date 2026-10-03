@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -72,6 +73,12 @@ func hostRemovalCall(ip string, port uint, transport NodeTransport, path string,
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
+		if path == "/remove" && response.StatusCode == http.StatusConflict {
+			data, readErr := io.ReadAll(io.LimitReader(response.Body, 129))
+			if readErr == nil && len(data) <= 128 && strings.TrimSpace(string(data)) == "container_update_active" {
+				return nil, ErrHostContainerUpdateActive
+			}
+		}
 		return nil, fmt.Errorf("host removal rejected the request (HTTP %d); Web registration retained", response.StatusCode)
 	}
 	var result HostRemoval

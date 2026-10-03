@@ -10,7 +10,7 @@
 | Web API | 业务数据、权限、订阅生成、Node 管理与 mTLS 身份维护 |
 | MariaDB / Redis | 持久化业务数据、会话与运行协作数据 |
 | Node Agent | 管理代理配置、账户、流量和 Xray / Hysteria2 / NaiveProxy 进程 |
-| 宿主机维护服务 | 执行节点服务器卸载，并确认 Web 侧清理结果 |
+| 宿主机维护服务 | 执行版本绑定的 Node 容器更新、节点服务器卸载，并确认 Web 侧清理结果 |
 | Caddy | 公网 HTTPS；Node 可配置外部证书替代此职责 |
 
 Web 与 Node 可部署在独立主机。Node 控制通道为 mTLS gRPC；宿主机维护通道为 mTLS HTTPS。Agent 不挂载 Docker socket，宿主机维护服务在 systemd 下运行。

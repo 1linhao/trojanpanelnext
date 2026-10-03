@@ -65,7 +65,7 @@ func setup(t *testing.T) (*Server, *http.Client) {
 	ca, _, root, key := identity(t, nil, nil, false)
 	cert, private, _, _ := identity(t, root, key, false)
 	client, clientKey, _, _ := identity(t, root, key, true)
-	config := Config{NodeID: 7, Port: 8101, Certificate: filepath.Join(live, "server.crt"), Key: filepath.Join(live, "server.key"), ClientCA: filepath.Join(live, "client-ca.crt")}
+	config := Config{NodeID: 7, Port: 8101, Certificate: filepath.Join(live, "server.crt"), Key: filepath.Join(live, "server.key"), ClientCA: filepath.Join(live, "client-ca.crt"), Environment: map[string]string{"KERNEL_RUNTIME_PATH": filepath.Join(directory, "runtime")}}
 	for path, data := range map[string][]byte{config.Certificate: cert, config.Key: private, config.ClientCA: ca} {
 		if err := os.WriteFile(path, data, 0600); err != nil {
 			t.Fatal(err)
@@ -75,6 +75,7 @@ func setup(t *testing.T) (*Server, *http.Client) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	server.ProductLockDirectory = filepath.Join(directory, "product-lock")
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	server.workerContext = ctx
@@ -351,6 +352,7 @@ func TestPartialPurgeRetainsAuthenticatedRetryChannel(t *testing.T) {
 		t.Fatal(err)
 	}
 	resumed.Execute = func(context.Context, bool) error { return nil }
+	resumed.ProductLockDirectory = s.ProductLockDirectory
 	restarted := serve(t, resumed)
 	result, status := post(t, client, restarted.URL+"/remove", Request{NodeID: 7, Purge: true})
 	if status != 200 || !result.Success {

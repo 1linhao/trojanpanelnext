@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_VERSION="1.0.2-rc.11"
+SCRIPT_VERSION="1.0.2-rc.12"
 TP_SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 if [[ ! -f "${TP_SCRIPT_DIR}/common.sh" ]]; then
   printf 'Missing common.sh. Use tp.sh to download the command and its dependencies.\n' >&2
@@ -904,6 +904,15 @@ deploy_node() {
   echo_content red "==============================================================\n"
 }
 
+install_host_agent_binary() (
+  local library_dir="$1" staged
+  staged="$(mktemp "${library_dir}/.tp-host-agent.XXXXXX")"
+  trap 'rm -f -- "${staged}"' EXIT
+  docker cp "${CORE_CONTAINER}:/usr/local/bin/tp-host-agent" "${staged}" || exit 1
+  chmod 700 "${staged}" || exit 1
+  mv -T -- "${staged}" "${library_dir}/tp-host-agent" || exit 1
+)
+
 install_host_removal_service() {
   local host_dir=/etc/trojanpanelnext-host
   local library_dir=/usr/local/lib/trojanpanelnext-host
@@ -916,8 +925,7 @@ install_host_removal_service() {
   install -m 0600 "${TP_SCRIPT_DIR}/common.sh" "${library_dir}/common.sh"
   install -m 0600 "${TP_SCRIPT_DIR}/uninstall.sh" "${library_dir}/uninstall.sh"
   install -m 0600 "${TP_CONFIG_FILE}" "${host_dir}/node.yaml"
-  docker cp "${CORE_CONTAINER}:/usr/local/bin/tp-host-agent" "${library_dir}/tp-host-agent"
-  chmod 700 "${library_dir}/tp-host-agent"
+  install_host_agent_binary "${library_dir}"
   local original_config
   original_config="$(realpath -- "${TP_ORIGINAL_CONFIG_FILE:-${TP_CONFIG_FILE}}")"
   export NODE_SERVER_ID GRPC_PORT GRPC_CLIENT_CA_PATH TP_DATA WEB_PATH TP_PKI_BUNDLE_DIR KERNEL_RUNTIME_PATH
@@ -942,7 +950,7 @@ install_host_removal_service() {
   rm -f -- "${host_dir}/result.json" "${host_dir}/finalize.json" "${host_dir}/server.crt" "${host_dir}/server.key" "${host_dir}/client-ca.crt" "${library_dir}/cleanup-ready"
   cat >/etc/systemd/system/trojanpanelnext-host.service <<'EOF'
 [Unit]
-Description=TrojanPanel Next authenticated host removal
+Description=TrojanPanel Next authenticated host maintenance
 After=network-online.target docker.service
 Wants=network-online.target
 [Service]

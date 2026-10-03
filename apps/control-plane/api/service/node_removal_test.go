@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"reflect"
 	"strings"
@@ -12,6 +13,53 @@ import (
 	"trojan-panel/dao"
 	"trojan-panel/model"
 )
+
+func TestUninstallAdmissionRejectsActiveContainerBeforeBegin(t *testing.T) {
+	server, _ := containerServiceFixture().server(7)
+	beginCalls := 0
+	for _, status := range []string{"queued", "running"} {
+		_, err := beginNodeServerUninstall(7, func(uint) (*model.NodeServer, error) { return server, nil },
+			func(context.Context, *model.NodeServer) (*core.HostContainerInventory, error) {
+				return &core.HostContainerInventory{Job: &core.HostContainerJob{Status: status}}, nil
+			}, func(uint) error { beginCalls++; return nil })
+		if !errors.Is(err, core.ErrHostContainerUpdateActive) || beginCalls != 0 || *server.Removing != 0 {
+			t.Fatalf("busy uninstall marked removal: %v begin=%d flag=%d", err, beginCalls, *server.Removing)
+		}
+	}
+	if !nodeMaintenanceAdmission.TryLock() {
+		t.Fatal("admission lock retained")
+	}
+	defer nodeMaintenanceAdmission.Unlock()
+	if _, err := beginNodeServerUninstall(7, func(uint) (*model.NodeServer, error) { t.Error("competing uninstall read Node"); return server, nil }, nil, func(uint) error { t.Error("competing uninstall marked Node"); return nil }); err == nil {
+		t.Fatal("uninstall overlapped another maintenance admission")
+	}
+}
+
+func TestUninstallPreflightAllowsOldHostAndDetectsEndpointChange(t *testing.T) {
+	for _, changed := range []bool{false, true} {
+		server, _ := containerServiceFixture().server(7)
+		lookups, beginCalls := 0, 0
+		_, err := beginNodeServerUninstall(7, func(uint) (*model.NodeServer, error) {
+			lookups++
+			if changed && lookups == 2 {
+				current := *server
+				ip := "192.0.2.8"
+				current.Ip = &ip
+				return &current, nil
+			}
+			return server, nil
+		}, func(context.Context, *model.NodeServer) (*core.HostContainerInventory, error) {
+			return nil, core.ErrHostContainerUnsupported
+		}, func(uint) error { beginCalls++; return nil })
+		if changed {
+			if err == nil || beginCalls != 0 {
+				t.Fatal("changed uninstall endpoint was marked")
+			}
+		} else if err != nil || beginCalls != 1 {
+			t.Fatalf("old host blocked existing uninstall: %v calls=%d", err, beginCalls)
+		}
+	}
+}
 
 func TestNodeUninstallAcknowledgementBoundary(t *testing.T) {
 	id, port := uint(11), uint(8100)

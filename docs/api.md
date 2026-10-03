@@ -8,6 +8,7 @@
 - [接口入口](#endpoints)
 - [用户备注](#account-remarks)
 - [重置账号登录失败次数](#account-login-reset)
+- [Node 容器更新](#node-container-updates)
 - [服务器卸载与删除](#server-removal)
 - [Node 管理通道](#node-management)
 - [接口模型](#models)
@@ -39,6 +40,7 @@ JSON 响应包含 `code`、`type`、`message` 和 `data`。成功业务码为 `2
 | 流量与首页 | `/api/dashboard/` | [dashboard.go](../apps/control-plane/api/router/dashboard.go) |
 | 系统设置与订阅模板 | `/api/system/` | [system.go](../apps/control-plane/api/router/system.go) |
 | 内核版本、清单与任务 | `/api/kernel/` | [kernel_upgrade.go](../apps/control-plane/api/router/kernel_upgrade.go) |
+| Node 产品容器与更新结果 | `/api/container/` | [node_container.go](../apps/control-plane/api/router/node_container.go) |
 | 黑名单 | `/api/blackList/` | [black_list.go](../apps/control-plane/api/router/black_list.go) |
 | 邮件记录 | `/api/emailRecord/` | [email_record.go](../apps/control-plane/api/router/email_record.go) |
 | 文件任务 | `/api/fileTask/` | [file_task.go](../apps/control-plane/api/router/file_task.go) |
@@ -58,6 +60,18 @@ JSON 响应包含 `code`、`type`、`message` 和 `data`。成功业务码为 `2
 `POST /api/account/resetAccountLoginLimit` 接收 `{ "id": 12 }`，清除该账号的登录失败计数及临时锁定。只有数据库当前仍为 `sysadmin` 的有效登录身份可以执行；降权后的旧会话也会被拒绝。
 
 服务端按 ID 查询当前用户名，只清除对应登录限制，不改变其他账号、密码、禁用状态、流量、备注或会话。不存在限制时重复请求仍返回成功；账号不存在或重置失败时返回错误。成功响应使用标准业务码 `20000`，`data` 为 `null`。
+
+<a id="node-container-updates"></a>
+## Node 容器更新
+
+只有数据库当前仍为 `sysadmin` 的有效账户可以调用以下接口：
+
+- `GET /api/container/inventory?nodeServerId=12`：读取实际 Agent 镜像、当前版本、Web 绑定的目标版本和最近宿主机更新任务。
+- `POST /api/container/update`，请求 `{ "nodeServerId": 12 }`：启动异步更新任务。目标固定为当前 Web 发布版本，不接收镜像地址、命令或配置路径。
+
+任务包含 `id`、`fromVersion`、`targetVersion`、`status`、`error`、`startedAt` 和 `finishedAt`；状态为 `queued`、`running`、`succeeded` 或 `failed`。查询 inventory 可继续读取任务结果，Web 重启不取消 Node 宿主机任务。切换期间短暂无法连接维护服务时，稍后重试查询。
+
+Web 使用登记的 Node 地址、`grpc_port + 1` 与 mTLS 身份访问维护服务。旧维护服务不支持该端点时须先在 Node 主机升级。活动内核任务、容器更新与远程卸载不能在同一服务器并发执行；失败时保留服务器登记。更新与恢复范围见[镜像更新](deployment.md#updates)。
 
 <a id="server-removal"></a>
 ## 服务器卸载与删除

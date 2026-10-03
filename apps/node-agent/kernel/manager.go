@@ -267,6 +267,11 @@ func (m *Manager) Start(ctx context.Context, request OperationRequest) (*Operati
 	if err := m.validateRequest(request); err != nil {
 		return nil, err
 	}
+	unlock, err := m.lockMaintenance(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 	m.mu.Lock()
 	if id, ok := m.idempotency[request.IdempotencyKey]; ok {
 		op := cloneOperation(m.operations[id])

@@ -8,7 +8,7 @@ export const ADMIN_GROUPS = Object.freeze([
     { key: '/account-manage/account-list', label: '账号管理', mobileLabel: '账号', icon: 'account', roles: ['sysadmin', 'admin'] },
     { key: '/node-manage/node-list', label: '节点管理', mobileLabel: '节点', icon: 'node' },
     { key: '/server-manage/server-list', label: '服务器管理', mobileLabel: '服务器', icon: 'server', roles: ['sysadmin', 'admin'] },
-    { key: '/server-manage/kernel-upgrade', label: '内核升级', mobileLabel: '内核', icon: 'sysinfo', roles: ['sysadmin'] }
+    { key: '/server-manage/kernel-upgrade', label: '版本管理', mobileLabel: '版本', icon: 'sysinfo', roles: ['sysadmin'] }
   ] },
   { key: 'operations', label: '运维', items: [
     { key: '/taskManage/task-list', label: '文件任务', mobileLabel: '任务', icon: 'task', roles: ['sysadmin'] },
@@ -34,7 +34,7 @@ export const PAGE_TITLES = Object.freeze({
   '/account-manage/account-list': '账号管理',
   '/node-manage/node-list': '节点管理',
   '/server-manage/server-list': '服务器管理',
-  '/server-manage/kernel-upgrade': '内核升级',
+  '/server-manage/kernel-upgrade': '版本管理',
   '/taskManage/task-list': '文件任务',
   '/emailManage/email-record': '邮件记录',
   '/system/black-list': '黑名单',
@@ -42,12 +42,13 @@ export const PAGE_TITLES = Object.freeze({
   '/modify/index': '个人资料'
 })
 
-export function createTrojanPanelShellModel({ roles = [], username, activePath, pageTitle, branding }) {
+export function createTrojanPanelShellModel({ roles = [], username, activePath, pageTitle, branding, versionLabel = '版本管理', versionMobileLabel = '版本' }) {
   const admin = roles.some((role) => role === 'sysadmin' || role === 'admin')
   const source = admin ? ADMIN_GROUPS : USER_GROUPS
   const groups = source.map((group) => ({
     ...group,
     items: group.items.filter((item) => !item.roles || item.roles.some((role) => roles.includes(role)))
+      .map((item) => item.key === '/server-manage/kernel-upgrade' ? { ...item, label: versionLabel, mobileLabel: versionMobileLabel } : item)
   })).filter((group) => group.items.length)
   return createShellModel({
     brand: { name: branding.systemName, subtitle: '', mark: Array.from(branding.systemName || 'T')[0] },

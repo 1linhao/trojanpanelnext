@@ -116,6 +116,17 @@ systemctl() {
   if [[ "${MOCK_PENDING_ON_STOP:-0}" == 1 && "$1" == stop ]]; then
     printf 'new-removal-snapshot' >"${MOCK_HOST_ROOT}/etc/trojanpanelnext-host/server.crt"
   fi
+  if [[ "${MOCK_ASSERT_CLI_ADMISSION:-0}" == 1 && "$1" == restart ]]; then
+    local marker="${KERNEL_RUNTIME_PATH}/container-update.json"
+    [[ "$(yq -r '.owner' "${marker}")" == cli && "$(yq -r '.status' "${marker}")" == running ]] || return 88
+    [[ "$(stat -c %a "${marker}")" == 600 && "$(stat -c %a "${KERNEL_RUNTIME_PATH}")" == 700 ]] || return 88
+    # RecoverUpdate in the restarted service must be able to take this lock.
+    flock -n "${KERNEL_RUNTIME_PATH}/maintenance.lock" -c true || return 88
+    printf 'CLI marker present during restart\n' >>"${TEST_DIR}/cli-admission.log"
+    if [[ "${MOCK_REPLACE_CLI_OWNER:-0}" == 1 ]]; then
+      yq -i '.token = "ForeignOwner"' "${marker}"
+    fi
+  fi
   if [[ "${MOCK_FAIL_SERVICE:-0}" == 1 && "$1" == restart && ! -e "${TEST_DIR}/failed-service-once" ]]; then
     touch "${TEST_DIR}/failed-service-once"
     return 1
@@ -148,7 +159,7 @@ setup_deployment() {
   printf '{"containers":{}}' >"${MOCK_DOCKER_STATE}"
   : >"${MOCK_DOCKER_LOG}"
   : >"${TEST_DIR}/systemctl.log"
-  unset MOCK_FAIL_PULL MOCK_FAIL_RUN MOCK_FAIL_RENAME MOCK_FAIL_HELPER MOCK_BAD_HEALTH MOCK_FAIL_SERVICE MOCK_PENDING_ON_STOP
+  unset MOCK_FAIL_PULL MOCK_FAIL_RUN MOCK_FAIL_RENAME MOCK_FAIL_HELPER MOCK_BAD_HEALTH MOCK_FAIL_SERVICE MOCK_PENDING_ON_STOP MOCK_ASSERT_CLI_ADMISSION MOCK_REPLACE_CLI_OWNER
   TP_PKI_BUNDLE_DIR="${TP_DATA}/pki-bundle"
   cp "${SCRIPT_DIR}/templates/${purpose}.yaml" "${TEST_DIR}/original.yaml"
   TP_TEST_PKI="${TP_PKI_BUNDLE_DIR}" TP_TEST_CA="${GRPC_CLIENT_CA_PATH}" TP_TEST_CERT="${GRPC_CLIENT_CERT_PATH}" TP_TEST_KEY="${GRPC_CLIENT_KEY_PATH}" TP_TEST_RUNTIME="${KERNEL_RUNTIME_PATH}" \
@@ -256,6 +267,51 @@ for mismatch in credential mount image schema downgrade runtime; do
   if rg -q '"(pull|stop|rename|run|rm)"' "${MOCK_DOCKER_LOG}"; then fail "${mismatch} changed Docker state"; fi
 done
 
+# A queued kernel upgrade already persisted by the Agent must prevent manual
+# container switching before images are pulled or old products are stopped.
+setup_deployment node
+mkdir -p "${KERNEL_RUNTIME_PATH}/operations"
+printf '{"stage":"queued"}\n' >"${KERNEL_RUNTIME_PATH}/operations/active.json"
+expect_failure
+assert_unchanged
+if rg -q '"(stop|rename|run|rm|pull)"' "${MOCK_DOCKER_LOG}"; then fail 'active kernel allowed container switching'; fi
+
+# An active host worker keeps its executable mapped while maintenance is
+# refreshed. Docker must stage and atomically replace the path, never truncate it.
+setup_deployment node
+live_helper="${MOCK_HOST_ROOT}/usr/local/lib/trojanpanelnext-host/tp-host-agent"
+cp -- "$(type -P sleep)" "${live_helper}"
+chmod 700 "${live_helper}"
+"${live_helper}" 60 &
+live_helper_pid=$!
+if ! run_update; then
+  kill "${live_helper_pid}" 2>/dev/null || true
+  wait "${live_helper_pid}" 2>/dev/null || true
+  cat "${TEST_DIR}/err" >&2
+  fail 'Node update overwrote an executing host worker binary'
+fi
+kill -0 "${live_helper_pid}" || fail 'maintenance refresh interrupted the independent worker'
+kill "${live_helper_pid}"
+wait "${live_helper_pid}" 2>/dev/null || true
+test -z "$(find "${MOCK_HOST_ROOT}/usr/local/lib/trojanpanelnext-host" -name '.tp-host-agent.*' -print -quit)"
+
+# The CLI marker remains visible across helper restart without holding the
+# admission flock. Success and completed rollback clear only their own marker.
+for outcome in success rollback; do
+  setup_deployment node
+  export MOCK_ASSERT_CLI_ADMISSION=1
+  if [[ "${outcome}" == rollback ]]; then export MOCK_FAIL_SERVICE=1; expect_failure; assert_unchanged; else run_update; fi
+  grep -q 'CLI marker present during restart' "${TEST_DIR}/cli-admission.log"
+  test ! -e "${KERNEL_RUNTIME_PATH}/container-update.json"
+  test ! -d "${MOCK_HOST_ROOT}/run/trojanpanelnext-update.lock"
+done
+
+# A superseding owner's marker is never removed by an old CLI completion.
+setup_deployment node
+export MOCK_ASSERT_CLI_ADMISSION=1 MOCK_REPLACE_CLI_OWNER=1
+run_update
+test "$(yq -r '.token' "${KERNEL_RUNTIME_PATH}/container-update.json")" = ForeignOwner
+
 # Agent success keeps the original source path in the maintained host helper.
 setup_deployment node
 sed -i 's/max_age=30/max_age=37/' "${TP_DATA}/trojan-panel-core/config/config.ini"
@@ -296,6 +352,39 @@ assert_unchanged
 grep -Fxq old-helper "${MOCK_HOST_ROOT}/usr/local/lib/trojanpanelnext-host/tp-host-agent"
 cmp "${MOCK_HOST_ROOT}/etc/trojanpanelnext-host/node.yaml" "${TEST_DIR}/before.yaml"
 
+# Only the persisted job's own worker may enter update while its queued/running
+# journal is active. Ordinary CLI updates cannot substitute a boolean bypass.
+setup_deployment node
+host_job="${MOCK_HOST_ROOT}/etc/trojanpanelnext-host/update.json"
+host_job_id="$(printf '%064d' 0)"
+printf '{"nodeId":%s,"job":{"id":"%s","status":"running","targetVersion":"%s"}}\n' \
+  "${NODE_SERVER_ID}" "${host_job_id}" "${MOCK_TARGET_VERSION}" >"${host_job}"
+chmod 600 "${host_job}"
+printf '{"jobId":"%s","status":"running"}\n' "${host_job_id}" >"${KERNEL_RUNTIME_PATH}/container-update.json"
+cp "${host_job}" "${TEST_DIR}/before-job.json"
+expect_failure
+assert_unchanged
+export TP_HOST_UPDATE_JOB=1
+expect_failure
+assert_unchanged
+export TP_HOST_UPDATE_JOB="${host_job_id}"
+run_update
+cmp "${host_job}" "${TEST_DIR}/before-job.json"
+unset TP_HOST_UPDATE_JOB
+
+# Rollback restores maintenance files without rewinding the independent worker's
+# journal or overwriting the executable mapped by that worker.
+setup_deployment node
+printf '{"nodeId":%s,"job":{"id":"%s","status":"running","targetVersion":"%s"}}\n' \
+  "${NODE_SERVER_ID}" "${host_job_id}" "${MOCK_TARGET_VERSION}" >"${host_job}"
+cp "${host_job}" "${TEST_DIR}/before-job.json"
+printf '{"jobId":"%s","status":"running"}\n' "${host_job_id}" >"${KERNEL_RUNTIME_PATH}/container-update.json"
+export TP_HOST_UPDATE_JOB="${host_job_id}" MOCK_FAIL_SERVICE=1
+expect_failure
+assert_unchanged
+cmp "${host_job}" "${TEST_DIR}/before-job.json"
+unset TP_HOST_UPDATE_JOB MOCK_FAIL_SERVICE
+
 # Certificate paths are carried through an external-certificate update without
 # invoking either signer, including the Certbot live -> archive directory binds.
 setup_deployment node
@@ -325,5 +414,5 @@ test "$(yq -r '.trojanpanelnext.node_certificate_mode' "${TEST_DIR}/original.yam
 test "$(yq -r '.trojanpanelnext.node_certificate_path' "${TEST_DIR}/original.yaml")" = "${NODE_CERTIFICATE_PATH}"
 
 # Version ordering includes RC -> RC, RC -> stable and rejects stable -> RC.
-bash -c 'source "$1"; version_can_update 1.0 1.0.1; version_can_update 1.0.2-rc.1 1.0.2-rc.3; version_can_update 1.0.2-rc.11 1.0.2-rc.11; version_can_update 1.0.2-rc.3 1.0.2; ! version_can_update 1.0.2 1.0.2-rc.3; ! version_can_update 1.1 1.0.2; ! version_can_update 0.9 1.0' test "${UPDATE}"
+bash -c 'source "$1"; version_can_update 1.0 1.0.1; version_can_update 1.0.2-rc.1 1.0.2-rc.3; version_can_update 1.0.2-rc.12 1.0.2-rc.12; version_can_update 1.0.2-rc.3 1.0.2; ! version_can_update 1.0.2 1.0.2-rc.3; ! version_can_update 1.1 1.0.2; ! version_can_update 0.9 1.0' test "${UPDATE}"
 printf 'PASS product-only image updates, protected config backup, source guards, pull safety, readiness/rename/create recovery and Node helper refresh\n'
