@@ -245,7 +245,70 @@ func buildNodeDeploymentArchive(server *model.NodeServer, request dto.NodeDeploy
 	if err != nil {
 		return nil, errors.New("cannot create Node deployment configuration")
 	}
-	readme := fmt.Sprintf("# Node 部署包\n\n此包用于部署已登记的 Node 服务器 ID %d，版本 v%s。\n\n## 保护部署文件\n\n归档和 node.yaml 含 MariaDB、Redis 的真实连接凭据。请将归档和配置权限设为 600，使用安全方式传输到 Node 主机，并存放在私有目录中；不要公开或上传到仓库。包中仅包含公开的客户端 CA，不导出 Web 客户端私钥、CA 私钥或外部证书文件。\n\n## 安装\n\n先按照使用文档运行 deps install 命令准备依赖。使用 umask 077 在私有目录中解压此包，解压后会生成权限为 700 的 tpnext/ 目录。检查 tpnext/node.yaml 后，以 root 在 Node 主机运行 bash ./tpnext/install-node.sh；也可以先 cd tpnext，再运行 bash ./install-node.sh。外部证书模式要求该主机上已存在配置指向的完整证书链和私钥文件。安装脚本先验证当前版本配置，再将包内当前 Web 的客户端 CA 交给安装器。安装器校验该 CA，并在重新部署时先备份、再替换不同的旧 CA，避免继续信任旧控制端。安装不默认启用 force。\n\n完整说明：%s\n\n## English summary\n\nKeep this credential-bearing archive and node.yaml private (chmod 600). Prepare dependencies and extract into a private directory; the archive creates a mode-700 tpnext/ directory. Review tpnext/node.yaml, then run bash ./tpnext/install-node.sh as root on the Node host, or cd tpnext and run bash ./install-node.sh. Only the public client CA is included. The installer validates the bundle's current Web public client CA and backs up any different retained CA before replacing it. Installation does not enable force.\n", metadata.Id, metadata.Version, metadata.DocsURL)
+	readme := fmt.Sprintf(`# Node 部署包
+
+此包用于部署已登记的 Node 服务器 ID %[1]d，版本 v%[2]s。
+
+## 保护部署文件
+
+归档和 node.yaml 含 MariaDB、Redis 的真实连接凭据。请将归档和配置权限设为 600，使用安全方式传输到 Node 主机，并存放在私有目录中；不要公开或上传到仓库。包中仅包含公开的客户端 CA，不导出 Web 客户端私钥、CA 私钥或外部证书文件。
+
+## 安装
+
+自动依赖准备支持 Debian 12/13、Ubuntu 22.04/24.04，架构为 amd64/arm64，需要以 root 使用 Bash，宿主机运行 systemd。其他 Linux 发行版需手动准备部署依赖后直接运行安装入口。请先在 Node 主机上使用 APT 安装最小引导包：
+
+    apt-get update
+    apt-get install -y --no-install-recommends bash curl ca-certificates grep coreutils util-linux tar gzip
+
+其中 util-linux 提供 flock，tar 和 gzip 用于解包。以 root 安全解压已下载的归档；请使用新建的私有目录，避免覆盖已有文件：
+
+    chmod 600 ./tpnext-node-%[1]d.tar.gz
+    umask 077
+    mkdir -m 700 ./node-deployment
+    tar --extract --gzip --file ./tpnext-node-%[1]d.tar.gz --directory ./node-deployment --no-same-owner --same-permissions
+    cd ./node-deployment
+
+归档会生成权限为 700 的 tpnext/ 目录。先准备部署依赖：
+
+    bash ./tpnext/install-dependencies.sh
+
+依赖脚本固定调用 v%[2]s 的脚本库，为本版本准备 Docker、mikefarah/yq v4、openssl、findutils、awk 等工具；无需预先安装这些工具。它不读取 node.yaml 或客户端 CA，也不会自动部署 Node。依赖准备成功后检查 tpnext/node.yaml，再安装 Node：
+
+    bash ./tpnext/install-node.sh
+
+也可以先 cd tpnext，再依次运行 bash ./install-dependencies.sh 和 bash ./install-node.sh。外部证书模式要求该主机上已存在配置指向的完整证书链和私钥文件。安装脚本先验证当前版本配置，再将包内当前 Web 的客户端 CA 交给安装器。安装器校验该 CA，并在重新部署时先备份、再替换不同的旧 CA，避免继续信任旧控制端。安装不默认启用 force。
+
+完整说明：%[3]s
+
+## English instructions
+
+This bundle deploys the registered Node server ID %[1]d using release v%[2]s. Keep the credential-bearing archive and node.yaml private (chmod 600) and transfer them securely. Only the public client CA is included; Web client/CA private keys and external certificate files are excluded.
+
+Automatic dependency preparation supports Debian 12/13 or Ubuntu 22.04/24.04 on amd64/arm64. Run Bash as root on a host running systemd. Other Linux distributions require manual dependency preparation before running the Node installer. First install the minimum bootstrap packages on the Node host:
+
+    apt-get update
+    apt-get install -y --no-install-recommends bash curl ca-certificates grep coreutils util-linux tar gzip
+
+util-linux provides flock; tar and gzip extract the archive. Extract as root into a new private directory to avoid overwriting existing files:
+
+    chmod 600 ./tpnext-node-%[1]d.tar.gz
+    umask 077
+    mkdir -m 700 ./node-deployment
+    tar --extract --gzip --file ./tpnext-node-%[1]d.tar.gz --directory ./node-deployment --no-same-owner --same-permissions
+    cd ./node-deployment
+
+The archive creates a mode-700 tpnext/ directory. Prepare deployment dependencies first:
+
+    bash ./tpnext/install-dependencies.sh
+
+This script uses only the v%[2]s script library to prepare Docker, mikefarah/yq v4, openssl, findutils, awk and other deployment tools. These tools are not required beforehand. It does not read node.yaml or the client CA and never starts Node deployment. After it succeeds, review tpnext/node.yaml and install Node:
+
+    bash ./tpnext/install-node.sh
+
+Alternatively, cd tpnext and run bash ./install-dependencies.sh followed by bash ./install-node.sh. External certificate mode requires the configured full certificate chain and private key to already exist on the Node host. The installer validates the bundle's current Web public client CA and backs up any different retained CA before replacing it. Installation does not enable force.
+
+Full guide: %[3]s
+`, metadata.Id, metadata.Version, metadata.DocsURL)
 
 	files := []struct {
 		name string
@@ -253,6 +316,7 @@ func buildNodeDeploymentArchive(server *model.NodeServer, request dto.NodeDeploy
 		data []byte
 	}{
 		{"node.yaml", 0600, configYAML}, {"client-ca.crt", 0644, ca},
+		{"install-dependencies.sh", 0700, []byte(strings.ReplaceAll(nodeDeploymentDependencyScript, "@@VERSION@@", metadata.Version))},
 		{"install-node.sh", 0700, []byte(strings.ReplaceAll(nodeDeploymentInstallScript, "@@VERSION@@", metadata.Version))},
 		{"README.md", 0600, []byte(readme)},
 	}

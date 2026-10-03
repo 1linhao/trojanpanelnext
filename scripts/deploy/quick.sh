@@ -2,7 +2,7 @@
 # Shared implementation for the Web and Node one-command deployments.
 # shellcheck disable=SC2034
 set -euo pipefail
-SCRIPT_VERSION="1.0.2-rc.10"
+SCRIPT_VERSION="1.0.2-rc.11"
 require_matching_version "${SCRIPT_VERSION}"
 QUICK_TEMP_DIR=""
 

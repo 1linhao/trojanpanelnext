@@ -170,10 +170,11 @@
                     v-if="checkPermission(['sysadmin'])"
                     class="icon-btn"
                     type="button"
-                    title="重置流量"
+                    :title="$t('table.resetAccountTraffic')"
+                    :aria-label="$t('table.resetAccountTraffic')"
                     @click="handleReset(row)"
                   >
-                    <app-icon name="refresh" />
+                    <app-icon name="reset-traffic" />
                   </button>
                   <button
                     v-if="checkPermission(['sysadmin'])"
@@ -184,7 +185,7 @@
                     :disabled="resettingLoginLimitId !== 0"
                     @click="handleResetLoginLimit(row)"
                   >
-                    <app-icon name="refresh-left" />
+                    <app-icon name="reset-login" />
                   </button>
                   <button
                     v-if="

@@ -1048,9 +1048,12 @@ test('deployment metadata must match the requested ID and trusted release format
   assert.equal(context.metadata.id, 42)
   assert.equal(context.form.webHost, 'panel.example.com')
   const commands = component.computed.installCommands.call({ metadata: result, archiveName: 'tpnext-node-42.tar.gz', $t: (key) => key })
-  assert.ok(commands[0].value.includes(`/v${result.version}/scripts/tp.sh) --version ${result.version} deps install`))
-  assert.equal(commands[1].value, 'tar -xzf tpnext-node-42.tar.gz')
-  assert.equal(commands[2].value, 'bash ./tpnext/install-node.sh')
+  assert.deepEqual(JSON.parse(JSON.stringify(commands.map((command) => command.key))), ['bootstrap', 'extract', 'dependencies', 'install'])
+  assert.equal(commands[0].value, 'apt-get update && apt-get install -y bash curl ca-certificates grep coreutils util-linux tar gzip')
+  assert.equal(commands[1].value, 'umask 077 && chmod 600 tpnext-node-42.tar.gz && tar -xzf tpnext-node-42.tar.gz')
+  assert.equal(commands[2].value, 'bash ./tpnext/install-dependencies.sh')
+  assert.equal(commands[3].value, 'bash ./tpnext/install-node.sh')
+  for (const command of commands) assert.doesNotMatch(command.value, /curl\s+-|<\(|scripts\/tp\.sh/)
   for (result of [{ id: 99, version: '1.0.2' }, { id: 42, version: 'main; printf secret' }]) {
     const invalid = { ...component.data(), serverId: 42, $t: (key) => key }
     await component.methods.loadDeployment.call(invalid)
@@ -1513,9 +1516,13 @@ test('account login-limit reset is an accessible sysadmin icon action separate f
   assert.equal(button.data.staticClass, 'icon-btn')
   assert.equal(button.data.attrs['aria-label'], '重置登录失败次数')
   assert.equal(vnodeText(button).trim(), '')
-  assert.ok(vnodeTree(button).some((node) => node.tag === 'app-icon' && node.data.attrs.name === 'refresh-left'))
+  const loginIcon = vnodeTree(button).find((node) => node.tag === 'app-icon')
+  assert.equal(loginIcon.data.attrs.name, 'reset-login')
   const traffic = vnodeTree(view._render()).find((node) => node.tag === 'button' && node.data.attrs.title === '重置流量')
-  assert.ok(vnodeTree(traffic).some((node) => node.tag === 'app-icon' && node.data.attrs.name === 'refresh'))
+  assert.equal(traffic.data.attrs['aria-label'], '重置流量')
+  const trafficIcon = vnodeTree(traffic).find((node) => node.tag === 'app-icon')
+  assert.equal(trafficIcon.data.attrs.name, 'reset-traffic')
+  assert.notEqual(trafficIcon.data.attrs.name, loginIcon.data.attrs.name)
   const clicks = []
   view.handleResetLoginLimit = (row) => { clicks.push(row.id) }
   button.data.on.click()
@@ -1526,6 +1533,7 @@ test('account login-limit reset is an accessible sysadmin icon action separate f
     roles.value = [role]
     await Vue.nextTick()
     assert.equal(resetButton(), undefined)
+    assert.equal(vnodeTree(view._render()).find((node) => node.tag === 'button' && node.data.attrs.title === '重置流量'), undefined)
   }
   view.$destroy()
 })
@@ -1612,4 +1620,110 @@ test('the login-limit API only posts the account ID, excluding copied row fields
   assert.equal(requests[0].url, '/account/resetAccountLoginLimit')
   assert.equal(requests[0].method, 'post')
   assert.deepEqual(JSON.parse(JSON.stringify(requests[0].data)), { id: 42 })
+})
+
+test('Node installation shows prerequisites and all four copyable steps before downloading in both languages', () => {
+  const Vue = require('vue/dist/vue.common.js')
+  const descriptor = compiler.parse({ source: read('src/views/node-server/list/compoments/NodeServerDeployment.vue') })
+  const copied = []
+  const component = loadModule(descriptor.script.content, {
+    'copy-to-clipboard': (value) => { copied.push(value); return true }, '@/api/node-server': {}
+  }).default
+  const compiled = compileRender(descriptor.template.content)
+  for (const language of ['zh', 'en']) {
+    const locale = loadModule(read(`src/lang/${language}.js`), {}).default
+    const View = Vue.extend({ ...component, components: {}, created: undefined,
+      beforeCreate() {
+        this.$t = (key) => key.split('.').reduce((value, part) => value && value[part], locale) || key
+        this.$notify = () => {}
+      }, render: compiled.render, staticRenderFns: compiled.staticRenderFns })
+    const view = new View({ propsData: { serverId: 42, dialogVisible: true } })
+    view.metadata = { id: 42, ip: 'node.example.com', version: read('public/version').trim().replace(/^v/, ''),
+      grpcTlsServerName: 'node.example.com', grpcPort: 8100, mariadbHost: 'db.example.com', mariadbPort: 9507,
+      redisHost: 'redis.example.com', redisPort: 6378 }
+    view.loading = false
+    view.activeStep = 'install'
+    assert.equal(view.downloaded, false)
+    const panel = vnodeTree(view._render()).find((node) => node.data && node.data.attrs && node.data.attrs.id === 'node-deployment-panel-install')
+    const items = vnodeTree(panel).filter((node) => node.tag === 'liquid-form-item')
+    const requirements = view.prerequisites.map((requirement) => {
+      const item = items.find((node) => node.data.attrs.label === requirement.label)
+      const control = vnodeTree(item).find((node) => node.tag === 'liquid-input')
+      assert.ok('readonly' in control.data.attrs)
+      assert.equal(control.data.attrs.type, 'textarea')
+      assert.equal(control.data.attrs.value, requirement.value)
+      return control.data.attrs.value
+    })
+    assert.equal(requirements.length, 2, 'the original form keeps prerequisites compact')
+    assert.match(requirements[0], /root.*Bash|Bash.*root/)
+    for (const term of ['Debian 12/13', 'Ubuntu 22.04/24.04', 'amd64/arm64', 'systemd']) assert.ok(requirements[0].includes(term), `${language}: ${term}`)
+    for (const term of ['bash', 'curl', 'ca-certificates', 'grep', 'coreutils', 'util-linux', 'tar', 'gzip', 'apt-get', 'dpkg']) assert.ok(requirements[1].includes(term), `${language}: ${term}`)
+    for (const term of ['HTTPS', 'GitHub', 'GHCR', 'APT']) assert.ok(requirements[0].includes(term), `${language}: ${term}`)
+    const steps = items.filter((node) => /^[1-4]\./.test(node.data.attrs.label))
+    assert.equal(steps.length, 4, 'the commands must be visible before a package download')
+    for (const term of ['Docker', 'mikefarah/yq v4', 'OpenSSL', 'findutils', 'awk']) assert.ok(steps[2].data.attrs.label.includes(term), `${language}: ${term}`)
+    assert.match(steps[3].data.attrs.label, language === 'zh' ? /Docker 运行后/ : /Once Docker is running/)
+    const values = steps.map((node, index) => {
+      assert.ok(node.data.attrs.label.startsWith(`${index + 1}.`))
+      const control = vnodeTree(node).find((child) => child.tag === 'liquid-input')
+      const copyButton = vnodeTree(node).find((child) => child.tag === 'liquid-button')
+      assert.equal(control.data.attrs.type, index < 2 ? 'textarea' : 'text')
+      assert.equal(control.data.attrs.rows, [3, 2, 1, 1][index])
+      assert.ok(copyButton.data.attrs['aria-label'].includes(node.data.attrs.label))
+      copyButton.data.on.click()
+      assert.equal(copied.at(-1), control.data.attrs.value)
+      return control.data.attrs.value
+    })
+    assert.deepEqual(values, [
+      'apt-get update && apt-get install -y bash curl ca-certificates grep coreutils util-linux tar gzip',
+      'umask 077 && chmod 600 tpnext-node-42.tar.gz && tar -xzf tpnext-node-42.tar.gz',
+      'bash ./tpnext/install-dependencies.sh', 'bash ./tpnext/install-node.sh'
+    ])
+    assert.match(steps[1].data.attrs.label, language === 'zh' ? /安全传输/ : /securely/)
+    assert.equal(vnodeTree(panel).some((node) => node.tag === 'small'), false)
+    view.downloaded = true
+    const downloaded = vnodeTree(view._render()).find((node) => node.data && node.data.attrs && node.data.attrs.id === 'node-deployment-panel-install')
+    assert.equal(vnodeTree(downloaded).filter((node) => node.tag === 'liquid-form-item' && /^[1-4]\./.test(node.data.attrs.label)).length, 4)
+    view.$destroy()
+  }
+})
+
+test('the UI deployment archive includes private executable dependency and installer scripts with the same order', () => {
+  const zlib = require('node:zlib')
+  const fixture = loadModule(read('tests/mock-api-server.js') + '\nexports.buildArchive = deploymentArchive', {
+    http: { createServer: () => ({ listen() {} }) }, fs, path, zlib
+  }, { Buffer, __dirname: path.join(root, 'tests'), process: { env: {}, stdout: { write() {} } } })
+  const archive = zlib.gunzipSync(fixture.buildArchive({ id: 42, ip: 'node.example.com', grpcPort: 8100, grpcTlsServerName: 'node.example.com' }, {
+    webHost: 'panel.example.com', certificateMode: 'caddy'
+  }))
+  const entries = {}
+  for (let offset = 0; offset + 512 <= archive.length; ) {
+    const header = archive.subarray(offset, offset + 512)
+    const name = header.toString('utf8', 0, 100).replace(/\0.*$/, '')
+    if (!name) break
+    const size = parseInt(header.toString('ascii', 124, 136).replace(/\0.*$/, ''), 8)
+    entries[name] = { mode: parseInt(header.toString('ascii', 100, 108).replace(/\0.*$/, ''), 8), text: archive.toString('utf8', offset + 512, offset + 512 + size) }
+    offset += 512 + Math.ceil(size / 512) * 512
+  }
+  assert.equal(entries['tpnext/'].mode, 0o700)
+  assert.equal(entries['tpnext/node.yaml'].mode, 0o600)
+  for (const script of ['install-dependencies.sh', 'install-node.sh']) {
+    assert.equal(entries[`tpnext/${script}`].mode, 0o700)
+    assert.match(entries[`tpnext/${script}`].text, /^#!\/usr\/bin\/env bash/)
+  }
+  assert.equal(entries['tpnext/README.md'].mode, 0o600)
+  const guide = entries['tpnext/README.md'].text
+  assert.match(guide, /Do not deploy it/)
+  const expected = [
+    'apt-get update && apt-get install -y bash curl ca-certificates grep coreutils util-linux tar gzip',
+    'umask 077 && chmod 600 tpnext-node-42.tar.gz && tar -xzf tpnext-node-42.tar.gz',
+    'bash ./tpnext/install-dependencies.sh', 'bash ./tpnext/install-node.sh'
+  ]
+  let position = -1
+  for (const command of expected) {
+    const next = guide.indexOf(command)
+    assert.ok(next > position, 'the fixture README and UI commands use the same execution order')
+    position = next
+  }
+  assert.match(guide, /Docker must be running before step 4/)
 })

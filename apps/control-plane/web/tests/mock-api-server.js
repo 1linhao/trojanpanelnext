@@ -188,10 +188,11 @@ const deploymentArchive = (nodeServer, options) => {
     'tpnext/': '',
     'tpnext/node.yaml': `trojanpanelnext:\n  release: "${productVersion}"\n  schema_version: 1\n  purpose: node\n  hostname: ${info.grpcTlsServerName}\n  node_server_id: ${info.id}\n  mariadb_host: ${options.webHost}\n  mariadb_password: fixture-only-database-password\n  redis_host: ${options.webHost}\n  redis_password: fixture-only-redis-password\n  node_certificate_mode: ${options.certificateMode}\n`,
     'tpnext/client-ca.crt': '-----BEGIN CERTIFICATE-----\nfixture-only-public-CA\n-----END CERTIFICATE-----\n',
+    'tpnext/install-dependencies.sh': '#!/usr/bin/env bash\nprintf "Mock fixture: no host dependency installation is performed.\\n"\n',
     'tpnext/install-node.sh': '#!/usr/bin/env bash\nprintf "Mock fixture: no host installation is performed.\\n"\n',
-    'tpnext/README.md': '# Local UI fixture\nThis archive is for UI tests. Do not deploy it.\n'
+    'tpnext/README.md': '# Local UI fixture\nThis archive is for UI tests. Do not deploy it.\n\nTarget: root Bash, Debian 12/13 or Ubuntu 22.04/24.04, amd64/arm64, running systemd. HTTPS access to GitHub, GHCR and APT repositories is required. apt-get and dpkg come from the system.\n\n1. Prepare base tools:\n   apt-get update && apt-get install -y bash curl ca-certificates grep coreutils util-linux tar gzip\n2. Transfer the package securely to the target Node, then extract it privately:\n   umask 077 && chmod 600 tpnext-node-' + info.id + '.tar.gz && tar -xzf tpnext-node-' + info.id + '.tar.gz\n3. Install Docker, mikefarah/yq v4, OpenSSL, findutils and awk; Docker must be running before step 4:\n   bash ./tpnext/install-dependencies.sh\n4. Install Node:\n   bash ./tpnext/install-node.sh\n'
   }
-  const modes = { 'tpnext/': 0o700, 'tpnext/node.yaml': 0o600, 'tpnext/client-ca.crt': 0o644, 'tpnext/install-node.sh': 0o700, 'tpnext/README.md': 0o600 }
+  const modes = { 'tpnext/': 0o700, 'tpnext/node.yaml': 0o600, 'tpnext/client-ca.crt': 0o644, 'tpnext/install-dependencies.sh': 0o700, 'tpnext/install-node.sh': 0o700, 'tpnext/README.md': 0o600 }
   const chunks = []
   for (const [name, text] of Object.entries(entries)) {
     const content = Buffer.from(text)

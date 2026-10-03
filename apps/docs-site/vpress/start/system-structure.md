@@ -11,4 +11,4 @@
 
 应用服务由 Docker 承载，宿主机维护服务由 systemd 承载。Web 与 Node 可部署到独立主机，Web 到 Node 的 gRPC 和维护 HTTPS 使用 mTLS；Agent 不挂载 Docker socket。
 
-一台节点服务器可以运行多个代理实例。完整组件关系与领域术语见[架构文档](https://github.com/1linhao/trojanpanelnext/blob/v1.0.2-rc.10/docs/architecture/domain-context.md)，网络准备见[部署指南](https://github.com/1linhao/trojanpanelnext/blob/v1.0.2-rc.10/docs/deployment.md#network)。
+一台节点服务器可以运行多个代理实例。完整组件关系与领域术语见[架构文档](https://github.com/1linhao/trojanpanelnext/blob/v1.0.2-rc.11/docs/architecture/domain-context.md)，网络准备见[部署指南](https://github.com/1linhao/trojanpanelnext/blob/v1.0.2-rc.11/docs/deployment.md#network)。

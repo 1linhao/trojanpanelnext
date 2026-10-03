@@ -2,10 +2,10 @@
 
 简体中文 | [English](README_EN.md)
 
-`tp.sh` 是 v1.0.2-rc.10 的统一入口，按选定版本下载对应命令、公共依赖及配置模板。完整说明见[部署指南](../docs/deployment.md)。
+`tp.sh` 是 v1.0.2-rc.11 的统一入口，按选定版本下载对应命令、公共依赖及配置模板。完整说明见[部署指南](../docs/deployment.md)。
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.10/scripts/tp.sh) --help
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.11/scripts/tp.sh) --help
 ```
 
 | 命令 | 用途 |
@@ -28,16 +28,22 @@ bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0
 在 root Bash 中先单独安装依赖，再执行 `web`、`node` 或 `install`；部署命令只检查依赖。
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.10/scripts/tp.sh) deps install
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.11/scripts/tp.sh) deps install
 ```
 
 自动依赖安装支持运行 systemd 的 Debian 12/13、Ubuntu 22.04/24.04（amd64/arm64）。入口自身需要 Bash、curl、CA 证书、grep、coreutils；`deps` 还需 util-linux 的 `flock`。最小引导与其他 Linux 的手动安装见[依赖指南](../docs/deployment.md#dependencies)。
 
 ## 从 Web 部署包安装 Node
 
-在 Web **服务器管理** 新增保存后打开 **部署 Node**，或从对应服务器行重新打开。包包含填入真实数字 ID 和数据库 / Redis 凭据的 `node.yaml`、公开 `client-ca.crt`、`install-node.sh` 和使用说明。服务器 ID 是大于或等于 `1` 的整数，与 IP / 域名及代理 ID 分开。
+在 Web **服务器管理** 新增保存后打开 **部署 Node**，或从对应服务器行重新打开。包包含填入真实数字 ID 和数据库 / Redis 凭据的 `node.yaml`、公开 `client-ca.crt`、`install-dependencies.sh`、`install-node.sh` 和使用说明。服务器 ID 是大于或等于 `1` 的整数，与 IP / 域名及代理 ID 分开。
 
-在 Node 准备依赖、安全传输并解压部署包。四个文件位于 `tpnext/` 目录（权限 `0700`），从解压目录执行：
+在 Node 的 root Bash 中先按[最小引导](../docs/deployment.md#dependency-bootstrap)准备基础工具，确认 systemd 正在运行，再安全传输并解压部署包。五个文件位于 `tpnext/` 目录（权限 `0700`），两个脚本权限为 `0700`。从解压目录先准备依赖：
+
+```bash
+bash ./tpnext/install-dependencies.sh
+```
+
+依赖入口运行包对应版本的 `deps install`，复用已有兼容工具与依赖管理记录；它不安装 Node、不读取含凭据的 YAML。其他 Linux 按[手动依赖说明](../docs/deployment.md#dependency-manual)准备后跳过该入口。依赖准备好后安装：
 
 ```bash
 bash ./tpnext/install-node.sh
@@ -52,13 +58,13 @@ bash ./tpnext/install-node.sh
 Web 模板：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.10/scripts/tp.sh) config web --output ./web.yaml
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.11/scripts/tp.sh) config web --output ./web.yaml
 ```
 
 Node 模板：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.10/scripts/tp.sh) config node --output ./node.yaml
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.11/scripts/tp.sh) config node --output ./node.yaml
 ```
 
 用 `nano` 或 `vi` 编辑，所有字段位于 `trojanpanelnext` 映射内。Web 至少改 `hostname`、`email`；首次安装的数据库和 Redis 空密码会生成后写回配置。Node 至少改域名、Caddy 邮箱、Web 数据库和 Redis 地址/实际密码、整数服务器 ID（≥ `1`，不是 IP / 域名或代理 ID）与 TLS 服务器名，安装前准备 Web 公开 CA。外部证书模式改 `node_certificate_mode: external` 和已存在的证书/私钥绝对路径，无需邮箱。
@@ -68,25 +74,25 @@ bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0
 Web 校验：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.10/scripts/tp.sh) validate --config ./web.yaml
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.11/scripts/tp.sh) validate --config ./web.yaml
 ```
 
 Web 安装：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.10/scripts/tp.sh) install --config ./web.yaml
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.11/scripts/tp.sh) install --config ./web.yaml
 ```
 
 Node 校验：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.10/scripts/tp.sh) validate --config ./node.yaml
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.11/scripts/tp.sh) validate --config ./node.yaml
 ```
 
 Node 安装：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.10/scripts/tp.sh) install --config ./node.yaml --client-ca /root/client-ca.crt
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.11/scripts/tp.sh) install --config ./node.yaml --client-ca /root/client-ca.crt
 ```
 
 `install --client-ca` 仅用于 Node 安装，以安全传入的当前 Web 公开 CA 初始化或重新绑定管理信任；替换前验证并备份旧文件。不传该参数的安装和镜像更新保留运行时信任，CA 轮换按[证书维护](../docs/certificates.md)执行。
@@ -96,7 +102,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0
 在对应的 Web 或 Node 主机执行，使用实际部署 YAML。必须指定目标版本；资源包部署的 Node 使用 `./tpnext/node.yaml`；手工配置使用原 YAML 路径。更新保留凭据、数据、端口和 PKI，不升级 MariaDB、Redis 或 Caddy。配置兼容范围、备份、短暂中断和恢复限制见[镜像更新](../docs/deployment.md#updates)。
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.10/scripts/tp.sh) --version 1.0.2-rc.10 update --config ./web.yaml
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.11/scripts/tp.sh) --version 1.0.2-rc.11 update --config ./web.yaml
 ```
 
 ## 卸载依赖
@@ -104,7 +110,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0
 卸载项目和其他 Docker 服务后，按安装记录清理新增依赖：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.10/scripts/tp.sh) deps remove
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.11/scripts/tp.sh) deps remove
 ```
 
 已有依赖、基础工具、Docker 数据和外部证书保留。Docker 仍有容器（含停止容器）、共享 containerd 中其他 namespace 仍有容器、Node 维护服务尚未清理或运行状态无法确认时拒绝删除 Docker。依赖安装中断时先重跑 `deps install` 修复，再卸载。完整范围见[依赖卸载](../docs/deployment.md#dependency-removal)。`deps` 同样支持 `--version <版本号>`。

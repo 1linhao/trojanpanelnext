@@ -43,9 +43,13 @@
 
 新增保存后自动打开 **部署 Node**；列表中每台服务器的同名按钮可重新打开。确认 Node 可达的 Web 地址，选择 Caddy 并填写邮箱，或选择 **使用宿主机现有证书** 并填写目标 Node 上的 fullchain / 私钥绝对路径，然后下载部署包。
 
-包包含已填实际 ID 与数据库 / Redis 凭据的 `node.yaml`、Web 公开 `client-ca.crt`、`install-node.sh` 和包内说明。只有 `sysadmin` 可生成该含凭据包；部署包和 YAML 应以 `0600` 权限保存在私有目录，只安全传到目标 Node，不提交公开仓库。包不包含任何 Web 私钥或 Node TLS 私钥，外部证书与私钥须在 Node 预先准备。
+包包含已填实际 ID 与数据库 / Redis 凭据的 `node.yaml`、Web 公开 `client-ca.crt`、`install-dependencies.sh`、`install-node.sh` 和包内说明。只有 `sysadmin` 可生成该含凭据包；部署包和 YAML 应以 `0600` 权限保存在私有目录，只安全传到目标 Node，不提交公开仓库。包不包含任何 Web 私钥或 Node TLS 私钥，外部证书与私钥须在 Node 预先准备。
 
-在 Node 准备依赖并解压后，四个文件位于 `tpnext/`（权限 `0700`）；从解压目录执行 `bash ./tpnext/install-node.sh`。脚本校验并使用包内当前 Web 的公开 CA，替换旧信任前先备份，不强制重建服务。安装后保留原 `tpnext/node.yaml` 用于更新与卸载。Node 尚未安装时显示离线是正常的；完整流程见[部署包安装](deployment.md#node-deployment-package)。
+在 Node 的 root Bash 中先按[最小引导](deployment.md#dependency-bootstrap)准备基础工具并确认 systemd 正在运行，再安全传输、以 `umask 077` 和归档 `0600` 权限解包。五个文件位于 `tpnext/`（目录和两个脚本权限 `0700`）。
+
+先执行 `bash ./tpnext/install-dependencies.sh` 准备部署依赖，再执行 `bash ./tpnext/install-node.sh` 安装。依赖入口只运行对应版本的 `deps install`，不安装 Node、不读取含凭据的 YAML，复用已有依赖管理记录；其他 Linux 手动准备依赖后跳过依赖入口。
+
+安装脚本校验并使用包内当前 Web 的公开 CA，替换旧信任前先备份，不强制重建服务。安装后保留原 `tpnext/node.yaml` 用于更新与卸载。Node 尚未安装时显示离线是正常的；完整流程见[部署包安装](deployment.md#node-deployment-package)。
 
 手工配置部署为备选，模板下载、最少编辑和 CA 操作分别见[配置文件下载](deployment.md#configuration-download)、[Node 最少编辑项](deployment.md#configuration-node-minimum)和[CA 准备](deployment.md#configuration-node-ca)。
 

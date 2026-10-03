@@ -86,6 +86,9 @@
             <app-icon name="warning-outline" />{{ $t('nodeDeployment.sensitiveWarning') }}
           </p>
           <liquid-form label-position="top" class="uniform-dialog-form">
+            <liquid-form-item v-for="requirement in prerequisites" :key="requirement.key" :label="requirement.label">
+              <liquid-input :value="requirement.value" type="textarea" :rows="requirement.rows" readonly />
+            </liquid-form-item>
             <liquid-form-item :label="$t('nodeDeployment.archive')">
               <div class="deployment-control-row">
                 <liquid-input :value="archiveName" readonly />
@@ -94,14 +97,12 @@
                 </liquid-button>
               </div>
             </liquid-form-item>
-            <template v-if="downloaded">
-              <liquid-form-item v-for="command in installCommands" :key="command.key" :label="command.label">
-                <div class="deployment-control-row">
-                  <liquid-input :value="command.value" type="textarea" rows="3" readonly />
-                  <liquid-button icon="document-copy" :aria-label="$t('nodeDeployment.copyCommand') + ': ' + command.label" @click="copyText(command.value)" />
-                </div>
-              </liquid-form-item>
-            </template>
+            <liquid-form-item v-for="command in installCommands" :key="command.key" :label="command.label">
+              <div class="deployment-control-row">
+                <liquid-input :value="command.value" :type="command.rows > 1 ? 'textarea' : 'text'" :rows="command.rows" readonly />
+                <liquid-button icon="document-copy" :aria-label="$t('nodeDeployment.copyCommand') + ': ' + command.label" @click="copyText(command.value)" />
+              </div>
+            </liquid-form-item>
           </liquid-form>
         </div>
       </template>
@@ -163,12 +164,18 @@ export default {
       const host = this.metadata.redisUsesWebHost === true ? this.form.webHost : this.metadata.redisHost
       return `${host}:${this.metadata.redisPort}`
     },
-    installCommands() {
-      const version = this.metadata.version.replace(/^v/, '')
+    prerequisites() {
       return [
-        { key: 'dependencies', label: this.$t('nodeDeployment.dependenciesCommand'), value: `bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v${version}/scripts/tp.sh) --version ${version} deps install` },
-        { key: 'extract', label: this.$t('nodeDeployment.extractCommand'), value: `tar -xzf ${this.archiveName}` },
-        { key: 'install', label: this.$t('nodeDeployment.installCommand'), value: 'bash ./tpnext/install-node.sh' }
+        { key: 'runtime', label: this.$t('nodeDeployment.runtimeRequirements'), value: this.$t('nodeDeployment.runtimeRequirementsValue'), rows: 3 },
+        { key: 'tools', label: this.$t('nodeDeployment.baseTools'), value: this.$t('nodeDeployment.baseToolsValue'), rows: 3 }
+      ]
+    },
+    installCommands() {
+      return [
+        { key: 'bootstrap', label: this.$t('nodeDeployment.bootstrapCommand'), value: 'apt-get update && apt-get install -y bash curl ca-certificates grep coreutils util-linux tar gzip', rows: 3 },
+        { key: 'extract', label: this.$t('nodeDeployment.extractCommand'), value: `umask 077 && chmod 600 ${this.archiveName} && tar -xzf ${this.archiveName}`, rows: 2 },
+        { key: 'dependencies', label: this.$t('nodeDeployment.dependenciesCommand'), value: 'bash ./tpnext/install-dependencies.sh', rows: 1 },
+        { key: 'install', label: this.$t('nodeDeployment.installCommand'), value: 'bash ./tpnext/install-node.sh', rows: 1 }
       ]
     }
   },

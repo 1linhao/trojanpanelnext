@@ -325,5 +325,5 @@ test "$(yq -r '.trojanpanelnext.node_certificate_mode' "${TEST_DIR}/original.yam
 test "$(yq -r '.trojanpanelnext.node_certificate_path' "${TEST_DIR}/original.yaml")" = "${NODE_CERTIFICATE_PATH}"
 
 # Version ordering includes RC -> RC, RC -> stable and rejects stable -> RC.
-bash -c 'source "$1"; version_can_update 1.0 1.0.1; version_can_update 1.0.2-rc.1 1.0.2-rc.3; version_can_update 1.0.2-rc.10 1.0.2-rc.10; version_can_update 1.0.2-rc.3 1.0.2; ! version_can_update 1.0.2 1.0.2-rc.3; ! version_can_update 1.1 1.0.2; ! version_can_update 0.9 1.0' test "${UPDATE}"
+bash -c 'source "$1"; version_can_update 1.0 1.0.1; version_can_update 1.0.2-rc.1 1.0.2-rc.3; version_can_update 1.0.2-rc.11 1.0.2-rc.11; version_can_update 1.0.2-rc.3 1.0.2; ! version_can_update 1.0.2 1.0.2-rc.3; ! version_can_update 1.1 1.0.2; ! version_can_update 0.9 1.0' test "${UPDATE}"
 printf 'PASS product-only image updates, protected config backup, source guards, pull safety, readiness/rename/create recovery and Node helper refresh\n'

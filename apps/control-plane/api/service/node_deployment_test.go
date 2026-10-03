@@ -74,6 +74,7 @@ func deploymentArchiveFiles(t *testing.T, data []byte) (map[string][]byte, map[s
 		"tpnext/":          tar.TypeDir,
 		"tpnext/node.yaml": tar.TypeReg, "tpnext/client-ca.crt": tar.TypeReg,
 		"tpnext/install-node.sh": tar.TypeReg, "tpnext/README.md": tar.TypeReg,
+		"tpnext/install-dependencies.sh": tar.TypeReg,
 	}
 	for {
 		header, err := archive.Next()
@@ -128,7 +129,7 @@ func TestNodeDeploymentArchiveAndSafeMetadata(t *testing.T) {
 				t.Fatal(err)
 			}
 			files, modes := deploymentArchiveFiles(t, archive)
-			if !reflect.DeepEqual(modes, map[string]int64{"tpnext/": 0700, "tpnext/node.yaml": 0600, "tpnext/client-ca.crt": 0644, "tpnext/install-node.sh": 0700, "tpnext/README.md": 0600}) {
+			if !reflect.DeepEqual(modes, map[string]int64{"tpnext/": 0700, "tpnext/node.yaml": 0600, "tpnext/client-ca.crt": 0644, "tpnext/install-node.sh": 0700, "tpnext/install-dependencies.sh": 0700, "tpnext/README.md": 0600}) {
 				t.Fatalf("archive files or modes changed: %v", modes)
 			}
 			var document map[string]map[string]interface{}
@@ -152,7 +153,7 @@ func TestNodeDeploymentArchiveAndSafeMetadata(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			for _, data := range [][]byte{jsonData, files["tpnext/README.md"], files["tpnext/install-node.sh"], files["tpnext/client-ca.crt"]} {
+			for _, data := range [][]byte{jsonData, files["tpnext/README.md"], files["tpnext/install-node.sh"], files["tpnext/install-dependencies.sh"], files["tpnext/client-ca.crt"]} {
 				for _, secret := range []string{config.MySQLConfig.Password, config.RedisConfig.Password} {
 					if bytes.Contains(data, []byte(secret)) {
 						t.Fatal("credentials escaped node.yaml")
@@ -175,6 +176,43 @@ func TestNodeDeploymentArchiveAndSafeMetadata(t *testing.T) {
 	}
 	if metadata.MariaDBHost != config.MySQLConfig.Host || metadata.RedisHost != config.RedisConfig.Host {
 		t.Fatal("nonloopback connection hosts were replaced")
+	}
+}
+
+func TestNodeDeploymentReadmeProvidesBootstrapAndOrderedInstallation(t *testing.T) {
+	server, request, config := deploymentFixture()
+	data, err := buildNodeDeploymentArchive(server, request, config, deploymentCAFixture(t, 1, true, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, _ := deploymentArchiveFiles(t, data)
+	readme := string(files["tpnext/README.md"])
+	sections := strings.Split(readme, "## English")
+	if len(sections) != 2 {
+		t.Fatal("bundle lacks separate Chinese and English installation instructions")
+	}
+	for _, section := range sections {
+		for _, requirement := range []string{"root", "Bash", "Debian 12/13", "Ubuntu 22.04/24.04", "amd64/arm64", "systemd", "Docker", "yq", "openssl", "findutils", "awk"} {
+			if !strings.Contains(section, requirement) {
+				t.Fatalf("bundle instructions lack prerequisite %q", requirement)
+			}
+		}
+		previous := -1
+		for _, command := range []string{
+			"apt-get update",
+			"apt-get install -y --no-install-recommends bash curl ca-certificates grep coreutils util-linux tar gzip",
+			"umask 077",
+			"mkdir -m 700 ./node-deployment",
+			"tar --extract --gzip",
+			"bash ./tpnext/install-dependencies.sh",
+			"bash ./tpnext/install-node.sh",
+		} {
+			position := strings.Index(section, command)
+			if position == -1 || position <= previous {
+				t.Fatalf("bundle installation command missing or unordered: %q", command)
+			}
+			previous = position
+		}
 	}
 }
 
@@ -496,6 +534,188 @@ esac
 				if err != nil || info.Mode().Perm() != 0600 {
 					t.Fatal("configuration permissions are not private")
 				}
+			}
+		})
+	}
+}
+
+func TestNodeDeploymentDependencyScriptUsesBoundReleaseOnly(t *testing.T) {
+	for _, scenario := range []string{"without_deployment_dependencies", "from_package_directory", "arm64", "degraded_systemd", "download_failure", "invalid_script", "wrong_version", "version_probe_failure", "deps_failure", "version_override", "not_root", "unsupported_os", "unsupported_arch", "inactive_systemd", "missing_curl", "missing_flock"} {
+		t.Run(scenario, func(t *testing.T) {
+			server, request, config := deploymentFixture()
+			data, err := buildNodeDeploymentArchive(server, request, config, deploymentCAFixture(t, 1, true, false))
+			if err != nil {
+				t.Fatal(err)
+			}
+			deploymentArchiveFiles(t, data)
+			dir := t.TempDir()
+			extractRoot := filepath.Join(dir, "bundle with spaces")
+			bin := filepath.Join(dir, "bootstrap tools")
+			tmp := filepath.Join(dir, "temporary downloads")
+			for _, path := range []string{extractRoot, bin, tmp} {
+				if err := os.Mkdir(path, 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			archivePath := filepath.Join(dir, "node.tar.gz")
+			if err := os.WriteFile(archivePath, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			extract := exec.Command("tar", "--extract", "--gzip", "--file", archivePath, "--directory", extractRoot, "--no-same-owner", "--same-permissions")
+			if output, err := extract.CombinedOutput(); err != nil {
+				t.Fatalf("extract deployment archive: %v %s", err, output)
+			}
+			pkg := filepath.Join(extractRoot, "tpnext")
+			// Dependency preparation must work before credentials/configuration are present.
+			for _, name := range []string{"node.yaml", "client-ca.crt"} {
+				if err := os.Remove(filepath.Join(pkg, name)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			write := func(path, body string) {
+				t.Helper()
+				if err := os.WriteFile(path, []byte(body), 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			write(filepath.Join(pkg, "install-node.sh"), "#!/usr/bin/env bash\nprintf 'deployment started\\n' > \"$TEST_DEPLOYED\"\n")
+			// Expose only bootstrap tools. Docker, yq, OpenSSL, find and awk are absent.
+			for _, name := range []string{"bash", "grep", "mktemp", "chmod", "rm", "stat", "install", "sha256sum", "mkdir", "cp", "ln", "readlink", "dirname", "cat", "flock"} {
+				tool, err := exec.LookPath(name)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(tool, filepath.Join(bin, name)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			write(filepath.Join(bin, "id"), "#!/usr/bin/env bash\nprintf '%s\\n' \"$TEST_UID\"\n")
+			write(filepath.Join(bin, "dpkg"), "#!/usr/bin/env bash\n[[ \"$*\" == --print-architecture ]] || exit 9\nprintf '%s\\n' \"$TEST_ARCH\"\n")
+			write(filepath.Join(bin, "systemctl"), "#!/usr/bin/env bash\n[[ \"$*\" == is-system-running ]] || exit 9\nprintf '%s\\n' \"$TEST_SYSTEMD\"\n[[ \"$TEST_SYSTEMD\" == running ]]\n")
+			for _, name := range []string{"apt-get", "dpkg-query"} {
+				write(filepath.Join(bin, name), "#!/usr/bin/env bash\nprintf 'unexpected system mutation\\n' > \"$TEST_DEPLOYED\"\nexit 9\n")
+			}
+			write(filepath.Join(bin, "curl"), `#!/usr/bin/env bash
+printf '%s\0' "$@" > "$TEST_CURL_ARGS"
+[[ "$TEST_DOWNLOAD_FAIL" == 0 ]] || exit 22
+while (($#)); do
+  if [[ "$1" == -o ]]; then cp -- "$TEST_ENTRY" "$2"; exit; fi
+  shift
+done
+exit 9
+`)
+			// This replaces the host OS file read at the shell boundary without any
+			// production environment override or modifications to /etc/os-release.
+			bashEnv := filepath.Join(dir, "os-release boundary.sh")
+			write(bashEnv, `source() {
+  if [[ "$1" == /etc/os-release ]]; then ID="$TEST_OS"; VERSION_ID="$TEST_OS_VERSION";
+  else builtin source "$@"; fi
+}
+`)
+			entry := filepath.Join(dir, "downloaded-entry.sh")
+			write(entry, `#!/usr/bin/env bash
+for tool in docker yq openssl find awk; do command -v "$tool" >/dev/null 2>&1 && exit 9; done
+printf '%s\0' "$@" >> "$TEST_ENTRY_ARGS"
+printf '\0' >> "$TEST_ENTRY_ARGS"
+if [[ "$1" == --entry-version ]]; then
+  printf '%s\n' "$TEST_ENTRY_VERSION"
+  exit "$TEST_VERSION_EXIT"
+fi
+[[ "$#" == 4 && "$1" == --version && "$2" == "v$TEST_VERSION" && "$3" == deps && "$4" == install ]] || {
+  printf 'unexpected deployment command\n' > "$TEST_DEPLOYED"; exit 9;
+}
+[[ "$(stat -c %a "$0")" == 600 && "$(stat -c %a "${0%/*}")" == 700 ]] || exit 9
+exit "$TEST_DEPS_EXIT"
+`)
+			version := strings.TrimPrefix(constant.TrojanPanelVersion, "v")
+			entryVersion, uid, arch, osID, osVersion, systemd := version, "0", "amd64", "debian", "12", "running"
+			downloadFail, versionExit, depsExit := "0", "0", "0"
+			args := []string{"./tpnext/install-dependencies.sh"}
+			switch scenario {
+			case "arm64":
+				arch, osID, osVersion = "arm64", "ubuntu", "24.04"
+			case "degraded_systemd":
+				systemd, osVersion = "degraded", "13"
+			case "download_failure":
+				downloadFail = "1"
+			case "invalid_script":
+				write(entry, "#!/usr/bin/env bash\nif (; then\n")
+			case "wrong_version":
+				entryVersion = "0.0.0"
+			case "version_probe_failure":
+				versionExit = "1"
+			case "deps_failure":
+				depsExit = "17"
+			case "version_override":
+				args = append(args, "--version", "v0.0.0")
+			case "not_root":
+				uid = "1000"
+			case "unsupported_os":
+				osID, osVersion = "arch", "rolling"
+			case "unsupported_arch":
+				arch = "i386"
+			case "inactive_systemd":
+				systemd = "offline"
+			case "missing_flock":
+				if err := os.Remove(filepath.Join(bin, "flock")); err != nil {
+					t.Fatal(err)
+				}
+			case "missing_curl":
+				if err := os.Remove(filepath.Join(bin, "curl")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			bash, err := exec.LookPath("bash")
+			if err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command(bash, args...)
+			cmd.Dir = extractRoot
+			if scenario == "from_package_directory" {
+				cmd.Args[1] = "./install-dependencies.sh"
+				cmd.Dir = pkg
+			}
+			curlArgsPath, entryArgsPath, deployed := filepath.Join(dir, "curl-args"), filepath.Join(dir, "entry-args"), filepath.Join(dir, "deployed")
+			cmd.Env = append(os.Environ(), "PATH="+bin, "TMPDIR="+tmp, "BASH_ENV="+bashEnv, "TEST_VERSION="+version, "TEST_ENTRY="+entry, "TEST_ENTRY_VERSION="+entryVersion, "TEST_VERSION_EXIT="+versionExit, "TEST_UID="+uid, "TEST_ARCH="+arch, "TEST_OS="+osID, "TEST_OS_VERSION="+osVersion, "TEST_SYSTEMD="+systemd, "TEST_DOWNLOAD_FAIL="+downloadFail, "TEST_DEPS_EXIT="+depsExit, "TEST_CURL_ARGS="+curlArgsPath, "TEST_ENTRY_ARGS="+entryArgsPath, "TEST_DEPLOYED="+deployed)
+			output, err := cmd.CombinedOutput()
+			shouldSucceed := scenario == "without_deployment_dependencies" || scenario == "from_package_directory" || scenario == "arm64" || scenario == "degraded_systemd"
+			if (err == nil) != shouldSucceed {
+				t.Fatalf("dependency preparation %s: %v %s", scenario, err, output)
+			}
+			if scenario == "deps_failure" {
+				if exit, ok := err.(*exec.ExitError); !ok || exit.ExitCode() != 17 {
+					t.Fatalf("dependency error status lost: %v %s", err, output)
+				}
+			}
+			if _, err := os.Stat(deployed); !os.IsNotExist(err) {
+				t.Fatal("dependency script started deployment or directly invoked APT")
+			}
+			entries, err := os.ReadDir(tmp)
+			if err != nil || len(entries) != 0 {
+				t.Fatalf("temporary release downloads leaked: %v %v", entries, err)
+			}
+			actualCurl, _ := os.ReadFile(curlArgsPath)
+			beforeDownloadFailure := scenario == "version_override" || scenario == "not_root" || scenario == "unsupported_os" || scenario == "unsupported_arch" || scenario == "inactive_systemd" || scenario == "missing_curl" || scenario == "missing_flock"
+			if beforeDownloadFailure {
+				if len(actualCurl) != 0 {
+					t.Fatalf("unsupported prerequisites reached download: %q", actualCurl)
+				}
+			} else {
+				curlArgs := strings.Split(strings.TrimSuffix(string(actualCurl), "\x00"), "\x00")
+				want := []string{"--fail", "--location", "--silent", "--show-error", "--proto", "=https", "--proto-redir", "=https", "--retry", "2", "--retry-max-time", "180", "--connect-timeout", "10", "--max-time", "60", "--max-filesize", "5242880", "https://raw.githubusercontent.com/1linhao/trojanpanelnext/v" + version + "/scripts/tp.sh"}
+				if len(curlArgs) != len(want)+2 || !reflect.DeepEqual(curlArgs[:len(want)], want) || curlArgs[len(want)] != "-o" || filepath.Dir(filepath.Dir(curlArgs[len(want)+1])) != tmp {
+					t.Fatalf("entry download changed release/security boundary: %q", curlArgs)
+				}
+			}
+			actualEntry, _ := os.ReadFile(entryArgsPath)
+			wantCalls := ""
+			if shouldSucceed || scenario == "deps_failure" {
+				wantCalls = "--entry-version\x00\x00--version\x00v" + version + "\x00deps\x00install\x00\x00"
+			} else if scenario == "wrong_version" || scenario == "version_probe_failure" {
+				wantCalls = "--entry-version\x00\x00"
+			}
+			if string(actualEntry) != wantCalls {
+				t.Fatalf("release entry received unexpected actions: %q", actualEntry)
 			}
 		})
 	}

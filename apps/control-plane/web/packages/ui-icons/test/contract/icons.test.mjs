@@ -47,3 +47,19 @@ test('renderer preserves Vue bindings and semantic loading class', () => {
   assert.equal(icon.data.style.opacity, 0.5)
   assert.equal(icon.data.on.click, click)
 })
+
+
+test('account reset actions have distinct semantic symbols rather than the generic refresh icon', () => {
+  const h = (tag, data, children) => ({ tag, data, children })
+  const traffic = renderIcon(h, 'reset-traffic')
+  const login = renderIcon(h, 'reset-login')
+  assert.ok(iconNames.includes('reset-traffic'))
+  assert.ok(iconNames.includes('reset-login'))
+  assert.ok(traffic.children.length > 1, 'traffic has a central action symbol')
+  assert.ok(login.children.length > 1, 'login has a central action symbol')
+  assert.notDeepEqual(traffic.children, login.children)
+  for (const icon of [traffic, login]) {
+    assert.notDeepEqual(icon.children, renderIcon(h, 'refresh').children)
+    assert.notDeepEqual(icon.children, renderIcon(h, 'refresh-left').children)
+  }
+})
