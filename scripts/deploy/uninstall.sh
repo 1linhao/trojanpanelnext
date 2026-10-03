@@ -158,6 +158,9 @@ finish_removal() {
         "$(stat -c '%d:%i' "${TP_REMOVAL_LOCK_DIR}" 2>/dev/null)" == "${TP_REMOVAL_LOCK_ID}" ]]; then
     rmdir -- "${TP_REMOVAL_LOCK_DIR}"
   fi
+  if [[ -n "${TP_REMOVAL_PRODUCT_LOCK_FD:-}" ]]; then
+    exec {TP_REMOVAL_PRODUCT_LOCK_FD}<&-
+  fi
   exit "${status}"
 }
 
