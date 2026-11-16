@@ -101,6 +101,9 @@ func init() {
 			logrus.Errorf("create file logo.png err: %v", err)
 		}
 	}
+	if err := util.OptimizePanelLogoFile(logoImagePath); err != nil {
+		logrus.Warnf("optimize panel logo: %v", err)
+	}
 
 	ExportPath := constant.ExportPath
 	if !util.Exists(ExportPath) {

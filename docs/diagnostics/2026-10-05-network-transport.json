@@ -1,0 +1,4249 @@
+{
+  "site": "https://trpl.lhsiteb.site/",
+  "date": "2026-10-05",
+  "timezone": "Asia/Shanghai",
+  "browser_lab": [
+    {
+      "run": 1,
+      "mode": "cubic",
+      "startedAt": "2026-10-05T13:19:29.882Z",
+      "formVisibleMs": 11176,
+      "readyMs": 11987,
+      "captchaEnabled": true,
+      "errors": [],
+      "navigation": {
+        "ttfbMs": 1259.699999999255,
+        "dnsMs": 81.89999999850988,
+        "tlsAndConnectMs": 913,
+        "domLoadedMs": 5809.199999999255,
+        "loadEventMs": 5810.39999999851
+      },
+      "paint": [
+        {
+          "name": "first-paint",
+          "ms": 5908
+        },
+        {
+          "name": "first-contentful-paint",
+          "ms": 11256
+        }
+      ],
+      "resources": [
+        {
+          "path": "/static/index-dqUZvcay.js",
+          "startMs": 1270.3999999985099,
+          "durationMs": 2320.5,
+          "ttfbMs": 268.30000000074506,
+          "downloadMs": 2045.0999999977648,
+          "endMs": 3590.89999999851,
+          "bytes": 68154,
+          "transferBytes": 68454,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/vendor-framework-DX6w19GY.js",
+          "startMs": 1270.800000000745,
+          "durationMs": 4464.699999999255,
+          "ttfbMs": 2125,
+          "downloadMs": 2332.900000002235,
+          "endMs": 5735.5,
+          "bytes": 50824,
+          "transferBytes": 51124,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/vendor-dependencies-DzUUnqRu.js",
+          "startMs": 1271,
+          "durationMs": 4464.89999999851,
+          "ttfbMs": 1292.300000000745,
+          "downloadMs": 3166,
+          "endMs": 5735.89999999851,
+          "bytes": 26300,
+          "transferBytes": 26600,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/style-gyTvZ_k0.css",
+          "startMs": 1271.0999999977648,
+          "durationMs": 2134.400000002235,
+          "ttfbMs": 271.80000000074506,
+          "downloadMs": 1856.199999999255,
+          "endMs": 3405.5,
+          "bytes": 24738,
+          "transferBytes": 25038,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/index-DwDSgKIl.js",
+          "startMs": 5809,
+          "durationMs": 581,
+          "ttfbMs": 259.30000000074506,
+          "downloadMs": 320.80000000074506,
+          "endMs": 6390,
+          "bytes": 3325,
+          "transferBytes": 3625,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/image/logo",
+          "startMs": 5818.699999999255,
+          "durationMs": 4706.199999999255,
+          "ttfbMs": 569.3999999985099,
+          "downloadMs": 4134.699999999255,
+          "endMs": 10524.89999999851,
+          "bytes": 93297,
+          "transferBytes": 93597,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/index-DN8p7EbY.js",
+          "startMs": 6391.599999997765,
+          "durationMs": 4136.800000000745,
+          "ttfbMs": 4130.800000000745,
+          "downloadMs": 3.099999997764826,
+          "endMs": 10528.39999999851,
+          "bytes": 1094,
+          "transferBytes": 1394,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/index-bxx0_qKz.js",
+          "startMs": 6391.699999999255,
+          "durationMs": 4136.89999999851,
+          "ttfbMs": 4132.39999999851,
+          "downloadMs": 1.3999999985098839,
+          "endMs": 10528.599999997765,
+          "bytes": 926,
+          "transferBytes": 1226,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/system-DnuxBzFJ.js",
+          "startMs": 6391.800000000745,
+          "durationMs": 4388.39999999851,
+          "ttfbMs": 4133.70000000298,
+          "downloadMs": 251.39999999850988,
+          "endMs": 10780.199999999255,
+          "bytes": 570,
+          "transferBytes": 870,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/image/logo",
+          "startMs": 11037.199999999255,
+          "durationMs": 2,
+          "ttfbMs": 0.10000000149011612,
+          "downloadMs": 1.3999999985098839,
+          "endMs": 11039.199999999255,
+          "bytes": 93297,
+          "transferBytes": 0,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/auth/setting",
+          "startMs": 11039.599999997765,
+          "durationMs": 262.70000000298023,
+          "ttfbMs": 260,
+          "downloadMs": 1.800000000745058,
+          "endMs": 11302.300000000745,
+          "bytes": 200,
+          "transferBytes": 500,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/auth/generateCaptcha/",
+          "startMs": 11040.099999997765,
+          "durationMs": 811.6000000014901,
+          "ttfbMs": 294.1000000014901,
+          "downloadMs": 257.3999999985099,
+          "endMs": 11851.699999999255,
+          "bytes": 7986,
+          "transferBytes": 8286,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/image/logo",
+          "startMs": 11045.699999999255,
+          "durationMs": 2.5,
+          "ttfbMs": 0.10000000149011612,
+          "downloadMs": 1.5,
+          "endMs": 11048.199999999255,
+          "bytes": 93297,
+          "transferBytes": 0,
+          "protocol": "h2"
+        }
+      ],
+      "phase": "original_ports"
+    },
+    {
+      "run": 2,
+      "mode": "bbr",
+      "startedAt": "2026-10-05T13:19:42.866Z",
+      "formVisibleMs": 13488,
+      "readyMs": 14917,
+      "captchaEnabled": true,
+      "errors": [],
+      "navigation": {
+        "ttfbMs": 2400.39999999851,
+        "dnsMs": 131.30000000074506,
+        "tlsAndConnectMs": 1688.3999999985099,
+        "domLoadedMs": 9113.699999999255,
+        "loadEventMs": 9117.10000000149
+      },
+      "paint": [
+        {
+          "name": "first-paint",
+          "ms": 9248
+        },
+        {
+          "name": "first-contentful-paint",
+          "ms": 13476
+        }
+      ],
+      "resources": [
+        {
+          "path": "/static/index-dqUZvcay.js",
+          "startMs": 2411.5,
+          "durationMs": 3241.199999999255,
+          "ttfbMs": 1375.6000000014901,
+          "downloadMs": 1858.3999999985099,
+          "endMs": 5652.699999999255,
+          "bytes": 68154,
+          "transferBytes": 68454,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/vendor-framework-DX6w19GY.js",
+          "startMs": 2411.89999999851,
+          "durationMs": 6604,
+          "ttfbMs": 3232.599999997765,
+          "downloadMs": 3364.5,
+          "endMs": 9015.89999999851,
+          "bytes": 50824,
+          "transferBytes": 51124,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/vendor-dependencies-DzUUnqRu.js",
+          "startMs": 2412,
+          "durationMs": 6604.5,
+          "ttfbMs": 3921.5,
+          "downloadMs": 2676.10000000149,
+          "endMs": 9016.5,
+          "bytes": 26300,
+          "transferBytes": 26600,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/style-gyTvZ_k0.css",
+          "startMs": 2412.10000000149,
+          "durationMs": 1384.0999999977648,
+          "ttfbMs": 296.19999999925494,
+          "downloadMs": 1081.3999999985099,
+          "endMs": 3796.199999999255,
+          "bytes": 24738,
+          "transferBytes": 25038,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/index-DwDSgKIl.js",
+          "startMs": 9113.60000000149,
+          "durationMs": 366.69999999925494,
+          "ttfbMs": 293.80000000074506,
+          "downloadMs": 71.10000000149012,
+          "endMs": 9480.300000000745,
+          "bytes": 3325,
+          "transferBytes": 3625,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/image/logo",
+          "startMs": 9125.800000000745,
+          "durationMs": 3954.599999997765,
+          "ttfbMs": 353.1000000014901,
+          "downloadMs": 3599.7999999970198,
+          "endMs": 13080.39999999851,
+          "bytes": 93297,
+          "transferBytes": 93597,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/index-DN8p7EbY.js",
+          "startMs": 9481.89999999851,
+          "durationMs": 3603,
+          "ttfbMs": 3599.5,
+          "downloadMs": 1.7999999970197678,
+          "endMs": 13084.89999999851,
+          "bytes": 1094,
+          "transferBytes": 1394,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/index-bxx0_qKz.js",
+          "startMs": 9482,
+          "durationMs": 3599.699999999255,
+          "ttfbMs": 3596.800000000745,
+          "downloadMs": 1.0999999977648258,
+          "endMs": 13081.699999999255,
+          "bytes": 926,
+          "transferBytes": 1226,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/system-DnuxBzFJ.js",
+          "startMs": 9482.10000000149,
+          "durationMs": 3602.599999997765,
+          "ttfbMs": 3598,
+          "downloadMs": 2.800000000745058,
+          "endMs": 13084.699999999255,
+          "bytes": 570,
+          "transferBytes": 870,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/image/logo",
+          "startMs": 13282.60000000149,
+          "durationMs": 2,
+          "ttfbMs": 0,
+          "downloadMs": 1.5,
+          "endMs": 13284.60000000149,
+          "bytes": 93297,
+          "transferBytes": 0,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/auth/setting",
+          "startMs": 13285,
+          "durationMs": 1266.6000000014901,
+          "ttfbMs": 1263.300000000745,
+          "downloadMs": 1.6000000014901161,
+          "endMs": 14551.60000000149,
+          "bytes": 200,
+          "transferBytes": 500,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/auth/generateCaptcha/",
+          "startMs": 13285.300000000745,
+          "durationMs": 1594.8999999985099,
+          "ttfbMs": 970,
+          "downloadMs": 328.3999999985099,
+          "endMs": 14880.199999999255,
+          "bytes": 7254,
+          "transferBytes": 7554,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/image/logo",
+          "startMs": 13289.5,
+          "durationMs": 1.8999999985098839,
+          "ttfbMs": 0.20000000298023224,
+          "downloadMs": 1.2999999970197678,
+          "endMs": 13291.39999999851,
+          "bytes": 93297,
+          "transferBytes": 0,
+          "protocol": "h2"
+        }
+      ],
+      "phase": "original_ports"
+    },
+    {
+      "run": 3,
+      "mode": "bbr",
+      "startedAt": "2026-10-05T13:19:58.388Z",
+      "formVisibleMs": 4245,
+      "readyMs": 4696,
+      "captchaEnabled": true,
+      "errors": [],
+      "navigation": {
+        "ttfbMs": 1186.8999999985099,
+        "dnsMs": 1.1000000014901161,
+        "tlsAndConnectMs": 917.6999999992549,
+        "domLoadedMs": 2905.5,
+        "loadEventMs": 2907.2999999970198
+      },
+      "paint": [
+        {
+          "name": "first-paint",
+          "ms": 2996
+        },
+        {
+          "name": "first-contentful-paint",
+          "ms": 4160
+        }
+      ],
+      "resources": [
+        {
+          "path": "/static/index-dqUZvcay.js",
+          "startMs": 1196.199999999255,
+          "durationMs": 1653.5999999977648,
+          "ttfbMs": 267.5,
+          "downloadMs": 1379.3999999985099,
+          "endMs": 2849.7999999970198,
+          "bytes": 68154,
+          "transferBytes": 68454,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/vendor-dependencies-DzUUnqRu.js",
+          "startMs": 1196.5,
+          "durationMs": 1655.0999999977648,
+          "ttfbMs": 1006.3999999985099,
+          "downloadMs": 642,
+          "endMs": 2851.599999997765,
+          "bytes": 26300,
+          "transferBytes": 26600,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/vendor-framework-DX6w19GY.js",
+          "startMs": 1196.5,
+          "durationMs": 1655.5,
+          "ttfbMs": 1004.4000000022352,
+          "downloadMs": 644.5,
+          "endMs": 2852,
+          "bytes": 50824,
+          "transferBytes": 51124,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/style-gyTvZ_k0.css",
+          "startMs": 1196.5999999977648,
+          "durationMs": 1316.5,
+          "ttfbMs": 271.30000000074506,
+          "downloadMs": 1039,
+          "endMs": 2513.099999997765,
+          "bytes": 24738,
+          "transferBytes": 25038,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/index-DwDSgKIl.js",
+          "startMs": 2905.5,
+          "durationMs": 595.6999999992549,
+          "ttfbMs": 266.6000000014901,
+          "downloadMs": 327.69999999925494,
+          "endMs": 3501.199999999255,
+          "bytes": 3325,
+          "transferBytes": 3625,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/image/logo",
+          "startMs": 2917.39999999851,
+          "durationMs": 586.1000000014901,
+          "ttfbMs": 582.6999999992549,
+          "downloadMs": 2.2000000029802322,
+          "endMs": 3503.5,
+          "bytes": 93297,
+          "transferBytes": 93597,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/index-DN8p7EbY.js",
+          "startMs": 3503.099999997765,
+          "durationMs": 292.19999999925494,
+          "ttfbMs": 287.19999999925494,
+          "downloadMs": 2.599999997764826,
+          "endMs": 3795.2999999970198,
+          "bytes": 1094,
+          "transferBytes": 1394,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/index-bxx0_qKz.js",
+          "startMs": 3503.599999997765,
+          "durationMs": 290.6000000014901,
+          "ttfbMs": 284.19999999925494,
+          "downloadMs": 4.400000002235174,
+          "endMs": 3794.199999999255,
+          "bytes": 926,
+          "transferBytes": 1226,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/system-DnuxBzFJ.js",
+          "startMs": 3503.7999999970198,
+          "durationMs": 298,
+          "ttfbMs": 293.5999999977648,
+          "downloadMs": 2.5,
+          "endMs": 3801.7999999970198,
+          "bytes": 570,
+          "transferBytes": 870,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/image/logo",
+          "startMs": 4029.599999997765,
+          "durationMs": 3.5,
+          "ttfbMs": 0.09999999776482582,
+          "downloadMs": 2.800000000745058,
+          "endMs": 4033.099999997765,
+          "bytes": 93297,
+          "transferBytes": 0,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/auth/setting",
+          "startMs": 4034.099999997765,
+          "durationMs": 608.1999999992549,
+          "ttfbMs": 605.6000000014901,
+          "downloadMs": 1.3999999985098839,
+          "endMs": 4642.29999999702,
+          "bytes": 200,
+          "transferBytes": 500,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/auth/generateCaptcha/",
+          "startMs": 4034.7999999970198,
+          "durationMs": 609,
+          "ttfbMs": 338.80000000074506,
+          "downloadMs": 1.2999999970197678,
+          "endMs": 4643.79999999702,
+          "bytes": 9398,
+          "transferBytes": 9698,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/image/logo",
+          "startMs": 4045.099999997765,
+          "durationMs": 2.900000002235174,
+          "ttfbMs": 0.09999999776482582,
+          "downloadMs": 1.2000000029802322,
+          "endMs": 4048,
+          "bytes": 93297,
+          "transferBytes": 0,
+          "protocol": "h2"
+        }
+      ],
+      "phase": "original_ports"
+    },
+    {
+      "run": 4,
+      "mode": "cubic",
+      "startedAt": "2026-10-05T13:20:03.640Z",
+      "formVisibleMs": 11806,
+      "readyMs": 14734,
+      "captchaEnabled": true,
+      "errors": [],
+      "navigation": {
+        "ttfbMs": 1003.5999999977648,
+        "dnsMs": 2,
+        "tlsAndConnectMs": 747.6999999992549,
+        "domLoadedMs": 3675.099999997765,
+        "loadEventMs": 3675.89999999851
+      },
+      "paint": [
+        {
+          "name": "first-paint",
+          "ms": 3772
+        },
+        {
+          "name": "first-contentful-paint",
+          "ms": 12016
+        }
+      ],
+      "resources": [
+        {
+          "path": "/static/index-dqUZvcay.js",
+          "startMs": 1013.5999999977648,
+          "durationMs": 2149.5,
+          "ttfbMs": 279.30000000074506,
+          "downloadMs": 1864.8999999985099,
+          "endMs": 3163.099999997765,
+          "bytes": 68154,
+          "transferBytes": 68454,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/vendor-framework-DX6w19GY.js",
+          "startMs": 1014,
+          "durationMs": 2604.599999997765,
+          "ttfbMs": 1551.2000000029802,
+          "downloadMs": 1048.2999999970198,
+          "endMs": 3618.599999997765,
+          "bytes": 50824,
+          "transferBytes": 51124,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/vendor-dependencies-DzUUnqRu.js",
+          "startMs": 1014.0999999977648,
+          "durationMs": 2605.300000000745,
+          "ttfbMs": 2144.300000000745,
+          "downloadMs": 456,
+          "endMs": 3619.39999999851,
+          "bytes": 26300,
+          "transferBytes": 26600,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/style-gyTvZ_k0.css",
+          "startMs": 1014.1999999992549,
+          "durationMs": 1557.6000000014901,
+          "ttfbMs": 276.6000000014901,
+          "downloadMs": 1276.300000000745,
+          "endMs": 2571.800000000745,
+          "bytes": 24738,
+          "transferBytes": 25038,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/index-DwDSgKIl.js",
+          "startMs": 3674.89999999851,
+          "durationMs": 1489.1000000014901,
+          "ttfbMs": 581.5,
+          "downloadMs": 3,
+          "endMs": 5164,
+          "bytes": 3325,
+          "transferBytes": 3625,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/image/logo",
+          "startMs": 3698.800000000745,
+          "durationMs": 7535.199999999255,
+          "ttfbMs": 584.6000000014901,
+          "downloadMs": 6069.699999999255,
+          "endMs": 11234,
+          "bytes": 93297,
+          "transferBytes": 93597,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/index-DN8p7EbY.js",
+          "startMs": 5166.39999999851,
+          "durationMs": 6378.900000002235,
+          "ttfbMs": 6331.699999999255,
+          "downloadMs": 45.400000002235174,
+          "endMs": 11545.300000000745,
+          "bytes": 1094,
+          "transferBytes": 1394,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/index-bxx0_qKz.js",
+          "startMs": 5166.699999999255,
+          "durationMs": 6333,
+          "ttfbMs": 6066.800000000745,
+          "downloadMs": 264.3999999985099,
+          "endMs": 11499.699999999255,
+          "bytes": 926,
+          "transferBytes": 1226,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/system-DnuxBzFJ.js",
+          "startMs": 5167,
+          "durationMs": 6069.599999997765,
+          "ttfbMs": 6065.60000000149,
+          "downloadMs": 2.399999998509884,
+          "endMs": 11236.599999997765,
+          "bytes": 570,
+          "transferBytes": 870,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/image/logo",
+          "startMs": 11775.300000000745,
+          "durationMs": 4,
+          "ttfbMs": 0,
+          "downloadMs": 3.400000002235174,
+          "endMs": 11779.300000000745,
+          "bytes": 93297,
+          "transferBytes": 0,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/auth/setting",
+          "startMs": 11777.099999997765,
+          "durationMs": 1426.5,
+          "ttfbMs": 639.8000000007451,
+          "downloadMs": 784.6999999992549,
+          "endMs": 13203.599999997765,
+          "bytes": 200,
+          "transferBytes": 500,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/auth/generateCaptcha/",
+          "startMs": 11777.599999997765,
+          "durationMs": 2926.2000000029802,
+          "ttfbMs": 1501.5,
+          "downloadMs": 779.5,
+          "endMs": 14703.800000000745,
+          "bytes": 10690,
+          "transferBytes": 10990,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/image/logo",
+          "startMs": 11788.599999997765,
+          "durationMs": 3.5,
+          "ttfbMs": 0.10000000149011612,
+          "downloadMs": 2.599999997764826,
+          "endMs": 11792.099999997765,
+          "bytes": 93297,
+          "transferBytes": 0,
+          "protocol": "h2"
+        }
+      ],
+      "phase": "original_ports"
+    },
+    {
+      "run": 5,
+      "mode": "cubic",
+      "startedAt": "2026-10-05T13:20:18.988Z",
+      "formVisibleMs": 35794,
+      "readyMs": 37340,
+      "captchaEnabled": true,
+      "errors": [],
+      "navigation": {
+        "ttfbMs": 3127.60000000149,
+        "dnsMs": 4.5,
+        "tlsAndConnectMs": 2542.89999999851,
+        "domLoadedMs": 23176.400000002235,
+        "loadEventMs": 23177.300000000745
+      },
+      "paint": [
+        {
+          "name": "first-paint",
+          "ms": 23268
+        },
+        {
+          "name": "first-contentful-paint",
+          "ms": 35976
+        }
+      ],
+      "resources": [
+        {
+          "path": "/static/index-dqUZvcay.js",
+          "startMs": 3138.900000002235,
+          "durationMs": 8632,
+          "ttfbMs": 297.3999999985099,
+          "downloadMs": 8321.20000000298,
+          "endMs": 11770.900000002235,
+          "bytes": 68154,
+          "transferBytes": 68454,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/vendor-framework-DX6w19GY.js",
+          "startMs": 3139.699999999255,
+          "durationMs": 19959.900000002235,
+          "ttfbMs": 8618.699999999255,
+          "downloadMs": 11328.5,
+          "endMs": 23099.60000000149,
+          "bytes": 50824,
+          "transferBytes": 51124,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/vendor-dependencies-DzUUnqRu.js",
+          "startMs": 3140,
+          "durationMs": 19960.300000000745,
+          "ttfbMs": 14716.199999999255,
+          "downloadMs": 5231.60000000149,
+          "endMs": 23100.300000000745,
+          "bytes": 26300,
+          "transferBytes": 26600,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/style-gyTvZ_k0.css",
+          "startMs": 3140.199999999255,
+          "durationMs": 5161.20000000298,
+          "ttfbMs": 296.1000000014901,
+          "downloadMs": 4853.10000000149,
+          "endMs": 8301.400000002235,
+          "bytes": 24738,
+          "transferBytes": 25038,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/index-DwDSgKIl.js",
+          "startMs": 23176.300000000745,
+          "durationMs": 606.1000000014901,
+          "ttfbMs": 299,
+          "downloadMs": 306.4000000022352,
+          "endMs": 23782.400000002235,
+          "bytes": 3325,
+          "transferBytes": 3625,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/image/logo",
+          "startMs": 23191.900000002235,
+          "durationMs": 11922,
+          "ttfbMs": 589.5,
+          "downloadMs": 11331.20000000298,
+          "endMs": 35113.900000002235,
+          "bytes": 93297,
+          "transferBytes": 93597,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/index-DN8p7EbY.js",
+          "startMs": 23784.900000002235,
+          "durationMs": 11724.599999997765,
+          "ttfbMs": 11609.400000002235,
+          "downloadMs": 113.39999999850988,
+          "endMs": 35509.5,
+          "bytes": 1094,
+          "transferBytes": 1394,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/index-bxx0_qKz.js",
+          "startMs": 23785.10000000149,
+          "durationMs": 11613.599999997765,
+          "ttfbMs": 11328.70000000298,
+          "downloadMs": 283.29999999701977,
+          "endMs": 35398.699999999255,
+          "bytes": 926,
+          "transferBytes": 1226,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/system-DnuxBzFJ.js",
+          "startMs": 23785.400000002235,
+          "durationMs": 11610.29999999702,
+          "ttfbMs": 11327.29999999702,
+          "downloadMs": 281.5,
+          "endMs": 35395.699999999255,
+          "bytes": 570,
+          "transferBytes": 870,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/image/logo",
+          "startMs": 35761.300000000745,
+          "durationMs": 1.8999999985098839,
+          "ttfbMs": 0,
+          "downloadMs": 1.2999999970197678,
+          "endMs": 35763.199999999255,
+          "bytes": 93297,
+          "transferBytes": 0,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/auth/setting",
+          "startMs": 35763.400000002235,
+          "durationMs": 660.5999999977648,
+          "ttfbMs": 657.7999999970198,
+          "downloadMs": 1.800000000745058,
+          "endMs": 36424,
+          "bytes": 200,
+          "transferBytes": 500,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/auth/generateCaptcha/",
+          "startMs": 35763.900000002235,
+          "durationMs": 1493.0999999977648,
+          "ttfbMs": 360.30000000074506,
+          "downloadMs": 832.8999999985099,
+          "endMs": 37257,
+          "bytes": 8366,
+          "transferBytes": 8666,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/image/logo",
+          "startMs": 35768.699999999255,
+          "durationMs": 2.300000000745058,
+          "ttfbMs": 0,
+          "downloadMs": 1.5,
+          "endMs": 35771,
+          "bytes": 93297,
+          "transferBytes": 0,
+          "protocol": "h2"
+        }
+      ],
+      "phase": "original_ports"
+    },
+    {
+      "run": 6,
+      "mode": "bbr",
+      "startedAt": "2026-10-05T13:20:56.929Z",
+      "formVisibleMs": 6706,
+      "readyMs": 7680,
+      "captchaEnabled": true,
+      "errors": [],
+      "navigation": {
+        "ttfbMs": 1616.300000000745,
+        "dnsMs": 1.0999999977648258,
+        "tlsAndConnectMs": 987.3000000007451,
+        "domLoadedMs": 4868.800000000745,
+        "loadEventMs": 4869.699999999255
+      },
+      "paint": [
+        {
+          "name": "first-paint",
+          "ms": 4972
+        },
+        {
+          "name": "first-contentful-paint",
+          "ms": 6884
+        }
+      ],
+      "resources": [
+        {
+          "path": "/static/index-dqUZvcay.js",
+          "startMs": 1627.199999999255,
+          "durationMs": 2458.39999999851,
+          "ttfbMs": 289.20000000298023,
+          "downloadMs": 2152.2999999970198,
+          "endMs": 4085.599999997765,
+          "bytes": 68154,
+          "transferBytes": 68454,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/vendor-framework-DX6w19GY.js",
+          "startMs": 1628.0999999977648,
+          "durationMs": 3187.400000002235,
+          "ttfbMs": 2439.39999999851,
+          "downloadMs": 731.8000000007451,
+          "endMs": 4815.5,
+          "bytes": 50824,
+          "transferBytes": 51124,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/vendor-dependencies-DzUUnqRu.js",
+          "startMs": 1628.199999999255,
+          "durationMs": 2457.699999999255,
+          "ttfbMs": 2436,
+          "downloadMs": 5.399999998509884,
+          "endMs": 4085.89999999851,
+          "bytes": 26300,
+          "transferBytes": 26600,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/style-gyTvZ_k0.css",
+          "startMs": 1628.300000000745,
+          "durationMs": 2451.099999997765,
+          "ttfbMs": 605,
+          "downloadMs": 1830.3999999985099,
+          "endMs": 4079.39999999851,
+          "bytes": 24738,
+          "transferBytes": 25038,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/index-DwDSgKIl.js",
+          "startMs": 4868.599999997765,
+          "durationMs": 629,
+          "ttfbMs": 625.5,
+          "downloadMs": 2.7999999970197678,
+          "endMs": 5497.599999997765,
+          "bytes": 3325,
+          "transferBytes": 3625,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/image/logo",
+          "startMs": 4888.5,
+          "durationMs": 1447.800000000745,
+          "ttfbMs": 608.9000000022352,
+          "downloadMs": 838.3000000007451,
+          "endMs": 6336.300000000745,
+          "bytes": 93297,
+          "transferBytes": 93597,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/index-DN8p7EbY.js",
+          "startMs": 5499.800000000745,
+          "durationMs": 894.1999999992549,
+          "ttfbMs": 831.3999999985099,
+          "downloadMs": 59.80000000074506,
+          "endMs": 6394,
+          "bytes": 1094,
+          "transferBytes": 1394,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/system-DnuxBzFJ.js",
+          "startMs": 5499.89999999851,
+          "durationMs": 896.6999999992549,
+          "ttfbMs": 891,
+          "downloadMs": 2.399999998509884,
+          "endMs": 6396.599999997765,
+          "bytes": 570,
+          "transferBytes": 870,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/index-bxx0_qKz.js",
+          "startMs": 5499.89999999851,
+          "durationMs": 900.6000000014901,
+          "ttfbMs": 892.1999999992549,
+          "downloadMs": 5.300000000745058,
+          "endMs": 6400.5,
+          "bytes": 926,
+          "transferBytes": 1226,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/image/logo",
+          "startMs": 6635.89999999851,
+          "durationMs": 4.900000002235174,
+          "ttfbMs": 0.10000000149011612,
+          "downloadMs": 4,
+          "endMs": 6640.800000000745,
+          "bytes": 93297,
+          "transferBytes": 0,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/auth/setting",
+          "startMs": 6638.099999997765,
+          "durationMs": 678.7000000029802,
+          "ttfbMs": 674.4000000022352,
+          "downloadMs": 2,
+          "endMs": 7316.800000000745,
+          "bytes": 200,
+          "transferBytes": 500,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/auth/generateCaptcha/",
+          "startMs": 6638.800000000745,
+          "durationMs": 967,
+          "ttfbMs": 373.69999999925494,
+          "downloadMs": 288.80000000074506,
+          "endMs": 7605.800000000745,
+          "bytes": 7978,
+          "transferBytes": 8278,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/image/logo",
+          "startMs": 6643.099999997765,
+          "durationMs": 2.100000001490116,
+          "ttfbMs": 0,
+          "downloadMs": 1.300000000745058,
+          "endMs": 6645.199999999255,
+          "bytes": 93297,
+          "transferBytes": 0,
+          "protocol": "h2"
+        }
+      ],
+      "phase": "original_ports"
+    },
+    {
+      "run": 7,
+      "mode": "bbr",
+      "startedAt": "2026-10-05T13:21:05.228Z",
+      "formVisibleMs": 7206,
+      "readyMs": 8102,
+      "captchaEnabled": true,
+      "errors": [],
+      "navigation": {
+        "ttfbMs": 1096,
+        "dnsMs": 1.300000000745058,
+        "tlsAndConnectMs": 813.3000000007451,
+        "domLoadedMs": 4226.5,
+        "loadEventMs": 4228.300000000745
+      },
+      "paint": [
+        {
+          "name": "first-paint",
+          "ms": 4392
+        },
+        {
+          "name": "first-contentful-paint",
+          "ms": 7432
+        }
+      ],
+      "resources": [
+        {
+          "path": "/static/index-dqUZvcay.js",
+          "startMs": 1107.1000000014901,
+          "durationMs": 3038.099999997765,
+          "ttfbMs": 566.6000000014901,
+          "downloadMs": 2464.599999997765,
+          "endMs": 4145.199999999255,
+          "bytes": 68154,
+          "transferBytes": 68454,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/vendor-framework-DX6w19GY.js",
+          "startMs": 1107.699999999255,
+          "durationMs": 3037.800000000745,
+          "ttfbMs": 565.2000000029802,
+          "downloadMs": 2466.099999997765,
+          "endMs": 4145.5,
+          "bytes": 50824,
+          "transferBytes": 51124,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/vendor-dependencies-DzUUnqRu.js",
+          "startMs": 1107.9000000022352,
+          "durationMs": 1754.3999999985099,
+          "ttfbMs": 563.7000000029802,
+          "downloadMs": 1184.3999999985099,
+          "endMs": 2862.300000000745,
+          "bytes": 26300,
+          "transferBytes": 26600,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/style-gyTvZ_k0.css",
+          "startMs": 1108,
+          "durationMs": 574.1000000014901,
+          "ttfbMs": 562.2999999970198,
+          "downloadMs": 5.900000002235174,
+          "endMs": 1682.1000000014901,
+          "bytes": 24738,
+          "transferBytes": 25038,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/index-DwDSgKIl.js",
+          "startMs": 4226.300000000745,
+          "durationMs": 1045.1000000014901,
+          "ttfbMs": 258.5,
+          "downloadMs": 1.9000000022351742,
+          "endMs": 5271.400000002235,
+          "bytes": 3325,
+          "transferBytes": 3625,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/image/logo",
+          "startMs": 4235.10000000149,
+          "durationMs": 2640.5,
+          "ttfbMs": 260.70000000298023,
+          "downloadMs": 1603.699999999255,
+          "endMs": 6875.60000000149,
+          "bytes": 93297,
+          "transferBytes": 93597,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/index-DN8p7EbY.js",
+          "startMs": 5273.5,
+          "durationMs": 1607.1000000014901,
+          "ttfbMs": 1600.5999999977648,
+          "downloadMs": 4.600000001490116,
+          "endMs": 6880.60000000149,
+          "bytes": 1094,
+          "transferBytes": 1394,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/system-DnuxBzFJ.js",
+          "startMs": 5273.699999999255,
+          "durationMs": 1610.800000000745,
+          "ttfbMs": 1603.3999999985099,
+          "downloadMs": 3.5,
+          "endMs": 6884.5,
+          "bytes": 570,
+          "transferBytes": 870,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/index-bxx0_qKz.js",
+          "startMs": 5273.699999999255,
+          "durationMs": 1611.300000000745,
+          "ttfbMs": 1605.5,
+          "downloadMs": 2.099999997764826,
+          "endMs": 6885,
+          "bytes": 926,
+          "transferBytes": 1226,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/image/logo",
+          "startMs": 7172.400000002235,
+          "durationMs": 1.8999999985098839,
+          "ttfbMs": 0,
+          "downloadMs": 1.3999999985098839,
+          "endMs": 7174.300000000745,
+          "bytes": 93297,
+          "transferBytes": 0,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/auth/setting",
+          "startMs": 7174.60000000149,
+          "durationMs": 267.0999999977648,
+          "ttfbMs": 264.69999999925494,
+          "downloadMs": 1.5999999977648258,
+          "endMs": 7441.699999999255,
+          "bytes": 200,
+          "transferBytes": 500,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/auth/generateCaptcha/",
+          "startMs": 7175.199999999255,
+          "durationMs": 860.3000000007451,
+          "ttfbMs": 267.3999999985099,
+          "downloadMs": 329.19999999925494,
+          "endMs": 8035.5,
+          "bytes": 7758,
+          "transferBytes": 8058,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/image/logo",
+          "startMs": 7179.199999999255,
+          "durationMs": 2.400000002235174,
+          "ttfbMs": 0.20000000298023224,
+          "downloadMs": 1.699999999254942,
+          "endMs": 7181.60000000149,
+          "bytes": 93297,
+          "transferBytes": 0,
+          "protocol": "h2"
+        }
+      ],
+      "phase": "original_ports"
+    },
+    {
+      "run": 8,
+      "mode": "cubic",
+      "startedAt": "2026-10-05T13:21:14.048Z",
+      "formVisibleMs": 18203,
+      "readyMs": 18899,
+      "captchaEnabled": true,
+      "errors": [],
+      "navigation": {
+        "ttfbMs": 2053.10000000149,
+        "dnsMs": 2,
+        "tlsAndConnectMs": 1536.9000000022352,
+        "domLoadedMs": 11320.60000000149,
+        "loadEventMs": 11321.39999999851
+      },
+      "paint": [
+        {
+          "name": "first-paint",
+          "ms": 11420
+        },
+        {
+          "name": "first-contentful-paint",
+          "ms": 18236
+        }
+      ],
+      "resources": [
+        {
+          "path": "/static/index-dqUZvcay.js",
+          "startMs": 2063.199999999255,
+          "durationMs": 5385.400000002235,
+          "ttfbMs": 262.69999999925494,
+          "downloadMs": 5109.10000000149,
+          "endMs": 7448.60000000149,
+          "bytes": 68154,
+          "transferBytes": 68454,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/vendor-framework-DX6w19GY.js",
+          "startMs": 2064,
+          "durationMs": 9192.699999999255,
+          "ttfbMs": 5371.800000000745,
+          "downloadMs": 3807.89999999851,
+          "endMs": 11256.699999999255,
+          "bytes": 50824,
+          "transferBytes": 51124,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/vendor-dependencies-DzUUnqRu.js",
+          "startMs": 2064.300000000745,
+          "durationMs": 9193.300000000745,
+          "ttfbMs": 6700.29999999702,
+          "downloadMs": 2480.2000000029802,
+          "endMs": 11257.60000000149,
+          "bytes": 26300,
+          "transferBytes": 26600,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/style-gyTvZ_k0.css",
+          "startMs": 2064.60000000149,
+          "durationMs": 5383.099999997765,
+          "ttfbMs": 267.0999999977648,
+          "downloadMs": 5104,
+          "endMs": 7447.699999999255,
+          "bytes": 24738,
+          "transferBytes": 25038,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/index-DwDSgKIl.js",
+          "startMs": 11320.5,
+          "durationMs": 259.69999999925494,
+          "ttfbMs": 257.30000000074506,
+          "downloadMs": 1.5,
+          "endMs": 11580.199999999255,
+          "bytes": 3325,
+          "transferBytes": 3625,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/image/logo",
+          "startMs": 11327.5,
+          "durationMs": 6479.300000000745,
+          "ttfbMs": 502.19999999925494,
+          "downloadMs": 5975,
+          "endMs": 17806.800000000745,
+          "bytes": 93297,
+          "transferBytes": 93597,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/index-DN8p7EbY.js",
+          "startMs": 11581.800000000745,
+          "durationMs": 6233.199999999255,
+          "ttfbMs": 6229.5,
+          "downloadMs": 1.8999999985098839,
+          "endMs": 17815,
+          "bytes": 1094,
+          "transferBytes": 1394,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/index-bxx0_qKz.js",
+          "startMs": 11581.89999999851,
+          "durationMs": 6230.800000000745,
+          "ttfbMs": 6225.89999999851,
+          "downloadMs": 3,
+          "endMs": 17812.699999999255,
+          "bytes": 926,
+          "transferBytes": 1226,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/system-DnuxBzFJ.js",
+          "startMs": 11582,
+          "durationMs": 6230,
+          "ttfbMs": 6223.199999999255,
+          "downloadMs": 4.800000000745058,
+          "endMs": 17812,
+          "bytes": 570,
+          "transferBytes": 870,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/image/logo",
+          "startMs": 18039.89999999851,
+          "durationMs": 2.400000002235174,
+          "ttfbMs": 0,
+          "downloadMs": 1.699999999254942,
+          "endMs": 18042.300000000745,
+          "bytes": 93297,
+          "transferBytes": 0,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/auth/setting",
+          "startMs": 18042.800000000745,
+          "durationMs": 261.5,
+          "ttfbMs": 259,
+          "downloadMs": 1.1000000014901161,
+          "endMs": 18304.300000000745,
+          "bytes": 200,
+          "transferBytes": 500,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/auth/generateCaptcha/",
+          "startMs": 18043.39999999851,
+          "durationMs": 813.8000000007451,
+          "ttfbMs": 262.30000000074506,
+          "downloadMs": 292.5999999977648,
+          "endMs": 18857.199999999255,
+          "bytes": 8578,
+          "transferBytes": 8878,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/image/logo",
+          "startMs": 18048.5,
+          "durationMs": 3.300000000745058,
+          "ttfbMs": 0,
+          "downloadMs": 2.600000001490116,
+          "endMs": 18051.800000000745,
+          "bytes": 93297,
+          "transferBytes": 0,
+          "protocol": "h2"
+        }
+      ],
+      "phase": "original_ports"
+    },
+    {
+      "run": 1,
+      "mode": "cubic",
+      "startedAt": "2026-10-05T13:23:12.881Z",
+      "error": "locator.waitFor: Timeout 20000ms exceeded.\nCall log:\n  - waiting for locator('input').first() to be visible\n",
+      "elapsedMs": 49627,
+      "errors": [],
+      "phase": "swapped_ports"
+    },
+    {
+      "run": 2,
+      "mode": "bbr",
+      "startedAt": "2026-10-05T13:24:02.950Z",
+      "formVisibleMs": 9954,
+      "readyMs": 10956,
+      "captchaEnabled": true,
+      "errors": [],
+      "navigation": {
+        "ttfbMs": 1355.800000000745,
+        "dnsMs": 4.100000001490116,
+        "tlsAndConnectMs": 770.5999999977648,
+        "domLoadedMs": 7592.60000000149,
+        "loadEventMs": 7594.10000000149
+      },
+      "paint": [
+        {
+          "name": "first-paint",
+          "ms": 7692
+        },
+        {
+          "name": "first-contentful-paint",
+          "ms": 10108
+        }
+      ],
+      "resources": [
+        {
+          "path": "/static/index-dqUZvcay.js",
+          "startMs": 1368,
+          "durationMs": 6152.20000000298,
+          "ttfbMs": 1199.7999999970198,
+          "downloadMs": 4392.70000000298,
+          "endMs": 7520.20000000298,
+          "bytes": 68154,
+          "transferBytes": 68454,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/vendor-dependencies-DzUUnqRu.js",
+          "startMs": 1368.4000000022352,
+          "durationMs": 4725.599999997765,
+          "ttfbMs": 1194.300000000745,
+          "downloadMs": 2971.89999999851,
+          "endMs": 6094,
+          "bytes": 26300,
+          "transferBytes": 26600,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/vendor-framework-DX6w19GY.js",
+          "startMs": 1368.4000000022352,
+          "durationMs": 6148.699999999255,
+          "ttfbMs": 1198.2999999970198,
+          "downloadMs": 4391.10000000149,
+          "endMs": 7517.10000000149,
+          "bytes": 50824,
+          "transferBytes": 51124,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/style-gyTvZ_k0.css",
+          "startMs": 1368.5,
+          "durationMs": 1753.2000000029802,
+          "ttfbMs": 569.5,
+          "downloadMs": 624.8000000007451,
+          "endMs": 3121.7000000029802,
+          "bytes": 24738,
+          "transferBytes": 25038,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/index-DwDSgKIl.js",
+          "startMs": 7592.5,
+          "durationMs": 1029.4000000022352,
+          "ttfbMs": 288.80000000074506,
+          "downloadMs": 739.3000000007451,
+          "endMs": 8621.900000002235,
+          "bytes": 3325,
+          "transferBytes": 3625,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/image/logo",
+          "startMs": 7602.20000000298,
+          "durationMs": 2041,
+          "ttfbMs": 1019.1000000014901,
+          "downloadMs": 1021,
+          "endMs": 9643.20000000298,
+          "bytes": 93297,
+          "transferBytes": 93597,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/index-DN8p7EbY.js",
+          "startMs": 8623.70000000298,
+          "durationMs": 1028.5,
+          "ttfbMs": 1020.8999999985099,
+          "downloadMs": 4.400000002235174,
+          "endMs": 9652.20000000298,
+          "bytes": 1094,
+          "transferBytes": 1394,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/index-bxx0_qKz.js",
+          "startMs": 8623.900000002235,
+          "durationMs": 1027.699999999255,
+          "ttfbMs": 1018.6000000014901,
+          "downloadMs": 5.899999998509884,
+          "endMs": 9651.60000000149,
+          "bytes": 926,
+          "transferBytes": 1226,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/system-DnuxBzFJ.js",
+          "startMs": 8624,
+          "durationMs": 1026.800000000745,
+          "ttfbMs": 1016.3000000007451,
+          "downloadMs": 7.199999999254942,
+          "endMs": 9650.800000000745,
+          "bytes": 570,
+          "transferBytes": 870,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/image/logo",
+          "startMs": 9887,
+          "durationMs": 1.6000000014901161,
+          "ttfbMs": 0.09999999776482582,
+          "downloadMs": 1.1000000014901161,
+          "endMs": 9888.60000000149,
+          "bytes": 93297,
+          "transferBytes": 0,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/auth/setting",
+          "startMs": 9889,
+          "durationMs": 286.20000000298023,
+          "ttfbMs": 282.6000000014901,
+          "downloadMs": 2,
+          "endMs": 10175.20000000298,
+          "bytes": 200,
+          "transferBytes": 500,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/auth/generateCaptcha/",
+          "startMs": 9889.60000000149,
+          "durationMs": 995.3000000007451,
+          "ttfbMs": 303.19999999925494,
+          "downloadMs": 409.5,
+          "endMs": 10884.900000002235,
+          "bytes": 9450,
+          "transferBytes": 9750,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/image/logo",
+          "startMs": 9893.60000000149,
+          "durationMs": 2.5,
+          "ttfbMs": 0,
+          "downloadMs": 2.100000001490116,
+          "endMs": 9896.10000000149,
+          "bytes": 93297,
+          "transferBytes": 0,
+          "protocol": "h2"
+        }
+      ],
+      "phase": "swapped_ports"
+    },
+    {
+      "run": 3,
+      "mode": "bbr",
+      "startedAt": "2026-10-05T13:24:14.532Z",
+      "formVisibleMs": 6048,
+      "readyMs": 6926,
+      "captchaEnabled": true,
+      "errors": [],
+      "navigation": {
+        "ttfbMs": 1338.8999999985099,
+        "dnsMs": 6.100000001490116,
+        "tlsAndConnectMs": 698.1999999992549,
+        "domLoadedMs": 4642.39999999851,
+        "loadEventMs": 4643.39999999851
+      },
+      "paint": [
+        {
+          "name": "first-paint",
+          "ms": 4748
+        },
+        {
+          "name": "first-contentful-paint",
+          "ms": 6216
+        }
+      ],
+      "resources": [
+        {
+          "path": "/static/index-dqUZvcay.js",
+          "startMs": 1348.300000000745,
+          "durationMs": 2975.099999997765,
+          "ttfbMs": 1525.199999999255,
+          "downloadMs": 1438.3999999985099,
+          "endMs": 4323.39999999851,
+          "bytes": 68154,
+          "transferBytes": 68454,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/vendor-framework-DX6w19GY.js",
+          "startMs": 1348.800000000745,
+          "durationMs": 2971.2999999970198,
+          "ttfbMs": 1523.5999999977648,
+          "downloadMs": 1436.5,
+          "endMs": 4320.099999997765,
+          "bytes": 50824,
+          "transferBytes": 51124,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/vendor-dependencies-DzUUnqRu.js",
+          "startMs": 1349,
+          "durationMs": 3238.800000000745,
+          "ttfbMs": 2960.199999999255,
+          "downloadMs": 267.4000000022352,
+          "endMs": 4587.800000000745,
+          "bytes": 26300,
+          "transferBytes": 26600,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/style-gyTvZ_k0.css",
+          "startMs": 1349.300000000745,
+          "durationMs": 1537.5,
+          "ttfbMs": 913.8999999985099,
+          "downloadMs": 613.2000000029802,
+          "endMs": 2886.800000000745,
+          "bytes": 24738,
+          "transferBytes": 25038,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/index-DwDSgKIl.js",
+          "startMs": 4642.39999999851,
+          "durationMs": 278.9000000022352,
+          "ttfbMs": 271.80000000074506,
+          "downloadMs": 6.100000001490116,
+          "endMs": 4921.300000000745,
+          "bytes": 3325,
+          "transferBytes": 3625,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/image/logo",
+          "startMs": 4648.5,
+          "durationMs": 1136.199999999255,
+          "ttfbMs": 272.69999999925494,
+          "downloadMs": 862.1999999992549,
+          "endMs": 5784.699999999255,
+          "bytes": 93297,
+          "transferBytes": 93597,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/index-bxx0_qKz.js",
+          "startMs": 4923.099999997765,
+          "durationMs": 869.1000000014901,
+          "ttfbMs": 861.6999999992549,
+          "downloadMs": 5.199999999254942,
+          "endMs": 5792.199999999255,
+          "bytes": 926,
+          "transferBytes": 1226,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/index-DN8p7EbY.js",
+          "startMs": 4923.099999997765,
+          "durationMs": 869.5,
+          "ttfbMs": 864,
+          "downloadMs": 3.399999998509884,
+          "endMs": 5792.599999997765,
+          "bytes": 1094,
+          "transferBytes": 1394,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/system-DnuxBzFJ.js",
+          "startMs": 4923.300000000745,
+          "durationMs": 868.5999999977648,
+          "ttfbMs": 859.6000000014901,
+          "downloadMs": 6.899999998509884,
+          "endMs": 5791.89999999851,
+          "bytes": 570,
+          "transferBytes": 870,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/image/logo",
+          "startMs": 6009.699999999255,
+          "durationMs": 1.699999999254942,
+          "ttfbMs": 0,
+          "downloadMs": 1.199999999254942,
+          "endMs": 6011.39999999851,
+          "bytes": 93297,
+          "transferBytes": 0,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/auth/setting",
+          "startMs": 6012.800000000745,
+          "durationMs": 854.0999999977648,
+          "ttfbMs": 285.5,
+          "downloadMs": 567.8000000007451,
+          "endMs": 6866.89999999851,
+          "bytes": 200,
+          "transferBytes": 500,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/auth/generateCaptcha/",
+          "startMs": 6013.5,
+          "durationMs": 856.3999999985099,
+          "ttfbMs": 569.3999999985099,
+          "downloadMs": 2.699999999254942,
+          "endMs": 6869.89999999851,
+          "bytes": 9622,
+          "transferBytes": 9922,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/image/logo",
+          "startMs": 6020.300000000745,
+          "durationMs": 2.2999999970197678,
+          "ttfbMs": 0.10000000149011612,
+          "downloadMs": 1.0999999977648258,
+          "endMs": 6022.599999997765,
+          "bytes": 93297,
+          "transferBytes": 0,
+          "protocol": "h2"
+        }
+      ],
+      "phase": "swapped_ports"
+    },
+    {
+      "run": 4,
+      "mode": "cubic",
+      "startedAt": "2026-10-05T13:24:22.153Z",
+      "formVisibleMs": 39687,
+      "readyMs": 41304,
+      "captchaEnabled": true,
+      "errors": [],
+      "navigation": {
+        "ttfbMs": 1382.800000000745,
+        "dnsMs": 7.199999999254942,
+        "tlsAndConnectMs": 1087.7000000029802,
+        "domLoadedMs": 29299.60000000149,
+        "loadEventMs": 29300.800000000745
+      },
+      "paint": [
+        {
+          "name": "first-paint",
+          "ms": 29392
+        },
+        {
+          "name": "first-contentful-paint",
+          "ms": 39692
+        }
+      ],
+      "resources": [
+        {
+          "path": "/static/index-dqUZvcay.js",
+          "startMs": 1399.800000000745,
+          "durationMs": 25165.900000002235,
+          "ttfbMs": 1799.199999999255,
+          "downloadMs": 23361.10000000149,
+          "endMs": 26565.70000000298,
+          "bytes": 68154,
+          "transferBytes": 68454,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/vendor-framework-DX6w19GY.js",
+          "startMs": 1400.300000000745,
+          "durationMs": 25165.900000002235,
+          "ttfbMs": 1797.6000000014901,
+          "downloadMs": 23363.10000000149,
+          "endMs": 26566.20000000298,
+          "bytes": 50824,
+          "transferBytes": 51124,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/style-gyTvZ_k0.css",
+          "startMs": 1400.4000000022352,
+          "durationMs": 1802.3999999985099,
+          "ttfbMs": 284.3999999985099,
+          "downloadMs": 1513,
+          "endMs": 3202.800000000745,
+          "bytes": 24738,
+          "transferBytes": 25038,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/vendor-dependencies-DzUUnqRu.js",
+          "startMs": 1400.4000000022352,
+          "durationMs": 27848.099999997765,
+          "ttfbMs": 25158.099999997765,
+          "downloadMs": 2684.699999999255,
+          "endMs": 29248.5,
+          "bytes": 26300,
+          "transferBytes": 26600,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/index-DwDSgKIl.js",
+          "startMs": 29299.5,
+          "durationMs": 1121.9000000022352,
+          "ttfbMs": 278.80000000074506,
+          "downloadMs": 842.3000000007451,
+          "endMs": 30421.400000002235,
+          "bytes": 3325,
+          "transferBytes": 3625,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/image/logo",
+          "startMs": 29315.60000000149,
+          "durationMs": 9631.10000000149,
+          "ttfbMs": 1105.300000000745,
+          "downloadMs": 8525,
+          "endMs": 38946.70000000298,
+          "bytes": 93297,
+          "transferBytes": 93597,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/index-DN8p7EbY.js",
+          "startMs": 30423.900000002235,
+          "durationMs": 8811.800000000745,
+          "ttfbMs": 8739.29999999702,
+          "downloadMs": 68.20000000298023,
+          "endMs": 39235.70000000298,
+          "bytes": 1094,
+          "transferBytes": 1394,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/index-bxx0_qKz.js",
+          "startMs": 30424,
+          "durationMs": 8746.70000000298,
+          "ttfbMs": 8519.800000000745,
+          "downloadMs": 222.5,
+          "endMs": 39170.70000000298,
+          "bytes": 926,
+          "transferBytes": 1226,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/system-DnuxBzFJ.js",
+          "startMs": 30424.10000000149,
+          "durationMs": 8743.10000000149,
+          "ttfbMs": 8518.400000002235,
+          "downloadMs": 220.30000000074506,
+          "endMs": 39167.20000000298,
+          "bytes": 570,
+          "transferBytes": 870,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/image/logo",
+          "startMs": 39460.300000000745,
+          "durationMs": 1.699999999254942,
+          "ttfbMs": 0,
+          "downloadMs": 1.199999999254942,
+          "endMs": 39462,
+          "bytes": 93297,
+          "transferBytes": 0,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/auth/setting",
+          "startMs": 39463.300000000745,
+          "durationMs": 931.8000000007451,
+          "ttfbMs": 284.69999999925494,
+          "downloadMs": 645.5,
+          "endMs": 40395.10000000149,
+          "bytes": 200,
+          "transferBytes": 500,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/auth/generateCaptcha/",
+          "startMs": 39464.60000000149,
+          "durationMs": 1808.3999999985099,
+          "ttfbMs": 649.1000000014901,
+          "downloadMs": 877.2999999970198,
+          "endMs": 41273,
+          "bytes": 10474,
+          "transferBytes": 10774,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/image/logo",
+          "startMs": 39469.60000000149,
+          "durationMs": 2.300000000745058,
+          "ttfbMs": 0.19999999925494194,
+          "downloadMs": 1.6000000014901161,
+          "endMs": 39471.900000002235,
+          "bytes": 93297,
+          "transferBytes": 0,
+          "protocol": "h2"
+        }
+      ],
+      "phase": "swapped_ports"
+    },
+    {
+      "run": 5,
+      "mode": "cubic",
+      "startedAt": "2026-10-05T13:25:03.983Z",
+      "formVisibleMs": 31955,
+      "readyMs": 34466,
+      "captchaEnabled": true,
+      "errors": [],
+      "navigation": {
+        "ttfbMs": 1016.9000000022352,
+        "dnsMs": 163.30000000074506,
+        "tlsAndConnectMs": 572.6999999992549,
+        "domLoadedMs": 21002.300000000745,
+        "loadEventMs": 21003.5
+      },
+      "paint": [
+        {
+          "name": "first-paint",
+          "ms": 21100
+        },
+        {
+          "name": "first-contentful-paint",
+          "ms": 32156
+        }
+      ],
+      "resources": [
+        {
+          "path": "/static/index-dqUZvcay.js",
+          "startMs": 1025.699999999255,
+          "durationMs": 8278,
+          "ttfbMs": 330.19999999925494,
+          "downloadMs": 7942.199999999255,
+          "endMs": 9303.699999999255,
+          "bytes": 68154,
+          "transferBytes": 68454,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/vendor-framework-DX6w19GY.js",
+          "startMs": 1026.199999999255,
+          "durationMs": 19916,
+          "ttfbMs": 8890.60000000149,
+          "downloadMs": 11020.29999999702,
+          "endMs": 20942.199999999255,
+          "bytes": 50824,
+          "transferBytes": 51124,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/vendor-dependencies-DzUUnqRu.js",
+          "startMs": 1026.4000000022352,
+          "durationMs": 19915.39999999851,
+          "ttfbMs": 8888.29999999702,
+          "downloadMs": 11022.10000000149,
+          "endMs": 20941.800000000745,
+          "bytes": 26300,
+          "transferBytes": 26600,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/style-gyTvZ_k0.css",
+          "startMs": 1026.5,
+          "durationMs": 2754.699999999255,
+          "ttfbMs": 322.30000000074506,
+          "downloadMs": 2427.699999999255,
+          "endMs": 3781.199999999255,
+          "bytes": 24738,
+          "transferBytes": 25038,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/index-DwDSgKIl.js",
+          "startMs": 21002.199999999255,
+          "durationMs": 1125.6000000014901,
+          "ttfbMs": 271.80000000074506,
+          "downloadMs": 277.8999999985099,
+          "endMs": 22127.800000000745,
+          "bytes": 3325,
+          "transferBytes": 3625,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/image/logo",
+          "startMs": 21008,
+          "durationMs": 10363.60000000149,
+          "ttfbMs": 549.6999999992549,
+          "downloadMs": 9243.60000000149,
+          "endMs": 31371.60000000149,
+          "bytes": 93297,
+          "transferBytes": 93597,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/index-DN8p7EbY.js",
+          "startMs": 22129.300000000745,
+          "durationMs": 9244.60000000149,
+          "ttfbMs": 9241,
+          "downloadMs": 2,
+          "endMs": 31373.900000002235,
+          "bytes": 1094,
+          "transferBytes": 1394,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/index-bxx0_qKz.js",
+          "startMs": 22129.400000002235,
+          "durationMs": 9317.199999999255,
+          "ttfbMs": 9243.199999999255,
+          "downloadMs": 72.40000000223517,
+          "endMs": 31446.60000000149,
+          "bytes": 926,
+          "transferBytes": 1226,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/system-DnuxBzFJ.js",
+          "startMs": 22129.400000002235,
+          "durationMs": 9530.79999999702,
+          "ttfbMs": 9315.800000000745,
+          "downloadMs": 213.29999999701977,
+          "endMs": 31660.199999999255,
+          "bytes": 570,
+          "transferBytes": 870,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/image/logo",
+          "startMs": 31906.10000000149,
+          "durationMs": 2.599999997764826,
+          "ttfbMs": 0.10000000149011612,
+          "downloadMs": 1.5999999977648258,
+          "endMs": 31908.699999999255,
+          "bytes": 93297,
+          "transferBytes": 0,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/auth/setting",
+          "startMs": 31909.699999999255,
+          "durationMs": 895.5,
+          "ttfbMs": 278.5,
+          "downloadMs": 616.1999999992549,
+          "endMs": 32805.199999999255,
+          "bytes": 200,
+          "transferBytes": 500,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/auth/generateCaptcha/",
+          "startMs": 31910.400000002235,
+          "durationMs": 2529.099999997765,
+          "ttfbMs": 614.1999999992549,
+          "downloadMs": 1634,
+          "endMs": 34439.5,
+          "bytes": 11794,
+          "transferBytes": 12094,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/image/logo",
+          "startMs": 31916.400000002235,
+          "durationMs": 4.099999997764826,
+          "ttfbMs": 0.10000000149011612,
+          "downloadMs": 2.899999998509884,
+          "endMs": 31920.5,
+          "bytes": 93297,
+          "transferBytes": 0,
+          "protocol": "h2"
+        }
+      ],
+      "phase": "swapped_ports"
+    },
+    {
+      "run": 6,
+      "mode": "bbr",
+      "startedAt": "2026-10-05T13:25:39.056Z",
+      "formVisibleMs": 7719,
+      "readyMs": 8897,
+      "captchaEnabled": true,
+      "errors": [],
+      "navigation": {
+        "ttfbMs": 1988.5,
+        "dnsMs": 4,
+        "tlsAndConnectMs": 1329.3999999985099,
+        "domLoadedMs": 5366.60000000149,
+        "loadEventMs": 5368.5
+      },
+      "paint": [
+        {
+          "name": "first-paint",
+          "ms": 5472
+        },
+        {
+          "name": "first-contentful-paint",
+          "ms": 7704
+        }
+      ],
+      "resources": [
+        {
+          "path": "/static/index-dqUZvcay.js",
+          "startMs": 1996,
+          "durationMs": 2463.5,
+          "ttfbMs": 1145.4000000022352,
+          "downloadMs": 1312.5999999977648,
+          "endMs": 4459.5,
+          "bytes": 68154,
+          "transferBytes": 68454,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/vendor-framework-DX6w19GY.js",
+          "startMs": 1996.5,
+          "durationMs": 3287.300000000745,
+          "ttfbMs": 1762.800000000745,
+          "downloadMs": 1519.5,
+          "endMs": 5283.800000000745,
+          "bytes": 50824,
+          "transferBytes": 51124,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/vendor-dependencies-DzUUnqRu.js",
+          "startMs": 1996.699999999255,
+          "durationMs": 3287.800000000745,
+          "ttfbMs": 3280.5,
+          "downloadMs": 2.399999998509884,
+          "endMs": 5284.5,
+          "bytes": 26300,
+          "transferBytes": 26600,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/style-gyTvZ_k0.css",
+          "startMs": 1996.9000000022352,
+          "durationMs": 1149.699999999255,
+          "ttfbMs": 279.29999999701977,
+          "downloadMs": 865.9000000022352,
+          "endMs": 3146.60000000149,
+          "bytes": 24738,
+          "transferBytes": 25038,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/index-DwDSgKIl.js",
+          "startMs": 5366.400000002235,
+          "durationMs": 316,
+          "ttfbMs": 287.4000000022352,
+          "downloadMs": 27.300000000745058,
+          "endMs": 5682.400000002235,
+          "bytes": 3325,
+          "transferBytes": 3625,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/image/logo",
+          "startMs": 5379.699999999255,
+          "durationMs": 1902.6000000014901,
+          "ttfbMs": 300.30000000074506,
+          "downloadMs": 1599.800000000745,
+          "endMs": 7282.300000000745,
+          "bytes": 93297,
+          "transferBytes": 93597,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/index-DN8p7EbY.js",
+          "startMs": 5683.699999999255,
+          "durationMs": 1599.9000000022352,
+          "ttfbMs": 1597.2000000029802,
+          "downloadMs": 1.199999999254942,
+          "endMs": 7283.60000000149,
+          "bytes": 1094,
+          "transferBytes": 1394,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/system-DnuxBzFJ.js",
+          "startMs": 5683.800000000745,
+          "durationMs": 1601.300000000745,
+          "ttfbMs": 1598.3999999985099,
+          "downloadMs": 1.300000000745058,
+          "endMs": 7285.10000000149,
+          "bytes": 570,
+          "transferBytes": 870,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/index-bxx0_qKz.js",
+          "startMs": 5683.800000000745,
+          "durationMs": 1602.8999999985099,
+          "ttfbMs": 1599.8999999985099,
+          "downloadMs": 1.5,
+          "endMs": 7286.699999999255,
+          "bytes": 926,
+          "transferBytes": 1226,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/image/logo",
+          "startMs": 7534.300000000745,
+          "durationMs": 1.8999999985098839,
+          "ttfbMs": 0.10000000149011612,
+          "downloadMs": 1.3999999985098839,
+          "endMs": 7536.199999999255,
+          "bytes": 93297,
+          "transferBytes": 0,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/auth/setting",
+          "startMs": 7536.5,
+          "durationMs": 662.1000000014901,
+          "ttfbMs": 659.3999999985099,
+          "downloadMs": 1.6000000014901161,
+          "endMs": 8198.60000000149,
+          "bytes": 200,
+          "transferBytes": 500,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/auth/generateCaptcha/",
+          "startMs": 7537,
+          "durationMs": 1274.199999999255,
+          "ttfbMs": 374.8999999985099,
+          "downloadMs": 612.3999999985099,
+          "endMs": 8811.199999999255,
+          "bytes": 9562,
+          "transferBytes": 9862,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/image/logo",
+          "startMs": 7540.60000000149,
+          "durationMs": 3.699999999254942,
+          "ttfbMs": 0.10000000149011612,
+          "downloadMs": 2.699999999254942,
+          "endMs": 7544.300000000745,
+          "bytes": 93297,
+          "transferBytes": 0,
+          "protocol": "h2"
+        }
+      ],
+      "phase": "swapped_ports"
+    },
+    {
+      "run": 7,
+      "mode": "bbr",
+      "startedAt": "2026-10-05T13:25:48.572Z",
+      "formVisibleMs": 4557,
+      "readyMs": 5182,
+      "captchaEnabled": true,
+      "errors": [],
+      "navigation": {
+        "ttfbMs": 978.1999999992549,
+        "dnsMs": 0,
+        "tlsAndConnectMs": 539.8000000007451,
+        "domLoadedMs": 3074.800000000745,
+        "loadEventMs": 3075.800000000745
+      },
+      "paint": [
+        {
+          "name": "first-paint",
+          "ms": 3196
+        },
+        {
+          "name": "first-contentful-paint",
+          "ms": 4696
+        }
+      ],
+      "resources": [
+        {
+          "path": "/static/index-dqUZvcay.js",
+          "startMs": 986.1999999992549,
+          "durationMs": 2041.6000000014901,
+          "ttfbMs": 667.5,
+          "downloadMs": 1365.6000000014901,
+          "endMs": 3027.800000000745,
+          "bytes": 68154,
+          "transferBytes": 68454,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/vendor-framework-DX6w19GY.js",
+          "startMs": 986.6000000014901,
+          "durationMs": 2040.300000000745,
+          "ttfbMs": 603.9000000022352,
+          "downloadMs": 1428.300000000745,
+          "endMs": 3026.900000002235,
+          "bytes": 50824,
+          "transferBytes": 51124,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/vendor-dependencies-DzUUnqRu.js",
+          "startMs": 986.6999999992549,
+          "durationMs": 1153.1000000014901,
+          "ttfbMs": 269.19999999925494,
+          "downloadMs": 875.8000000007451,
+          "endMs": 2139.800000000745,
+          "bytes": 26300,
+          "transferBytes": 26600,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/style-gyTvZ_k0.css",
+          "startMs": 986.8000000007451,
+          "durationMs": 2038.800000000745,
+          "ttfbMs": 669.3000000007451,
+          "downloadMs": 1361.699999999255,
+          "endMs": 3025.60000000149,
+          "bytes": 24738,
+          "transferBytes": 25038,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/index-DwDSgKIl.js",
+          "startMs": 3074.699999999255,
+          "durationMs": 274.80000000074506,
+          "ttfbMs": 267.9000000022352,
+          "downloadMs": 5.899999998509884,
+          "endMs": 3349.5,
+          "bytes": 3325,
+          "transferBytes": 3625,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/image/logo",
+          "startMs": 3102.5,
+          "durationMs": 1098.699999999255,
+          "ttfbMs": 266.79999999701977,
+          "downloadMs": 831,
+          "endMs": 4201.199999999255,
+          "bytes": 93297,
+          "transferBytes": 93597,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/index-DN8p7EbY.js",
+          "startMs": 3350.900000002235,
+          "durationMs": 853.1999999992549,
+          "ttfbMs": 848.7000000029802,
+          "downloadMs": 2.699999999254942,
+          "endMs": 4204.10000000149,
+          "bytes": 1094,
+          "transferBytes": 1394,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/system-DnuxBzFJ.js",
+          "startMs": 3351.10000000149,
+          "durationMs": 856.5999999977648,
+          "ttfbMs": 852.5999999977648,
+          "downloadMs": 2.199999999254942,
+          "endMs": 4207.699999999255,
+          "bytes": 570,
+          "transferBytes": 870,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/index-bxx0_qKz.js",
+          "startMs": 3351.10000000149,
+          "durationMs": 856.3999999985099,
+          "ttfbMs": 851.6999999992549,
+          "downloadMs": 3,
+          "endMs": 4207.5,
+          "bytes": 926,
+          "transferBytes": 1226,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/image/logo",
+          "startMs": 4518.900000002235,
+          "durationMs": 4.699999999254942,
+          "ttfbMs": 0.09999999776482582,
+          "downloadMs": 3.400000002235174,
+          "endMs": 4523.60000000149,
+          "bytes": 93297,
+          "transferBytes": 0,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/auth/setting",
+          "startMs": 4523.199999999255,
+          "durationMs": 272.20000000298023,
+          "ttfbMs": 268.69999999925494,
+          "downloadMs": 1.800000000745058,
+          "endMs": 4795.400000002235,
+          "bytes": 200,
+          "transferBytes": 500,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/auth/generateCaptcha/",
+          "startMs": 4524,
+          "durationMs": 549.5,
+          "ttfbMs": 272,
+          "downloadMs": 9.5,
+          "endMs": 5073.5,
+          "bytes": 9230,
+          "transferBytes": 9530,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/image/logo",
+          "startMs": 4529.60000000149,
+          "durationMs": 4.199999999254942,
+          "ttfbMs": 0.10000000149011612,
+          "downloadMs": 2,
+          "endMs": 4533.800000000745,
+          "bytes": 93297,
+          "transferBytes": 0,
+          "protocol": "h2"
+        }
+      ],
+      "phase": "swapped_ports"
+    },
+    {
+      "run": 8,
+      "mode": "cubic",
+      "startedAt": "2026-10-05T13:25:54.355Z",
+      "formVisibleMs": 11441,
+      "readyMs": 12553,
+      "captchaEnabled": true,
+      "errors": [],
+      "navigation": {
+        "ttfbMs": 895,
+        "dnsMs": 14,
+        "tlsAndConnectMs": 613,
+        "domLoadedMs": 5554.800000000745,
+        "loadEventMs": 5556.099999997765
+      },
+      "paint": [
+        {
+          "name": "first-paint",
+          "ms": 5660
+        },
+        {
+          "name": "first-contentful-paint",
+          "ms": 11472
+        }
+      ],
+      "resources": [
+        {
+          "path": "/static/index-dqUZvcay.js",
+          "startMs": 902.0999999977648,
+          "durationMs": 4597.800000000745,
+          "ttfbMs": 2110,
+          "downloadMs": 2480.599999997765,
+          "endMs": 5499.89999999851,
+          "bytes": 68154,
+          "transferBytes": 68454,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/vendor-framework-DX6w19GY.js",
+          "startMs": 902.3999999985099,
+          "durationMs": 2116.400000002235,
+          "ttfbMs": 537.8000000007451,
+          "downloadMs": 1571.5,
+          "endMs": 3018.800000000745,
+          "bytes": 50824,
+          "transferBytes": 51124,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/vendor-dependencies-DzUUnqRu.js",
+          "startMs": 902.5,
+          "durationMs": 1403.699999999255,
+          "ttfbMs": 268,
+          "downloadMs": 1128.6000000014901,
+          "endMs": 2306.199999999255,
+          "bytes": 26300,
+          "transferBytes": 26600,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/style-gyTvZ_k0.css",
+          "startMs": 902.5999999977648,
+          "durationMs": 2116.5,
+          "ttfbMs": 1395.800000000745,
+          "downloadMs": 714.0999999977648,
+          "endMs": 3019.099999997765,
+          "bytes": 24738,
+          "transferBytes": 25038,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/index-DwDSgKIl.js",
+          "startMs": 5554.599999997765,
+          "durationMs": 269.70000000298023,
+          "ttfbMs": 267,
+          "downloadMs": 1.4000000022351742,
+          "endMs": 5824.300000000745,
+          "bytes": 3325,
+          "transferBytes": 3625,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/image/logo",
+          "startMs": 5578.89999999851,
+          "durationMs": 5298.10000000149,
+          "ttfbMs": 505.29999999701977,
+          "downloadMs": 4791.900000002235,
+          "endMs": 10877,
+          "bytes": 93297,
+          "transferBytes": 93597,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/index-DN8p7EbY.js",
+          "startMs": 5825.599999997765,
+          "durationMs": 5055.5,
+          "ttfbMs": 5051.599999997765,
+          "downloadMs": 2.5,
+          "endMs": 10881.099999997765,
+          "bytes": 1094,
+          "transferBytes": 1394,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/index-bxx0_qKz.js",
+          "startMs": 5825.699999999255,
+          "durationMs": 5054.89999999851,
+          "ttfbMs": 5050.10000000149,
+          "downloadMs": 3.399999998509884,
+          "endMs": 10880.599999997765,
+          "bytes": 926,
+          "transferBytes": 1226,
+          "protocol": "h2"
+        },
+        {
+          "path": "/static/system-DnuxBzFJ.js",
+          "startMs": 5825.800000000745,
+          "durationMs": 5162.29999999702,
+          "ttfbMs": 5054.300000000745,
+          "downloadMs": 106.59999999776483,
+          "endMs": 10988.099999997765,
+          "bytes": 570,
+          "transferBytes": 870,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/image/logo",
+          "startMs": 11264.099999997765,
+          "durationMs": 1.5,
+          "ttfbMs": 0,
+          "downloadMs": 1.0999999977648258,
+          "endMs": 11265.599999997765,
+          "bytes": 93297,
+          "transferBytes": 0,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/auth/setting",
+          "startMs": 11266.39999999851,
+          "durationMs": 592.4000000022352,
+          "ttfbMs": 589.5,
+          "downloadMs": 1.800000000745058,
+          "endMs": 11858.800000000745,
+          "bytes": 200,
+          "transferBytes": 500,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/auth/generateCaptcha/",
+          "startMs": 11266.89999999851,
+          "durationMs": 1130.199999999255,
+          "ttfbMs": 277.5,
+          "downloadMs": 259.69999999925494,
+          "endMs": 12397.099999997765,
+          "bytes": 7698,
+          "transferBytes": 7998,
+          "protocol": "h2"
+        },
+        {
+          "path": "/api/image/logo",
+          "startMs": 11271.599999997765,
+          "durationMs": 2.800000000745058,
+          "ttfbMs": 0.6999999992549419,
+          "downloadMs": 1.5,
+          "endMs": 11274.39999999851,
+          "bytes": 93297,
+          "transferBytes": 0,
+          "protocol": "h2"
+        }
+      ],
+      "phase": "swapped_ports"
+    }
+  ],
+  "tcp_echo": {
+    "kind": "echo",
+    "rtt_ms": [
+      272.79,
+      270.52,
+      270.75,
+      254.81,
+      265.31,
+      296.78,
+      276.17,
+      269.59,
+      270.29,
+      270.33,
+      270.74,
+      791.42,
+      772.65,
+      270.08,
+      270.33,
+      270.49,
+      764.19,
+      272.74,
+      270.91,
+      270.78
+    ],
+    "tcp": {
+      "rto_us": 474000,
+      "mss": 1440,
+      "unacked": 0,
+      "lost": 0,
+      "rtt_us": 271762,
+      "rttvar_us": 2402,
+      "ssthresh": 7,
+      "cwnd": 7,
+      "total_retrans": 2,
+      "bytes_acked": 38,
+      "bytes_received": 21,
+      "min_rtt_us": 254681,
+      "data_segs_out": 23,
+      "delivery_rate_Bps": 10559,
+      "bytes_sent": 39,
+      "bytes_retrans": 2
+    }
+  },
+  "tcp_download_smoke": {
+    "id": "cubic-smoke",
+    "parallel": 1,
+    "total_wall_ms": 19093.65,
+    "results": [
+      {
+        "id": "cubic-smoke-0",
+        "kind": "download",
+        "cc": "cubic",
+        "bytes": 262144,
+        "connect_ms": 272.49,
+        "transfer_ms": 18544.23,
+        "Mbps": 0.113,
+        "server": {
+          "id": "cubic-smoke-0",
+          "kind": "download",
+          "cc": "cubic",
+          "size": 262144,
+          "elapsed_ms": 18543.04,
+          "tcp": {
+            "rto_us": 480000,
+            "mss": 1440,
+            "unacked": 0,
+            "lost": 0,
+            "rtt_us": 276600,
+            "rttvar_us": 13067,
+            "ssthresh": 4,
+            "cwnd": 4,
+            "total_retrans": 29,
+            "bytes_acked": 262144,
+            "bytes_received": 76,
+            "min_rtt_us": 248972,
+            "data_segs_out": 212,
+            "delivery_rate_Bps": 4258,
+            "bytes_sent": 303904,
+            "bytes_retrans": 41760
+          }
+        },
+        "client_tcp": {
+          "rto_us": 752000,
+          "mss": 1440,
+          "unacked": 0,
+          "lost": 0,
+          "rtt_us": 270248,
+          "rttvar_us": 76409,
+          "ssthresh": 2147483647,
+          "cwnd": 10,
+          "total_retrans": 0,
+          "bytes_acked": 77,
+          "bytes_received": 262556,
+          "min_rtt_us": 269777,
+          "data_segs_out": 2,
+          "delivery_rate_Bps": 5337,
+          "bytes_sent": 76,
+          "bytes_retrans": 0
+        }
+      }
+    ]
+  },
+  "transport_trials": [
+    {
+      "id": "down-1-cubic",
+      "parallel": 1,
+      "total_wall_ms": 1711.36,
+      "results": [
+        {
+          "id": "down-1-cubic-0",
+          "kind": "download",
+          "cc": "cubic",
+          "bytes": 262144,
+          "connect_ms": 245.08,
+          "transfer_ms": 1218.45,
+          "Mbps": 1.721,
+          "server": {
+            "id": "down-1-cubic-0",
+            "kind": "download",
+            "cc": "cubic",
+            "size": 262144,
+            "elapsed_ms": 1218.58,
+            "tcp": {
+              "rto_us": 544000,
+              "mss": 1440,
+              "unacked": 0,
+              "lost": 0,
+              "rtt_us": 244412,
+              "rttvar_us": 270,
+              "ssthresh": 2147483647,
+              "cwnd": 191,
+              "total_retrans": 0,
+              "bytes_acked": 262144,
+              "bytes_received": 77,
+              "min_rtt_us": 242028,
+              "data_segs_out": 183,
+              "delivery_rate_Bps": 464527,
+              "bytes_sent": 262144,
+              "bytes_retrans": 0
+            }
+          },
+          "client_tcp": {
+            "rto_us": 678000,
+            "mss": 1440,
+            "unacked": 0,
+            "lost": 0,
+            "rtt_us": 243620,
+            "rttvar_us": 68709,
+            "ssthresh": 2147483647,
+            "cwnd": 10,
+            "total_retrans": 0,
+            "bytes_acked": 78,
+            "bytes_received": 262562,
+            "min_rtt_us": 242871,
+            "data_segs_out": 2,
+            "delivery_rate_Bps": 5929,
+            "bytes_sent": 77,
+            "bytes_retrans": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "down-1-bbr",
+      "parallel": 1,
+      "total_wall_ms": 5482.81,
+      "results": [
+        {
+          "id": "down-1-bbr-0",
+          "kind": "download",
+          "cc": "bbr",
+          "bytes": 262144,
+          "connect_ms": 1299.29,
+          "transfer_ms": 3907.74,
+          "Mbps": 0.537,
+          "server": {
+            "id": "down-1-bbr-0",
+            "kind": "download",
+            "cc": "bbr",
+            "size": 262144,
+            "elapsed_ms": 3907.04,
+            "tcp": {
+              "rto_us": 524000,
+              "mss": 1440,
+              "unacked": 0,
+              "lost": 0,
+              "rtt_us": 270487,
+              "rttvar_us": 608,
+              "ssthresh": 48,
+              "cwnd": 104,
+              "total_retrans": 45,
+              "bytes_acked": 262144,
+              "bytes_received": 73,
+              "min_rtt_us": 269155,
+              "data_segs_out": 226,
+              "delivery_rate_Bps": 4227,
+              "bytes_sent": 324064,
+              "bytes_retrans": 61920
+            }
+          },
+          "client_tcp": {
+            "rto_us": 3728000,
+            "mss": 1440,
+            "unacked": 0,
+            "lost": 0,
+            "rtt_us": 1056472,
+            "rttvar_us": 667731,
+            "ssthresh": 2147483647,
+            "cwnd": 10,
+            "total_retrans": 1,
+            "bytes_acked": 74,
+            "bytes_received": 262553,
+            "min_rtt_us": 270610,
+            "data_segs_out": 2,
+            "delivery_rate_Bps": 5321,
+            "bytes_sent": 73,
+            "bytes_retrans": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "down-2-bbr",
+      "parallel": 1,
+      "total_wall_ms": 1832.19,
+      "results": [
+        {
+          "id": "down-2-bbr-0",
+          "kind": "download",
+          "cc": "bbr",
+          "bytes": 262144,
+          "connect_ms": 245.2,
+          "transfer_ms": 1338.48,
+          "Mbps": 1.567,
+          "server": {
+            "id": "down-2-bbr-0",
+            "kind": "download",
+            "cc": "bbr",
+            "size": 262144,
+            "elapsed_ms": 1337.82,
+            "tcp": {
+              "rto_us": 544000,
+              "mss": 1440,
+              "unacked": 0,
+              "lost": 0,
+              "rtt_us": 243846,
+              "rttvar_us": 101,
+              "ssthresh": 2147483647,
+              "cwnd": 193,
+              "total_retrans": 0,
+              "bytes_acked": 262144,
+              "bytes_received": 73,
+              "min_rtt_us": 242495,
+              "data_segs_out": 183,
+              "delivery_rate_Bps": 508516,
+              "bytes_sent": 262144,
+              "bytes_retrans": 0
+            }
+          },
+          "client_tcp": {
+            "rto_us": 679000,
+            "mss": 1440,
+            "unacked": 0,
+            "lost": 0,
+            "rtt_us": 243896,
+            "rttvar_us": 68706,
+            "ssthresh": 2147483647,
+            "cwnd": 10,
+            "total_retrans": 0,
+            "bytes_acked": 74,
+            "bytes_received": 262558,
+            "min_rtt_us": 243824,
+            "data_segs_out": 2,
+            "delivery_rate_Bps": 5900,
+            "bytes_sent": 73,
+            "bytes_retrans": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "down-2-cubic",
+      "parallel": 1,
+      "total_wall_ms": 1651.41,
+      "results": [
+        {
+          "id": "down-2-cubic-0",
+          "kind": "download",
+          "cc": "cubic",
+          "bytes": 262144,
+          "connect_ms": 237.18,
+          "transfer_ms": 1175.43,
+          "Mbps": 1.784,
+          "server": {
+            "id": "down-2-cubic-0",
+            "kind": "download",
+            "cc": "cubic",
+            "size": 262144,
+            "elapsed_ms": 1175.05,
+            "tcp": {
+              "rto_us": 532000,
+              "mss": 1440,
+              "unacked": 0,
+              "lost": 0,
+              "rtt_us": 239392,
+              "rttvar_us": 7402,
+              "ssthresh": 2147483647,
+              "cwnd": 189,
+              "total_retrans": 0,
+              "bytes_acked": 262144,
+              "bytes_received": 77,
+              "min_rtt_us": 233870,
+              "data_segs_out": 183,
+              "delivery_rate_Bps": 569612,
+              "bytes_sent": 262144,
+              "bytes_retrans": 0
+            }
+          },
+          "client_tcp": {
+            "rto_us": 652000,
+            "mss": 1440,
+            "unacked": 0,
+            "lost": 0,
+            "rtt_us": 234129,
+            "rttvar_us": 66118,
+            "ssthresh": 2147483647,
+            "cwnd": 10,
+            "total_retrans": 0,
+            "bytes_acked": 78,
+            "bytes_received": 262563,
+            "min_rtt_us": 233867,
+            "data_segs_out": 2,
+            "delivery_rate_Bps": 6157,
+            "bytes_sent": 77,
+            "bytes_retrans": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "down-3-cubic",
+      "parallel": 1,
+      "total_wall_ms": 1652.27,
+      "results": [
+        {
+          "id": "down-3-cubic-0",
+          "kind": "download",
+          "cc": "cubic",
+          "bytes": 262144,
+          "connect_ms": 238.28,
+          "transfer_ms": 1176.02,
+          "Mbps": 1.783,
+          "server": {
+            "id": "down-3-cubic-0",
+            "kind": "download",
+            "cc": "cubic",
+            "size": 262144,
+            "elapsed_ms": 1173.6,
+            "tcp": {
+              "rto_us": 524000,
+              "mss": 1440,
+              "unacked": 0,
+              "lost": 0,
+              "rtt_us": 235918,
+              "rttvar_us": 2164,
+              "ssthresh": 2147483647,
+              "cwnd": 189,
+              "total_retrans": 0,
+              "bytes_acked": 262144,
+              "bytes_received": 77,
+              "min_rtt_us": 233028,
+              "data_segs_out": 183,
+              "delivery_rate_Bps": 541559,
+              "bytes_sent": 262144,
+              "bytes_retrans": 0
+            }
+          },
+          "client_tcp": {
+            "rto_us": 655000,
+            "mss": 1440,
+            "unacked": 0,
+            "lost": 0,
+            "rtt_us": 235020,
+            "rttvar_us": 66653,
+            "ssthresh": 2147483647,
+            "cwnd": 10,
+            "total_retrans": 0,
+            "bytes_acked": 78,
+            "bytes_received": 262562,
+            "min_rtt_us": 233505,
+            "data_segs_out": 2,
+            "delivery_rate_Bps": 6166,
+            "bytes_sent": 77,
+            "bytes_retrans": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "down-3-bbr",
+      "parallel": 1,
+      "total_wall_ms": 6562.45,
+      "results": [
+        {
+          "id": "down-3-bbr-0",
+          "kind": "download",
+          "cc": "bbr",
+          "bytes": 262144,
+          "connect_ms": 1318.93,
+          "transfer_ms": 4971.18,
+          "Mbps": 0.422,
+          "server": {
+            "id": "down-3-bbr-0",
+            "kind": "download",
+            "cc": "bbr",
+            "size": 262144,
+            "elapsed_ms": 4969.46,
+            "tcp": {
+              "rto_us": 520000,
+              "mss": 1440,
+              "unacked": 0,
+              "lost": 0,
+              "rtt_us": 270880,
+              "rttvar_us": 6916,
+              "ssthresh": 32,
+              "cwnd": 69,
+              "total_retrans": 38,
+              "bytes_acked": 262144,
+              "bytes_received": 73,
+              "min_rtt_us": 265826,
+              "data_segs_out": 220,
+              "delivery_rate_Bps": 20333,
+              "bytes_sent": 313984,
+              "bytes_retrans": 51840
+            }
+          },
+          "client_tcp": {
+            "rto_us": 3788000,
+            "mss": 1440,
+            "unacked": 0,
+            "lost": 0,
+            "rtt_us": 1071768,
+            "rttvar_us": 678988,
+            "ssthresh": 2147483647,
+            "cwnd": 10,
+            "total_retrans": 1,
+            "bytes_acked": 74,
+            "bytes_received": 262554,
+            "min_rtt_us": 267228,
+            "data_segs_out": 2,
+            "delivery_rate_Bps": 5388,
+            "bytes_sent": 73,
+            "bytes_retrans": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "up-1",
+      "parallel": 1,
+      "total_wall_ms": 1622.82,
+      "results": [
+        {
+          "id": "up-1-0",
+          "kind": "upload",
+          "cc": "cubic",
+          "bytes": 262144,
+          "connect_ms": 268.79,
+          "transfer_ms": 1351.89,
+          "Mbps": 1.551,
+          "server": {
+            "id": "up-1-0",
+            "kind": "upload",
+            "cc": "cubic",
+            "size": 262144,
+            "elapsed_ms": 1063.75,
+            "tcp": {
+              "rto_us": 804000,
+              "mss": 1440,
+              "unacked": 0,
+              "lost": 0,
+              "rtt_us": 267411,
+              "rttvar_us": 133705,
+              "ssthresh": 2147483647,
+              "cwnd": 10,
+              "total_retrans": 0,
+              "bytes_acked": 0,
+              "bytes_received": 262210,
+              "min_rtt_us": 267411,
+              "data_segs_out": 0,
+              "delivery_rate_Bps": 0,
+              "bytes_sent": 0,
+              "bytes_retrans": 0
+            }
+          },
+          "client_tcp": {
+            "rto_us": 603000,
+            "mss": 1440,
+            "unacked": 0,
+            "lost": 0,
+            "rtt_us": 285312,
+            "rttvar_us": 1968,
+            "ssthresh": 96,
+            "cwnd": 100,
+            "total_retrans": 0,
+            "bytes_acked": 262211,
+            "bytes_received": 397,
+            "min_rtt_us": 245279,
+            "data_segs_out": 184,
+            "delivery_rate_Bps": 185441,
+            "bytes_sent": 262210,
+            "bytes_retrans": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "up-2",
+      "parallel": 1,
+      "total_wall_ms": 1457.22,
+      "results": [
+        {
+          "id": "up-2-0",
+          "kind": "upload",
+          "cc": "cubic",
+          "bytes": 262144,
+          "connect_ms": 241.83,
+          "transfer_ms": 1213.14,
+          "Mbps": 1.729,
+          "server": {
+            "id": "up-2-0",
+            "kind": "upload",
+            "cc": "cubic",
+            "size": 262144,
+            "elapsed_ms": 968.97,
+            "tcp": {
+              "rto_us": 804000,
+              "mss": 1440,
+              "unacked": 0,
+              "lost": 0,
+              "rtt_us": 240429,
+              "rttvar_us": 120214,
+              "ssthresh": 2147483647,
+              "cwnd": 10,
+              "total_retrans": 0,
+              "bytes_acked": 0,
+              "bytes_received": 262210,
+              "min_rtt_us": 240429,
+              "data_segs_out": 0,
+              "delivery_rate_Bps": 0,
+              "bytes_sent": 0,
+              "bytes_retrans": 0
+            }
+          },
+          "client_tcp": {
+            "rto_us": 538000,
+            "mss": 1440,
+            "unacked": 0,
+            "lost": 0,
+            "rtt_us": 240816,
+            "rttvar_us": 702,
+            "ssthresh": 2147483647,
+            "cwnd": 189,
+            "total_retrans": 0,
+            "bytes_acked": 262211,
+            "bytes_received": 396,
+            "min_rtt_us": 238931,
+            "data_segs_out": 184,
+            "delivery_rate_Bps": 565841,
+            "bytes_sent": 262210,
+            "bytes_retrans": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "parallel-1-cubic",
+      "parallel": 4,
+      "total_wall_ms": 2955.65,
+      "results": [
+        {
+          "id": "parallel-1-cubic-0",
+          "kind": "download",
+          "cc": "cubic",
+          "bytes": 65536,
+          "connect_ms": 270.63,
+          "transfer_ms": 2412.27,
+          "Mbps": 0.217,
+          "server": {
+            "id": "parallel-1-cubic-0",
+            "kind": "download",
+            "cc": "cubic",
+            "size": 65536,
+            "elapsed_ms": 2411.66,
+            "tcp": {
+              "rto_us": 556000,
+              "mss": 1440,
+              "unacked": 0,
+              "lost": 0,
+              "rtt_us": 268011,
+              "rttvar_us": 614,
+              "ssthresh": 4,
+              "cwnd": 4,
+              "total_retrans": 8,
+              "bytes_acked": 65536,
+              "bytes_received": 80,
+              "min_rtt_us": 266675,
+              "data_segs_out": 54,
+              "delivery_rate_Bps": 5383,
+              "bytes_sent": 77056,
+              "bytes_retrans": 11520
+            }
+          },
+          "client_tcp": {
+            "rto_us": 748000,
+            "mss": 1440,
+            "unacked": 0,
+            "lost": 0,
+            "rtt_us": 268493,
+            "rttvar_us": 75857,
+            "ssthresh": 2147483647,
+            "cwnd": 10,
+            "total_retrans": 0,
+            "bytes_acked": 81,
+            "bytes_received": 65945,
+            "min_rtt_us": 267839,
+            "data_segs_out": 2,
+            "delivery_rate_Bps": 5376,
+            "bytes_sent": 80,
+            "bytes_retrans": 0
+          }
+        },
+        {
+          "id": "parallel-1-cubic-1",
+          "kind": "download",
+          "cc": "cubic",
+          "bytes": 65536,
+          "connect_ms": 267.69,
+          "transfer_ms": 1668.8,
+          "Mbps": 0.314,
+          "server": {
+            "id": "parallel-1-cubic-1",
+            "kind": "download",
+            "cc": "cubic",
+            "size": 65536,
+            "elapsed_ms": 1668.39,
+            "tcp": {
+              "rto_us": 620000,
+              "mss": 1440,
+              "unacked": 0,
+              "lost": 0,
+              "rtt_us": 265880,
+              "rttvar_us": 314,
+              "ssthresh": 11,
+              "cwnd": 11,
+              "total_retrans": 3,
+              "bytes_acked": 65536,
+              "bytes_received": 80,
+              "min_rtt_us": 265000,
+              "data_segs_out": 49,
+              "delivery_rate_Bps": 5422,
+              "bytes_sent": 69856,
+              "bytes_retrans": 4320
+            }
+          },
+          "client_tcp": {
+            "rto_us": 740000,
+            "mss": 1440,
+            "unacked": 0,
+            "lost": 0,
+            "rtt_us": 265919,
+            "rttvar_us": 74908,
+            "ssthresh": 2147483647,
+            "cwnd": 10,
+            "total_retrans": 0,
+            "bytes_acked": 81,
+            "bytes_received": 65946,
+            "min_rtt_us": 265690,
+            "data_segs_out": 2,
+            "delivery_rate_Bps": 5419,
+            "bytes_sent": 80,
+            "bytes_retrans": 0
+          }
+        },
+        {
+          "id": "parallel-1-cubic-2",
+          "kind": "download",
+          "cc": "cubic",
+          "bytes": 65536,
+          "connect_ms": 235.61,
+          "transfer_ms": 705.22,
+          "Mbps": 0.743,
+          "server": {
+            "id": "parallel-1-cubic-2",
+            "kind": "download",
+            "cc": "cubic",
+            "size": 65536,
+            "elapsed_ms": 704.12,
+            "tcp": {
+              "rto_us": 584000,
+              "mss": 1440,
+              "unacked": 0,
+              "lost": 0,
+              "rtt_us": 233875,
+              "rttvar_us": 1033,
+              "ssthresh": 2147483647,
+              "cwnd": 54,
+              "total_retrans": 0,
+              "bytes_acked": 65536,
+              "bytes_received": 80,
+              "min_rtt_us": 233016,
+              "data_segs_out": 46,
+              "delivery_rate_Bps": 104368,
+              "bytes_sent": 65536,
+              "bytes_retrans": 0
+            }
+          },
+          "client_tcp": {
+            "rto_us": 652000,
+            "mss": 1440,
+            "unacked": 0,
+            "lost": 0,
+            "rtt_us": 233968,
+            "rttvar_us": 66044,
+            "ssthresh": 2147483647,
+            "cwnd": 10,
+            "total_retrans": 0,
+            "bytes_acked": 81,
+            "bytes_received": 65953,
+            "min_rtt_us": 233122,
+            "data_segs_out": 2,
+            "delivery_rate_Bps": 6177,
+            "bytes_sent": 80,
+            "bytes_retrans": 0
+          }
+        },
+        {
+          "id": "parallel-1-cubic-3",
+          "kind": "download",
+          "cc": "cubic",
+          "bytes": 65536,
+          "connect_ms": 234.7,
+          "transfer_ms": 704.23,
+          "Mbps": 0.744,
+          "server": {
+            "id": "parallel-1-cubic-3",
+            "kind": "download",
+            "cc": "cubic",
+            "size": 65536,
+            "elapsed_ms": 703.44,
+            "tcp": {
+              "rto_us": 596000,
+              "mss": 1440,
+              "unacked": 0,
+              "lost": 0,
+              "rtt_us": 233865,
+              "rttvar_us": 6806,
+              "ssthresh": 2147483647,
+              "cwnd": 56,
+              "total_retrans": 0,
+              "bytes_acked": 65536,
+              "bytes_received": 80,
+              "min_rtt_us": 233071,
+              "data_segs_out": 46,
+              "delivery_rate_Bps": 160040,
+              "bytes_sent": 65536,
+              "bytes_retrans": 0
+            }
+          },
+          "client_tcp": {
+            "rto_us": 650000,
+            "mss": 1440,
+            "unacked": 0,
+            "lost": 0,
+            "rtt_us": 233516,
+            "rttvar_us": 65741,
+            "ssthresh": 2147483647,
+            "cwnd": 10,
+            "total_retrans": 0,
+            "bytes_acked": 81,
+            "bytes_received": 65953,
+            "min_rtt_us": 233410,
+            "data_segs_out": 2,
+            "delivery_rate_Bps": 6169,
+            "bytes_sent": 80,
+            "bytes_retrans": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "parallel-1-bbr",
+      "parallel": 4,
+      "total_wall_ms": 1981.6,
+      "results": [
+        {
+          "id": "parallel-1-bbr-0",
+          "kind": "download",
+          "cc": "bbr",
+          "bytes": 65536,
+          "connect_ms": 238.56,
+          "transfer_ms": 812.58,
+          "Mbps": 0.645,
+          "server": {
+            "id": "parallel-1-bbr-0",
+            "kind": "download",
+            "cc": "bbr",
+            "size": 65536,
+            "elapsed_ms": 811.35,
+            "tcp": {
+              "rto_us": 600000,
+              "mss": 1440,
+              "unacked": 0,
+              "lost": 0,
+              "rtt_us": 234194,
+              "rttvar_us": 566,
+              "ssthresh": 2147483647,
+              "cwnd": 56,
+              "total_retrans": 0,
+              "bytes_acked": 65536,
+              "bytes_received": 76,
+              "min_rtt_us": 232810,
+              "data_segs_out": 46,
+              "delivery_rate_Bps": 122754,
+              "bytes_sent": 65536,
+              "bytes_retrans": 0
+            }
+          },
+          "client_tcp": {
+            "rto_us": 654000,
+            "mss": 1440,
+            "unacked": 0,
+            "lost": 0,
+            "rtt_us": 234777,
+            "rttvar_us": 66206,
+            "ssthresh": 2147483647,
+            "cwnd": 10,
+            "total_retrans": 0,
+            "bytes_acked": 77,
+            "bytes_received": 65948,
+            "min_rtt_us": 234519,
+            "data_segs_out": 2,
+            "delivery_rate_Bps": 6140,
+            "bytes_sent": 76,
+            "bytes_retrans": 0
+          }
+        },
+        {
+          "id": "parallel-1-bbr-1",
+          "kind": "download",
+          "cc": "bbr",
+          "bytes": 65536,
+          "connect_ms": 270.62,
+          "transfer_ms": 1437.8,
+          "Mbps": 0.365,
+          "server": {
+            "id": "parallel-1-bbr-1",
+            "kind": "download",
+            "cc": "bbr",
+            "size": 65536,
+            "elapsed_ms": 1437.17,
+            "tcp": {
+              "rto_us": 624000,
+              "mss": 1440,
+              "unacked": 0,
+              "lost": 0,
+              "rtt_us": 267856,
+              "rttvar_us": 877,
+              "ssthresh": 18,
+              "cwnd": 27,
+              "total_retrans": 6,
+              "bytes_acked": 65536,
+              "bytes_received": 76,
+              "min_rtt_us": 265918,
+              "data_segs_out": 52,
+              "delivery_rate_Bps": 59360,
+              "bytes_sent": 74176,
+              "bytes_retrans": 8640
+            }
+          },
+          "client_tcp": {
+            "rto_us": 745000,
+            "mss": 1440,
+            "unacked": 0,
+            "lost": 0,
+            "rtt_us": 267718,
+            "rttvar_us": 75591,
+            "ssthresh": 2147483647,
+            "cwnd": 10,
+            "total_retrans": 0,
+            "bytes_acked": 77,
+            "bytes_received": 65942,
+            "min_rtt_us": 267494,
+            "data_segs_out": 2,
+            "delivery_rate_Bps": 5372,
+            "bytes_sent": 76,
+            "bytes_retrans": 0
+          }
+        },
+        {
+          "id": "parallel-1-bbr-2",
+          "kind": "download",
+          "cc": "bbr",
+          "bytes": 65536,
+          "connect_ms": 242.14,
+          "transfer_ms": 817.68,
+          "Mbps": 0.641,
+          "server": {
+            "id": "parallel-1-bbr-2",
+            "kind": "download",
+            "cc": "bbr",
+            "size": 65536,
+            "elapsed_ms": 817.19,
+            "tcp": {
+              "rto_us": 596000,
+              "mss": 1440,
+              "unacked": 0,
+              "lost": 0,
+              "rtt_us": 239019,
+              "rttvar_us": 336,
+              "ssthresh": 2147483647,
+              "cwnd": 56,
+              "total_retrans": 0,
+              "bytes_acked": 65536,
+              "bytes_received": 76,
+              "min_rtt_us": 237629,
+              "data_segs_out": 46,
+              "delivery_rate_Bps": 128741,
+              "bytes_sent": 65536,
+              "bytes_retrans": 0
+            }
+          },
+          "client_tcp": {
+            "rto_us": 666000,
+            "mss": 1440,
+            "unacked": 0,
+            "lost": 0,
+            "rtt_us": 239350,
+            "rttvar_us": 67339,
+            "ssthresh": 2147483647,
+            "cwnd": 10,
+            "total_retrans": 0,
+            "bytes_acked": 77,
+            "bytes_received": 65948,
+            "min_rtt_us": 239282,
+            "data_segs_out": 2,
+            "delivery_rate_Bps": 6018,
+            "bytes_sent": 76,
+            "bytes_retrans": 0
+          }
+        },
+        {
+          "id": "parallel-1-bbr-3",
+          "kind": "download",
+          "cc": "bbr",
+          "bytes": 65536,
+          "connect_ms": 271.53,
+          "transfer_ms": 1165.35,
+          "Mbps": 0.45,
+          "server": {
+            "id": "parallel-1-bbr-3",
+            "kind": "download",
+            "cc": "bbr",
+            "size": 65536,
+            "elapsed_ms": 1165.08,
+            "tcp": {
+              "rto_us": 680000,
+              "mss": 1440,
+              "unacked": 0,
+              "lost": 0,
+              "rtt_us": 268159,
+              "rttvar_us": 537,
+              "ssthresh": 2147483647,
+              "cwnd": 36,
+              "total_retrans": 5,
+              "bytes_acked": 65536,
+              "bytes_received": 76,
+              "min_rtt_us": 266814,
+              "data_segs_out": 51,
+              "delivery_rate_Bps": 59072,
+              "bytes_sent": 72736,
+              "bytes_retrans": 7200
+            }
+          },
+          "client_tcp": {
+            "rto_us": 749000,
+            "mss": 1440,
+            "unacked": 0,
+            "lost": 0,
+            "rtt_us": 269063,
+            "rttvar_us": 76397,
+            "ssthresh": 2147483647,
+            "cwnd": 10,
+            "total_retrans": 0,
+            "bytes_acked": 77,
+            "bytes_received": 65951,
+            "min_rtt_us": 267665,
+            "data_segs_out": 2,
+            "delivery_rate_Bps": 5379,
+            "bytes_sent": 76,
+            "bytes_retrans": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "down-final-cubic",
+      "parallel": 1,
+      "total_wall_ms": 14425.99,
+      "results": [
+        {
+          "id": "down-final-cubic-0",
+          "kind": "download",
+          "cc": "cubic",
+          "bytes": 262144,
+          "connect_ms": 269.73,
+          "transfer_ms": 13498.84,
+          "Mbps": 0.155,
+          "server": {
+            "id": "down-final-cubic-0",
+            "kind": "download",
+            "cc": "cubic",
+            "size": 262144,
+            "elapsed_ms": 13497.99,
+            "tcp": {
+              "rto_us": 492000,
+              "mss": 1440,
+              "unacked": 0,
+              "lost": 0,
+              "rtt_us": 271691,
+              "rttvar_us": 24659,
+              "ssthresh": 2,
+              "cwnd": 4,
+              "total_retrans": 29,
+              "bytes_acked": 262144,
+              "bytes_received": 81,
+              "min_rtt_us": 246000,
+              "data_segs_out": 212,
+              "delivery_rate_Bps": 22723,
+              "bytes_sent": 303904,
+              "bytes_retrans": 41760
+            }
+          },
+          "client_tcp": {
+            "rto_us": 758000,
+            "mss": 1440,
+            "unacked": 0,
+            "lost": 0,
+            "rtt_us": 271889,
+            "rttvar_us": 82783,
+            "ssthresh": 2147483647,
+            "cwnd": 10,
+            "total_retrans": 0,
+            "bytes_acked": 82,
+            "bytes_received": 262562,
+            "min_rtt_us": 267986,
+            "data_segs_out": 2,
+            "delivery_rate_Bps": 5373,
+            "bytes_sent": 81,
+            "bytes_retrans": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "down-final-bbr",
+      "parallel": 1,
+      "total_wall_ms": 4645.06,
+      "results": [
+        {
+          "id": "down-final-bbr-0",
+          "kind": "download",
+          "cc": "bbr",
+          "bytes": 262144,
+          "connect_ms": 270.52,
+          "transfer_ms": 4101.23,
+          "Mbps": 0.511,
+          "server": {
+            "id": "down-final-bbr-0",
+            "kind": "download",
+            "cc": "bbr",
+            "size": 262144,
+            "elapsed_ms": 4100.74,
+            "tcp": {
+              "rto_us": 536000,
+              "mss": 1440,
+              "unacked": 0,
+              "lost": 0,
+              "rtt_us": 269174,
+              "rttvar_us": 843,
+              "ssthresh": 28,
+              "cwnd": 54,
+              "total_retrans": 37,
+              "bytes_acked": 262144,
+              "bytes_received": 77,
+              "min_rtt_us": 267095,
+              "data_segs_out": 220,
+              "delivery_rate_Bps": 10702,
+              "bytes_sent": 314688,
+              "bytes_retrans": 52544
+            }
+          },
+          "client_tcp": {
+            "rto_us": 749000,
+            "mss": 1440,
+            "unacked": 0,
+            "lost": 0,
+            "rtt_us": 268895,
+            "rttvar_us": 75727,
+            "ssthresh": 2147483647,
+            "cwnd": 10,
+            "total_retrans": 0,
+            "bytes_acked": 78,
+            "bytes_received": 262557,
+            "min_rtt_us": 268576,
+            "data_segs_out": 2,
+            "delivery_rate_Bps": 5361,
+            "bytes_sent": 77,
+            "bytes_retrans": 0
+          }
+        }
+      ]
+    }
+  ],
+  "production_https_trials": [
+    {
+      "round": 1,
+      "proto": "h2",
+      "started": 1791198463.4270256,
+      "exit": 0,
+      "error": "",
+      "http_code": 200,
+      "http_version": "2",
+      "time_namelookup": 0.005436,
+      "time_connect": 0.247131,
+      "time_appconnect": 1.49401,
+      "time_starttransfer": 1.754786,
+      "time_total": 2.238744,
+      "size_download": 59950,
+      "speed_download": 26778,
+      "local_port": 35872
+    },
+    {
+      "round": 1,
+      "proto": "h3",
+      "started": 1791198465.6807346,
+      "exit": 0,
+      "error": "",
+      "http_code": 200,
+      "http_version": "3",
+      "time_namelookup": 0.009641,
+      "time_connect": 0.012677,
+      "time_appconnect": 0.276191,
+      "time_starttransfer": 0.881044,
+      "time_total": 1.506107,
+      "size_download": 59950,
+      "speed_download": 39804,
+      "local_port": 56844
+    },
+    {
+      "round": 1,
+      "proto": "h1",
+      "started": 1791198467.1969595,
+      "exit": 0,
+      "error": "",
+      "http_code": 200,
+      "http_version": "1.1",
+      "time_namelookup": 0.004314,
+      "time_connect": 0.271339,
+      "time_appconnect": 0.543966,
+      "time_starttransfer": 1.083025,
+      "time_total": 3.554326,
+      "size_download": 59950,
+      "speed_download": 16866,
+      "local_port": 35880
+    },
+    {
+      "round": 2,
+      "proto": "h1",
+      "started": 1791198470.7644691,
+      "exit": 0,
+      "error": "",
+      "http_code": 200,
+      "http_version": "1.1",
+      "time_namelookup": 0.006263,
+      "time_connect": 0.240542,
+      "time_appconnect": 0.481973,
+      "time_starttransfer": 0.721057,
+      "time_total": 1.19147,
+      "size_download": 59950,
+      "speed_download": 50316,
+      "local_port": 42886
+    },
+    {
+      "round": 2,
+      "proto": "h2",
+      "started": 1791198471.9705846,
+      "exit": 0,
+      "error": "",
+      "http_code": 200,
+      "http_version": "2",
+      "time_namelookup": 0.004641,
+      "time_connect": 0.235023,
+      "time_appconnect": 0.472217,
+      "time_starttransfer": 0.706425,
+      "time_total": 1.16828,
+      "size_download": 59950,
+      "speed_download": 51315,
+      "local_port": 42902
+    },
+    {
+      "round": 2,
+      "proto": "h3",
+      "started": 1791198473.147453,
+      "exit": 0,
+      "error": "",
+      "http_code": 200,
+      "http_version": "3",
+      "time_namelookup": 0.00445,
+      "time_connect": 0.006623,
+      "time_appconnect": 0.256146,
+      "time_starttransfer": 0.507078,
+      "time_total": 0.783825,
+      "size_download": 59950,
+      "speed_download": 76484,
+      "local_port": 36664
+    },
+    {
+      "round": 3,
+      "proto": "h2",
+      "started": 1791198473.9380631,
+      "exit": 0,
+      "error": "",
+      "http_code": 200,
+      "http_version": "2",
+      "time_namelookup": 0.005892,
+      "time_connect": 0.27408,
+      "time_appconnect": 0.888159,
+      "time_starttransfer": 1.498329,
+      "time_total": 3.731568,
+      "size_download": 59950,
+      "speed_download": 16065,
+      "local_port": 42906
+    },
+    {
+      "round": 3,
+      "proto": "h3",
+      "started": 1791198477.677448,
+      "exit": 0,
+      "error": "",
+      "http_code": 200,
+      "http_version": "3",
+      "time_namelookup": 0.088725,
+      "time_connect": 0.091039,
+      "time_appconnect": 0.331244,
+      "time_starttransfer": 0.572474,
+      "time_total": 0.839927,
+      "size_download": 59950,
+      "speed_download": 71376,
+      "local_port": 43396
+    },
+    {
+      "round": 3,
+      "proto": "h1",
+      "started": 1791198478.5297024,
+      "exit": 0,
+      "error": "",
+      "http_code": 200,
+      "http_version": "1.1",
+      "time_namelookup": 0.006368,
+      "time_connect": 0.249072,
+      "time_appconnect": 0.49854,
+      "time_starttransfer": 0.744802,
+      "time_total": 1.231154,
+      "size_download": 59950,
+      "speed_download": 48694,
+      "local_port": 42908
+    },
+    {
+      "round": 4,
+      "proto": "h1",
+      "started": 1791198479.7696896,
+      "exit": 0,
+      "error": "",
+      "http_code": 200,
+      "http_version": "1.1",
+      "time_namelookup": 0.027439,
+      "time_connect": 0.295346,
+      "time_appconnect": 0.569981,
+      "time_starttransfer": 0.843487,
+      "time_total": 1.988739,
+      "size_download": 59950,
+      "speed_download": 30144,
+      "local_port": 42912
+    },
+    {
+      "round": 4,
+      "proto": "h2",
+      "started": 1791198481.7675443,
+      "exit": 0,
+      "error": "",
+      "http_code": 200,
+      "http_version": "2",
+      "time_namelookup": 0.005483,
+      "time_connect": 0.247773,
+      "time_appconnect": 0.496595,
+      "time_starttransfer": 0.744435,
+      "time_total": 1.235155,
+      "size_download": 59950,
+      "speed_download": 48536,
+      "local_port": 41278
+    },
+    {
+      "round": 4,
+      "proto": "h3",
+      "started": 1791198483.0101268,
+      "exit": 0,
+      "error": "",
+      "http_code": 200,
+      "http_version": "3",
+      "time_namelookup": 0.009275,
+      "time_connect": 0.012558,
+      "time_appconnect": 0.591227,
+      "time_starttransfer": 0.871022,
+      "time_total": 2.356209,
+      "size_download": 59950,
+      "speed_download": 25443,
+      "local_port": 59350
+    }
+  ],
+  "gateway_ping": {
+    "sent": 300,
+    "received": 300,
+    "min_ms": 0.644,
+    "avg_ms": 1.067,
+    "max_ms": 40.653,
+    "mdev_ms": 2.39
+  },
+  "server_loopback_median_ms": {
+    "/": 1.128,
+    "/static/index-dqUZvcay.js": 1.033,
+    "/api/image/logo": 3.868,
+    "/api/auth/setting": 2.931
+  },
+  "production_socket_observation": {
+    "cwnd": 2,
+    "retrans": 8,
+    "rtt_ms": 278.751,
+    "delivery_rate_bits_per_s": 86304
+  },
+  "lab_tcp_observations": {
+    "https-lab.log": [
+      {
+        "cwnd": 4,
+        "mode": "cubic",
+        "retrans": 4,
+        "rto_us": 732000,
+        "rtt_us": 292732,
+        "ssthresh": 7,
+        "time": 1791206366894
+      },
+      {
+        "cwnd": 10,
+        "mode": "cubic",
+        "retrans": 0,
+        "rto_us": 864000,
+        "rtt_us": 253368,
+        "ssthresh": 2147483647,
+        "time": 1791206370428
+      },
+      {
+        "cwnd": 5,
+        "mode": "cubic",
+        "retrans": 14,
+        "rto_us": 460000,
+        "rtt_us": 258802,
+        "ssthresh": 3,
+        "time": 1791206382545
+      },
+      {
+        "cwnd": 14,
+        "mode": "bbr",
+        "retrans": 3,
+        "rto_us": 832000,
+        "rtt_us": 304578,
+        "ssthresh": 2147483647,
+        "time": 1791206396169
+      },
+      {
+        "cwnd": 22,
+        "mode": "bbr",
+        "retrans": 88,
+        "rto_us": 500000,
+        "rtt_us": 292364,
+        "ssthresh": 12,
+        "time": 1791206398057
+      },
+      {
+        "cwnd": 115,
+        "mode": "bbr",
+        "retrans": 9,
+        "rto_us": 492000,
+        "rtt_us": 262713,
+        "ssthresh": 2147483647,
+        "time": 1791206403302
+      },
+      {
+        "cwnd": 10,
+        "mode": "cubic",
+        "retrans": 1,
+        "rto_us": 872000,
+        "rtt_us": 289558,
+        "ssthresh": 2147483647,
+        "time": 1791206404887
+      },
+      {
+        "cwnd": 13,
+        "mode": "cubic",
+        "retrans": 7,
+        "rto_us": 504000,
+        "rtt_us": 263069,
+        "ssthresh": 11,
+        "time": 1791206407326
+      },
+      {
+        "cwnd": 10,
+        "mode": "cubic",
+        "retrans": 0,
+        "rto_us": 888000,
+        "rtt_us": 286902,
+        "ssthresh": 2147483647,
+        "time": 1791206408284
+      },
+      {
+        "cwnd": 7,
+        "mode": "cubic",
+        "retrans": 1,
+        "rto_us": 716000,
+        "rtt_us": 258176,
+        "ssthresh": 7,
+        "time": 1791206418460
+      },
+      {
+        "cwnd": 3,
+        "mode": "cubic",
+        "retrans": 17,
+        "rto_us": 492000,
+        "rtt_us": 288949,
+        "ssthresh": 2,
+        "time": 1791206418661
+      },
+      {
+        "cwnd": 4,
+        "mode": "cubic",
+        "retrans": 56,
+        "rto_us": 496000,
+        "rtt_us": 291502,
+        "ssthresh": 3,
+        "time": 1791206456614
+      },
+      {
+        "cwnd": 52,
+        "mode": "bbr",
+        "retrans": 66,
+        "rto_us": 532000,
+        "rtt_us": 293500,
+        "ssthresh": 30,
+        "time": 1791206464896
+      },
+      {
+        "cwnd": 4,
+        "mode": "bbr",
+        "retrans": 3,
+        "rto_us": 820000,
+        "rtt_us": 272765,
+        "ssthresh": 2147483647,
+        "time": 1791206467542
+      },
+      {
+        "cwnd": 48,
+        "mode": "bbr",
+        "retrans": 25,
+        "rto_us": 612000,
+        "rtt_us": 282666,
+        "ssthresh": 2147483647,
+        "time": 1791206469447
+      },
+      {
+        "cwnd": 10,
+        "mode": "bbr",
+        "retrans": 0,
+        "rto_us": 888000,
+        "rtt_us": 283921,
+        "ssthresh": 2147483647,
+        "time": 1791206470311
+      },
+      {
+        "cwnd": 99,
+        "mode": "bbr",
+        "retrans": 3,
+        "rto_us": 544000,
+        "rtt_us": 256873,
+        "ssthresh": 2147483647,
+        "time": 1791206473626
+      },
+      {
+        "cwnd": 13,
+        "mode": "bbr",
+        "retrans": 3,
+        "rto_us": 796000,
+        "rtt_us": 292615,
+        "ssthresh": 2147483647,
+        "time": 1791206473627
+      },
+      {
+        "cwnd": 4,
+        "mode": "cubic",
+        "retrans": 19,
+        "rto_us": 456000,
+        "rtt_us": 255527,
+        "ssthresh": 3,
+        "time": 1791206493226
+      }
+    ],
+    "https-lab-swap.log": [
+      {
+        "cwnd": 1,
+        "mode": "cubic",
+        "retrans": 79,
+        "rto_us": 1920000,
+        "rtt_us": 279655,
+        "ssthresh": 2,
+        "time": 1791206642610
+      },
+      {
+        "cwnd": 13,
+        "mode": "bbr",
+        "retrans": 1,
+        "rto_us": 848000,
+        "rtt_us": 282232,
+        "ssthresh": 2147483647,
+        "time": 1791206644166
+      },
+      {
+        "cwnd": 18,
+        "mode": "bbr",
+        "retrans": 1,
+        "rto_us": 688000,
+        "rtt_us": 253485,
+        "ssthresh": 2147483647,
+        "time": 1791206644390
+      },
+      {
+        "cwnd": 10,
+        "mode": "bbr",
+        "retrans": 0,
+        "rto_us": 828000,
+        "rtt_us": 252512,
+        "ssthresh": 2147483647,
+        "time": 1791206644960
+      },
+      {
+        "cwnd": 40,
+        "mode": "bbr",
+        "retrans": 61,
+        "rto_us": 500000,
+        "rtt_us": 285802,
+        "ssthresh": 26,
+        "time": 1791206654185
+      },
+      {
+        "cwnd": 12,
+        "mode": "bbr",
+        "retrans": 0,
+        "rto_us": 744000,
+        "rtt_us": 266745,
+        "ssthresh": 2147483647,
+        "time": 1791206654188
+      },
+      {
+        "cwnd": 98,
+        "mode": "bbr",
+        "retrans": 60,
+        "rto_us": 516000,
+        "rtt_us": 283541,
+        "ssthresh": 2147483647,
+        "time": 1791206661822
+      },
+      {
+        "cwnd": 4,
+        "mode": "cubic",
+        "retrans": 62,
+        "rto_us": 508000,
+        "rtt_us": 304243,
+        "ssthresh": 2,
+        "time": 1791206703664
+      },
+      {
+        "cwnd": 7,
+        "mode": "cubic",
+        "retrans": 1,
+        "rto_us": 796000,
+        "rtt_us": 286818,
+        "ssthresh": 7,
+        "time": 1791206716102
+      },
+      {
+        "cwnd": 2,
+        "mode": "cubic",
+        "retrans": 42,
+        "rto_us": 480000,
+        "rtt_us": 278097,
+        "ssthresh": 2,
+        "time": 1791206723567
+      },
+      {
+        "cwnd": 4,
+        "mode": "cubic",
+        "retrans": 31,
+        "rto_us": 484000,
+        "rtt_us": 280815,
+        "ssthresh": 3,
+        "time": 1791206738726
+      },
+      {
+        "cwnd": 40,
+        "mode": "bbr",
+        "retrans": 74,
+        "rto_us": 512000,
+        "rtt_us": 285514,
+        "ssthresh": 22,
+        "time": 1791206748243
+      },
+      {
+        "cwnd": 121,
+        "mode": "bbr",
+        "retrans": 27,
+        "rto_us": 496000,
+        "rtt_us": 267147,
+        "ssthresh": 2147483647,
+        "time": 1791206754042
+      },
+      {
+        "cwnd": 5,
+        "mode": "cubic",
+        "retrans": 21,
+        "rto_us": 512000,
+        "rtt_us": 281494,
+        "ssthresh": 3,
+        "time": 1791206767189
+      }
+    ]
+  }
+}

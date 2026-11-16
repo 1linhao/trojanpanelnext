@@ -424,12 +424,16 @@ write_web_caddyfile() {
 }
 
 ${domain} {
+    @page_resources path / /index.html /static/*
+    encode @page_resources zstd gzip
     reverse_proxy 127.0.0.1:${UI_PORT}
 }
 EOF
   else
     cat >"${caddyfile}" <<EOF
 ${domain} {
+    @page_resources path / /index.html /static/*
+    encode @page_resources zstd gzip
     reverse_proxy 127.0.0.1:${UI_PORT}
 }
 EOF
@@ -552,6 +556,11 @@ server {
     location / {
         root   /tpdata/trojan-panel-ui;
         index  index.html index.htm;
+    }
+
+    location = /api/system/uploadLogo {
+        client_max_body_size 4m;
+        proxy_pass http://127.0.0.1:${PANEL_PORT};
     }
 
     location /api {

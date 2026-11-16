@@ -1,8 +1,11 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"github.com/gin-gonic/gin"
+	"net/http"
+	"path/filepath"
 	"strings"
 	"trojan-panel/model/constant"
 	"trojan-panel/model/dto"
@@ -90,32 +93,49 @@ func UploadWebFile(c *gin.Context) {
 }
 
 func UploadLogo(c *gin.Context) {
+	// Include a small allowance for multipart headers while bounding the body.
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, util.PanelLogoMaxBytes+64*1024)
 	file, err := c.FormFile("file")
 	if err != nil {
-		vo.Fail(constant.SysError, c)
+		var limitError *http.MaxBytesError
+		if errors.As(err, &limitError) {
+			vo.Fail(constant.FileSizeTooBig, c)
+		} else {
+			vo.Fail(constant.SysError, c)
+		}
 		return
 	}
 	// 文件大小 3MB
-	if file.Size > 1024*1024*3 {
+	if file.Size > util.PanelLogoMaxBytes {
 		vo.Fail(constant.FileSizeTooBig, c)
 		return
 	}
 	// 文件后缀.png
-	if !strings.HasSuffix(file.Filename, ".png") {
+	if !strings.EqualFold(filepath.Ext(file.Filename), ".png") {
 		vo.Fail(constant.FileFormatError, c)
 		return
 	}
-	// 保存文件
-	if err := c.SaveUploadedFile(file, constant.LogoImagePath); err != nil {
+	source, err := file.Open()
+	if err != nil {
 		vo.Fail(constant.FileUploadError, c)
+		return
+	}
+	defer source.Close()
+	if err := util.SavePanelLogo(source, constant.LogoImagePath); err != nil {
+		switch {
+		case errors.Is(err, util.ErrPanelLogoFormat):
+			vo.Fail(constant.FileFormatError, c)
+		case errors.Is(err, util.ErrPanelLogoSize):
+			vo.Fail(constant.FileSizeTooBig, c)
+		default:
+			vo.Fail(constant.FileUploadError, c)
+		}
 		return
 	}
 	vo.Success(nil, c)
 }
 
 func GetLogo(c *gin.Context) {
-	c.Header("Content-Type", "application/octet-stream")
-	c.Header("Content-Transfer-Encoding", "binary")
-	c.Header("Content-Disposition", "attachment; filename=logo.png")
+	c.Header("Content-Type", "image/png")
 	c.File(constant.LogoImagePath)
 }
