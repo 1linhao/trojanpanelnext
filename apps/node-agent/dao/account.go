@@ -3,14 +3,12 @@ package dao
 import (
 	"errors"
 	"fmt"
-	"github.com/didi/gendry/builder"
-	"github.com/didi/gendry/scanner"
+	"github.com/go-sql-driver/mysql"
 	"github.com/sirupsen/logrus"
+	"strings"
 	"trojan-panel-core/core"
-	"trojan-panel-core/model"
 	"trojan-panel-core/model/bo"
 	"trojan-panel-core/model/constant"
-	"trojan-panel-core/model/vo"
 )
 
 func UpdateAccountFlowByPassOrHash(pass *string, hash *string, download int, upload int) error {
@@ -75,70 +73,62 @@ func UpdateAccountFlowByPassOrHash(pass *string, hash *string, download int, upl
 	return nil
 }
 
-// SelectAccounts query all valid accounts
-func SelectAccounts() ([]bo.AccountBo, error) {
-	mySQLConfig := core.Config.MySQLConfig
-	var accounts []model.Account
-	var (
-		values []interface{}
-		err    error
-	)
+// Match the internal listener, independently of its public forwarding port.
+const listenerAccountAccess = ` AND (
+	NOT EXISTS (SELECT 1 FROM account_node_policy p WHERE p.account_id=a.id)
+	OR EXISTS (SELECT 1 FROM account_node_grant g JOIN node n ON n.id=g.node_id
+		WHERE g.account_id=a.id AND n.node_server_id=? AND n.node_type_id=? AND n.port=?)
+)`
 
-	sql := fmt.Sprintf("select id,username,pass,hash from %s where quota < 0 or (quota > download + upload)", mySQLConfig.AccountTable)
-	rows, err := db.Query(sql, values...)
+func SelectListenerAccounts(nodeType, port uint) ([]bo.AccountBo, error) {
+	query := fmt.Sprintf(`SELECT a.username,a.pass FROM %s a WHERE (a.quota < 0 OR a.quota > a.download + a.upload)`,
+		core.Config.MySQLConfig.AccountTable)
+	rows, err := db.Query(query+listenerAccountAccess, core.Config.NodeConfig.ServerID, nodeType, port)
+	if missingNodeAccessTable(err, "account_node_policy") {
+		rows, err = db.Query(query)
+	}
 	if err != nil {
-		logrus.Errorln(err.Error())
-		return nil, errors.New(constant.SysError)
+		return nil, err
 	}
 	defer rows.Close()
-
-	if err = scanner.Scan(rows, &accounts); err != nil && err != scanner.ErrEmptyResult {
-		logrus.Errorln(err.Error())
-		return nil, errors.New(constant.SysError)
-	}
-	accountBos := make([]bo.AccountBo, 0)
-	if len(accounts) > 0 {
-		for _, item := range accounts {
-			accountBo := bo.AccountBo{
-				Username: *item.Username,
-				Pass:     *item.Pass,
-				Hash:     *item.Hash,
-			}
-			accountBos = append(accountBos, accountBo)
+	var accounts []bo.AccountBo
+	for rows.Next() {
+		var account bo.AccountBo
+		if err := rows.Scan(&account.Username, &account.Pass); err != nil {
+			return nil, err
 		}
+		accounts = append(accounts, account)
 	}
-	return accountBos, nil
+	return accounts, rows.Err()
 }
 
-func SelectAccountByPass(pass string) (*vo.AccountHysteriaVo, error) {
-	mySQLConfig := core.Config.MySQLConfig
-	var account model.Account
+func AuthorizeHysteria2Account(pass string, port uint) error {
+	query := fmt.Sprintf(`SELECT a.id FROM %s a WHERE a.pass=? AND (a.quota < 0 OR a.quota > a.download + a.upload)`,
+		core.Config.MySQLConfig.AccountTable)
+	var id uint
+	err := db.QueryRow(query+listenerAccountAccess, pass, core.Config.NodeConfig.ServerID, constant.Hysteria2, port).Scan(&id)
+	if missingNodeAccessTable(err, "account_node_policy") {
+		err = db.QueryRow(query, pass).Scan(&id)
+	}
+	return err
+}
 
-	buildSelect, values, err := builder.NamedQuery(fmt.Sprintf("select id from %s where (quota < 0 or quota > download + upload) and pass = {{pass}}", mySQLConfig.AccountTable),
-		map[string]interface{}{
-			"pass": pass,
-		})
-	if err != nil {
-		logrus.Errorln(err.Error())
-		return nil, errors.New(constant.SysError)
+func MarkNodeAccessSynced() error {
+	serverID := core.Config.NodeConfig.ServerID
+	if serverID == 0 {
+		return nil
 	}
-	rows, err := db.Query(buildSelect, values...)
-	if err != nil {
-		logrus.Errorln(err.Error())
-		return nil, errors.New(constant.SysError)
+	_, err := db.Exec(`INSERT INTO node_access_agent (node_server_id,last_sync)
+		SELECT id,CURRENT_TIMESTAMP FROM node_server WHERE id=?
+		ON DUPLICATE KEY UPDATE last_sync=CURRENT_TIMESTAMP`, serverID)
+	if missingNodeAccessTable(err, "node_access_agent") {
+		return nil
 	}
-	defer rows.Close()
+	return err
+}
 
-	err = scanner.Scan(rows, &account)
-	if err == scanner.ErrEmptyResult {
-		return nil, errors.New(constant.UsernameOrPassError)
-	} else if err != nil {
-		logrus.Errorln(err.Error())
-		return nil, errors.New(constant.SysError)
-	}
-
-	AccountHysteriaVo := vo.AccountHysteriaVo{
-		Id: *account.Id,
-	}
-	return &AccountHysteriaVo, nil
+// Allow a new agent to start against a Web version that predates the feature.
+func missingNodeAccessTable(err error, table string) bool {
+	var mysqlErr *mysql.MySQLError
+	return errors.As(err, &mysqlErr) && mysqlErr.Number == 1146 && strings.HasSuffix(mysqlErr.Message, "."+table+"' doesn't exist")
 }

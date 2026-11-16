@@ -51,12 +51,12 @@ func (n *naiveProxyApi) ListUsers() (*[]bo.HandleAuth, error) {
 		logrus.Errorf("NaiveProxy ListUsers IO err: %v", err)
 		return nil, errors.New(constant.SysError)
 	}
-	var handleAuths *[]bo.HandleAuth
+	var handleAuths []bo.HandleAuth
 	if err = json.Unmarshal(contentByte, &handleAuths); err != nil {
 		logrus.Errorf("NaiveProxy ListUsers Unmarshal err: %v", err)
 		return nil, errors.New(constant.SysError)
 	}
-	return handleAuths, nil
+	return &handleAuths, nil
 }
 
 // ListUserTraffic queries per-user traffic from the custom NaiveProxy build.

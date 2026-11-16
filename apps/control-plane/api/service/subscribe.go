@@ -29,7 +29,7 @@ func SubscribeClash(pass string) (*model.Account, string, []byte, vo.SystemVo, e
 	if err != nil {
 		return nil, "", []byte{}, vo.SystemVo{}, err
 	}
-	nodes, err := dao.SelectNodes()
+	nodes, err := selectSubscriptionNodes(*account.Id)
 	if err != nil {
 		return nil, "", []byte{}, vo.SystemVo{}, err
 	}
@@ -314,7 +314,7 @@ func SubscribeSingBox(pass string, templateId string) (*model.Account, string, [
 	if err != nil {
 		return nil, "", []byte{}, err
 	}
-	nodes, err := dao.SelectNodes()
+	nodes, err := selectSubscriptionNodes(*account.Id)
 	if err != nil {
 		return nil, "", []byte{}, err
 	}
@@ -389,7 +389,7 @@ func SubscribeURI(pass string, userAgent string, client string) (*model.Account,
 	if err != nil {
 		return nil, "", nil, err
 	}
-	nodes, err := dao.SelectNodes()
+	nodes, err := selectSubscriptionNodes(*account.Id)
 	if err != nil {
 		return nil, "", nil, err
 	}
@@ -415,6 +415,14 @@ func SubscribeURI(pass string, userAgent string, client string) (*model.Account,
 		*account.ExpireTime/1000)
 	content := base64.StdEncoding.EncodeToString([]byte(strings.Join(urls, "\n")))
 	return account, userInfo, []byte(content), nil
+}
+
+func selectSubscriptionNodes(accountID uint) ([]model.Node, error) {
+	access, err := dao.SelectAccountNodeAccess(accountID)
+	if err != nil {
+		return nil, err
+	}
+	return dao.SelectNodes(access)
 }
 
 func ExportOptions() ([]vo.ClientExportOptionVo, error) {

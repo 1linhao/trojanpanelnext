@@ -166,169 +166,6 @@ func RestartApp(apiPort uint, nodeTypeId uint) error {
 	return nil
 }
 
-// CronHandlerUser timing task processing user
-func CronHandlerUser() {
-	// valid account in the database
-	accountBos, err := dao.SelectAccounts()
-	if err != nil {
-		logrus.Errorf("query all valid accounts error err: %v", err)
-		return
-	}
-
-	accountBoLists := util.SplitArr(accountBos, 50)
-
-	for _, accountBoList := range accountBoLists {
-		// xray
-		go func(accountBos []bo.AccountBo) {
-			xrayInstance := process.NewXrayProcess()
-			xrayCmdMap := xrayInstance.GetCmdMap()
-			xrayCmdMap.Range(func(apiPort, cmd any) bool {
-				go func() {
-					xrayApi := xray.NewXrayApi(apiPort.(uint))
-					// account in memory
-					stats, err := xrayApi.QueryStats("", false)
-					if err != nil {
-						return
-					}
-
-					// deleted account
-					var banAccountBos []bo.AccountBo
-					for _, stat := range stats {
-						submatch := userLinkRegex.FindStringSubmatch(stat.Name)
-						if len(submatch) == 3 {
-							pass := submatch[1]
-							var banFlag = true
-							for _, account := range accountBos {
-								if account.Pass == pass {
-									banFlag = false
-									break
-								}
-							}
-							if banFlag {
-								banAccountBos = append(banAccountBos, bo.AccountBo{
-									Pass: pass,
-								})
-							}
-						}
-					}
-					for _, item := range banAccountBos {
-						if err = xrayApi.DeleteUser(item.Pass); err != nil {
-							logrus.Errorf("xray DeleteUser err: %v", err)
-							continue
-						}
-					}
-
-					// account added
-					var addAccountBos []bo.AccountBo
-					for _, account := range accountBos {
-						var addFlag = true
-						for _, stat := range stats {
-							submatch := userLinkRegex.FindStringSubmatch(stat.Name)
-							if len(submatch) == 3 {
-								pass := submatch[1]
-								if account.Pass == pass {
-									addFlag = false
-									break
-								}
-							}
-						}
-						if addFlag {
-							addAccountBos = append(addAccountBos, bo.AccountBo{
-								Pass: account.Pass,
-							})
-						}
-					}
-					protocol, err := util.GetXrayProtocolByApiPort(apiPort.(uint))
-					if err != nil {
-						logrus.Errorf("xray get protocol err apiPort: %s err: %v", apiPort, err)
-					} else {
-						for _, item := range addAccountBos {
-							if err = xrayApi.AddUser(dto.XrayAddUserDto{
-								Protocol: protocol,
-								Password: item.Pass,
-							}); err != nil {
-								logrus.Errorf("xray AddUser err: %v", err)
-								continue
-							}
-						}
-					}
-				}()
-				return true
-			})
-		}(accountBoList)
-
-		// naiveproxy
-		go func(accountBos []bo.AccountBo) {
-			naiveProxyInstance := process.NewNaiveProxyInstance()
-			naiveProxyCmdMap := naiveProxyInstance.GetCmdMap()
-			naiveProxyCmdMap.Range(func(apiPort, cmd any) bool {
-				go func() {
-					naiveProxyApi := naiveproxy.NewNaiveProxyApi(apiPort.(uint))
-					users, err := naiveProxyApi.ListUsers()
-					if err != nil {
-						return
-					}
-
-					// deleted account
-					var banAccountBos []bo.AccountBo
-					for _, user := range *users {
-						pass := user.Pass()
-						var banFlag = true
-						for _, account := range accountBos {
-							if account.Pass == pass {
-								banFlag = false
-								break
-							}
-						}
-						if banFlag {
-							banAccountBos = append(banAccountBos, bo.AccountBo{
-								Pass: pass,
-							})
-						}
-					}
-					for _, item := range banAccountBos {
-						// call api to delete user
-						if err = naiveProxyApi.DeleteUser(item.Pass); err != nil {
-							logrus.Errorf("naiveproxy DeleteUser err: %v", err)
-							continue
-						}
-					}
-
-					// account added
-					var addAccountBos []bo.AccountBo
-					for _, account := range accountBos {
-						var addFlag = true
-						for _, user := range *users {
-							pass := user.Pass()
-							if account.Pass == pass {
-								addFlag = false
-								break
-							}
-						}
-						if addFlag {
-							addAccountBos = append(addAccountBos, bo.AccountBo{
-								Username: account.Username,
-								Pass:     account.Pass,
-							})
-						}
-					}
-					for _, item := range addAccountBos {
-						// call api to add user
-						if err = naiveProxyApi.AddUser(dto.NaiveProxyAddUserDto{
-							Username: item.Username,
-							Pass:     item.Pass,
-						}); err != nil {
-							logrus.Errorf("naiveproxy AddUser err: %v", err)
-							continue
-						}
-					}
-				}()
-				return true
-			})
-		}(accountBoList)
-	}
-}
-
 // CronHandlerDownloadAndUpload scheduled tasks: update the account's download and upload traffic in the database. Hysteria2 does not currently support traffic statistics
 func CronHandlerDownloadAndUpload() {
 	// xray
@@ -485,33 +322,22 @@ func uint64ToInt(value uint64) int {
 }
 
 func RemoveAccount(password string) error {
-	// xray
 	go func() {
-		xrayInstance := process.NewXrayProcess()
-		xrayCmdMap := xrayInstance.GetCmdMap()
-		xrayCmdMap.Range(func(apiPort, cmd any) bool {
-			go func(password string) {
-				xrayApi := xray.NewXrayApi(apiPort.(uint))
-				if err := xrayApi.DeleteUser(password); err != nil {
-					logrus.Errorf("xray DeleteUser err: %v", err)
-				}
-			}(password)
+		accountSync.Lock()
+		defer accountSync.Unlock()
+		process.NewXrayProcess().GetCmdMap().Range(func(key, command any) bool {
+			port := key.(uint)
+			if err := xray.NewXrayApi(port).DeleteUser(password); err != nil {
+				logrus.Errorf("xray DeleteUser err: %v", err)
+			} else if state := xrayAccounts[port]; state.process == command {
+				delete(state.users, password)
+			}
 			return true
 		})
-	}()
-
-	// naiveproxy
-	go func() {
-		naiveProxyInstance := process.NewNaiveProxyInstance()
-		naiveProxyCmdMap := naiveProxyInstance.GetCmdMap()
-		naiveProxyCmdMap.Range(func(apiPort, cmd any) bool {
-			go func(password string) {
-				naiveProxyApi := naiveproxy.NewNaiveProxyApi(apiPort.(uint))
-				// call api to delete user
-				if err := naiveProxyApi.DeleteUser(password); err != nil {
-					logrus.Errorf("naiveproxy DeleteUser err: %v", err)
-				}
-			}(password)
+		process.NewNaiveProxyInstance().GetCmdMap().Range(func(key, _ any) bool {
+			if err := naiveproxy.NewNaiveProxyApi(key.(uint)).DeleteUser(password); err != nil {
+				logrus.Errorf("naiveproxy DeleteUser err: %v", err)
+			}
 			return true
 		})
 	}()

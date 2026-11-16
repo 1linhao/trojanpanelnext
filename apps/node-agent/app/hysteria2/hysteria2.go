@@ -3,8 +3,10 @@ package hysteria2
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/sirupsen/logrus"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"trojan-panel-core/core"
@@ -22,7 +24,7 @@ func InitHysteria2App() error {
 	}
 	hysteria2Process := process.NewHysteria2Instance()
 	for _, apiPort := range apiPorts {
-		if err != nil {
+		if err = upgradeHysteria2Auth(apiPort); err != nil {
 			return err
 		}
 		if err = hysteria2Process.StartHysteria2(apiPort); err != nil {
@@ -55,10 +57,70 @@ func RestartHysteria2(apiPort uint) error {
 	if err := StopHysteria2(apiPort, false); err != nil {
 		return err
 	}
-	if err := StartHysteria2(dto.Hysteria2ConfigDto{ApiPort: apiPort}); err != nil {
+	if err := upgradeHysteria2Auth(apiPort); err != nil {
 		return err
 	}
-	return nil
+	return process.NewHysteria2Instance().StartHysteria2(apiPort)
+}
+
+func hysteria2AuthURL(port uint) string {
+	return fmt.Sprintf("http://127.0.0.1:%d/api/auth/hysteria2?port=%d", core.Config.ServerConfig.Port, port)
+}
+
+func upgradeHysteria2Auth(apiPort uint) error {
+	path, err := util.GetConfigFile(constant.Hysteria2, apiPort)
+	if err != nil {
+		return err
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	if apiPort <= 30000 {
+		return fmt.Errorf("invalid Hysteria2 API port: %d", apiPort)
+	}
+	var config map[string]json.RawMessage
+	var auth map[string]json.RawMessage
+	var httpAuth map[string]json.RawMessage
+	if err := json.Unmarshal(content, &config); err != nil {
+		return err
+	}
+	if err := json.Unmarshal(config["auth"], &auth); err != nil {
+		return err
+	}
+	if err := json.Unmarshal(auth["http"], &httpAuth); err != nil || httpAuth == nil {
+		return errors.New("Hysteria2 configuration is missing HTTP authentication")
+	}
+	expected, err := json.Marshal(hysteria2AuthURL(apiPort - 30000))
+	if err != nil {
+		return err
+	}
+	if string(httpAuth["url"]) == string(expected) {
+		return nil
+	}
+	httpAuth["url"] = expected
+	auth["http"], err = json.Marshal(httpAuth)
+	if err != nil {
+		return err
+	}
+	config["auth"], err = json.Marshal(auth)
+	if err != nil {
+		return err
+	}
+	content, err = json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return err
+	}
+	file, err := os.CreateTemp(filepath.Dir(path), ".hysteria2-auth-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(file.Name())
+	_, writeErr := file.Write(content)
+	if err := errors.Join(writeErr, file.Close()); err != nil {
+		return err
+	}
+	return os.Rename(file.Name(), path)
 }
 
 func initHysteria2(hysteria2ConfigDto dto.Hysteria2ConfigDto) error {
@@ -91,7 +153,7 @@ func initHysteria2(hysteria2ConfigDto dto.Hysteria2ConfigDto) error {
   "auth": {
     "type": "http",
     "http": {
-      "url": "http://127.0.0.1:${server_port}/api/auth/hysteria2",
+      "url": "${auth_url}",
       "insecure": true
     }
   },
@@ -104,7 +166,7 @@ func initHysteria2(hysteria2ConfigDto dto.Hysteria2ConfigDto) error {
 	configContent = strings.ReplaceAll(configContent, "${key_path}", certConfig.KeyPath)
 	configContent = strings.ReplaceAll(configContent, "${up_mbps}", strconv.FormatInt(int64(hysteria2ConfigDto.UpMbps), 10))
 	configContent = strings.ReplaceAll(configContent, "${down_mbps}", strconv.FormatInt(int64(hysteria2ConfigDto.DownMbps), 10))
-	configContent = strings.ReplaceAll(configContent, "${server_port}", strconv.FormatInt(int64(core.Config.ServerConfig.Port), 10))
+	configContent = strings.ReplaceAll(configContent, "${auth_url}", hysteria2AuthURL(hysteria2ConfigDto.Port))
 	configContent = strings.ReplaceAll(configContent, "${api_port}", strconv.FormatInt(int64(hysteria2ConfigDto.ApiPort), 10))
 	if len(hysteria2ConfigDto.ObfsPassword) >= 4 {
 		// set obfs

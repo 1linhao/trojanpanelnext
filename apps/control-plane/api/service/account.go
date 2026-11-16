@@ -59,6 +59,12 @@ func SelectAccountById(id *uint, includeRemark ...bool) (*model.Account, error) 
 	return dao.SelectAccountById(id, includeRemark...)
 }
 
+func UpdateAccountNodeAccess(id uint, access dao.AccountNodeAccess) error {
+	nodeLifecycle.Lock()
+	defer nodeLifecycle.Unlock()
+	return dao.UpdateAccountNodeAccess(id, access)
+}
+
 func CountAccountByUsername(username *string) (int, error) {
 	return dao.CountAccountByUsername(username)
 }

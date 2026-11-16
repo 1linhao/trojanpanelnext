@@ -122,12 +122,14 @@ func SelectNodeById(id *uint) (*vo.NodeOneVo, error) {
 	return nil, errors.New(constant.NodeNotExist)
 }
 func SelectNodeInfo(id *uint, c *gin.Context) (*vo.NodeOneVo, error) {
-
+	accountInfo := GetCurrentAccount(c)
+	if err := dao.RequireAccountNodeAccess(accountInfo.Id, *id); err != nil {
+		return nil, err
+	}
 	nodeOneVo, err := SelectNodeById(id)
 	if err != nil {
 		return nil, err
 	}
-	accountInfo := GetCurrentAccount(c)
 	account, err := dao.SelectAccountByUsername(&accountInfo.Username)
 	if err != nil {
 		return nil, err
@@ -180,6 +182,9 @@ func CreateNode(token string, nodeCreateDto dto.NodeCreateDto) error {
 	}
 	if nodeServer.Removing != nil && *nodeServer.Removing != 0 {
 		return errors.New("node server is being removed; retry removal or repair its connection")
+	}
+	if err := dao.RequireNodeAccessCompatibleServer(*nodeCreateDto.NodeServerId); err != nil {
+		return err
 	}
 
 	systemName := constant.SystemName
@@ -310,7 +315,17 @@ func CreateNode(token string, nodeCreateDto dto.NodeCreateDto) error {
 }
 
 func SelectNodePage(queryName *string, nodeServerId *uint, pageNum *uint, pageSize *uint, c *gin.Context) (*vo.NodePageVo, error) {
-	nodePage, total, err := dao.SelectNodePage(queryName, nodeServerId, pageNum, pageSize)
+	account := GetCurrentAccount(c)
+	access, err := dao.SelectAccountNodeAccess(account.Id)
+	if err != nil {
+		return nil, err
+	}
+	isAdmin := util.IsAdmin(account.Roles)
+	pageAccess := access
+	if isAdmin {
+		pageAccess = dao.AccountNodeAccess{}
+	}
+	nodePage, total, err := dao.SelectNodePage(queryName, nodeServerId, pageNum, pageSize, pageAccess)
 	if err != nil {
 		return nil, err
 	}
@@ -348,8 +363,7 @@ func SelectNodePage(queryName *string, nodeServerId *uint, pageNum *uint, pageSi
 		nodeBos = append(nodeBos, nodeBo)
 	}
 
-	account := GetCurrentAccount(c)
-	if util.IsAdmin(account.Roles) {
+	if isAdmin {
 		token := util.GetToken(c)
 		var nodeMap sync.Map
 		var wg sync.WaitGroup
@@ -393,6 +407,10 @@ func SelectNodePage(queryName *string, nodeServerId *uint, pageNum *uint, pageSi
 	if err != nil {
 		return nil, err
 	}
+	allowedNodes := make(map[uint]bool, len(access.NodeIDs))
+	for _, id := range access.NodeIDs {
+		allowedNodes[id] = true
+	}
 	for _, item := range nodeBos {
 		nodeVo := vo.NodeVo{
 			Id:              item.Id,
@@ -410,6 +428,7 @@ func SelectNodePage(queryName *string, nodeServerId *uint, pageNum *uint, pageSi
 			CreateTime:      item.CreateTime,
 			Status:          item.Status,
 			ServerTraffic:   trafficStatuses[item.NodeServerId],
+			CanConnect:      !access.Restricted || allowedNodes[item.Id],
 		}
 		nodeVos = append(nodeVos, nodeVo)
 	}
@@ -513,6 +532,9 @@ func UpdateNodeById(token string, nodeUpdateDto *dto.NodeUpdateDto) error {
 	}
 	if nodeServer.Removing != nil && *nodeServer.Removing != 0 {
 		return errors.New("node server is being removed")
+	}
+	if err := dao.RequireNodeAccessCompatibleServer(*nodeUpdateDto.NodeServerId); err != nil {
+		return err
 	}
 
 	systemName := constant.SystemName
@@ -784,6 +806,9 @@ func NodeQRCode(accountId *uint, username *string, id *uint) ([]byte, error) {
 // NodeURL
 // xray: https://github.com/XTLS/Xray-core/issues/91
 func NodeURL(accountId *uint, username *string, id *uint) (string, uint, error) {
+	if err := dao.RequireAccountNodeAccess(*accountId, *id); err != nil {
+		return "", 0, err
+	}
 	return nodeURLForClient(accountId, username, id, "")
 }
 

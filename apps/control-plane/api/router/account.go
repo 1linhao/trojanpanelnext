@@ -8,6 +8,8 @@ import (
 func initAccountRouter(trojanApi *gin.RouterGroup) {
 	account := trojanApi.Group("/account")
 	{
+		account.GET("/nodeAccess", api.SelectAccountNodeAccess)
+		account.POST("/nodeAccess", api.UpdateAccountNodeAccess)
 		// 注销
 		account.POST("/logout", api.Logout)
 		// 查询单个账户

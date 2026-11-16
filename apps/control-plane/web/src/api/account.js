@@ -185,6 +185,24 @@ export function resetAccountLoginLimit(data) {
   })
 }
 
+export function selectAccountNodeAccess(id) {
+  return request({
+    url: '/account/nodeAccess',
+    method: 'get',
+    params: { id },
+    silentError: true
+  })
+}
+
+export function updateAccountNodeAccess(data) {
+  return request({
+    url: '/account/nodeAccess',
+    method: 'post',
+    data,
+    silentError: true
+  })
+}
+
 /**
  * 导出用户
  * @param data

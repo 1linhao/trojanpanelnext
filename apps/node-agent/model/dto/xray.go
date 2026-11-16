@@ -15,4 +15,6 @@ type XrayConfigDto struct {
 type XrayAddUserDto struct {
 	Protocol string
 	Password string
+	Flow     string
+	SSMethod string
 }

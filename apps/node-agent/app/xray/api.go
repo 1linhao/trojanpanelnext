@@ -21,7 +21,6 @@ import (
 	"trojan-panel-core/model/constant"
 	"trojan-panel-core/model/dto"
 	"trojan-panel-core/model/vo"
-	"trojan-panel-core/service"
 	"trojan-panel-core/util"
 )
 
@@ -105,57 +104,19 @@ func (x *xrayApi) GetBoundStats(bound string, tag string, link string, reset boo
 	return &statsVo, nil
 }
 
-// GetUserStats query account status
-func (x *xrayApi) GetUserStats(email string, link string, reset bool) (*vo.XrayStatsVo, error) {
-	conn, ctx, clo, err := apiClient(x.apiPort)
-	defer clo()
-	if err != nil {
-		return nil, err
-	}
-	statsServiceClient := statscmd.NewStatsServiceClient(conn)
-	downLinkResponse, err := statsServiceClient.GetStats(ctx, &statscmd.GetStatsRequest{
-		Name:   fmt.Sprintf("user>>>%s>>>traffic>>>%s", email, link),
-		Reset_: reset,
-	})
-	if err != nil {
-		if strings.HasSuffix(err.Error(), "not found.") {
-			return nil, nil
-		}
-		logrus.Errorf("xray GetUserStats err: %v", err)
-		return nil, errors.New(constant.GrpcError)
-	}
-	statsVo := vo.XrayStatsVo{
-		Name:  email,
-		Value: int(downLinkResponse.GetStat().GetValue()),
-	}
-	return &statsVo, nil
-}
-
 // AddUser add user
 func (x *xrayApi) AddUser(dto dto.XrayAddUserDto) error {
-	xrayStatsVo, err := x.GetUserStats(dto.Password, "downlink", false)
-	if err != nil {
-		return err
-	}
-	if xrayStatsVo != nil {
-		return nil
-	}
 	conn, ctx, clo, err := apiClient(x.apiPort)
 	defer clo()
 	if err != nil {
-		return nil
-	}
-
-	nodeConfig, err := service.SelectNodeConfigByNodeTypeIdAndApiPort(x.apiPort, constant.Xray)
-	if err != nil {
-		return nil
+		return err
 	}
 
 	handlerServiceClient := command.NewHandlerServiceClient(conn)
 	switch dto.Protocol {
 	case constant.ProtocolShadowsocks:
 		var cipherType shadowsocks.CipherType
-		switch nodeConfig.XraySSMethod {
+		switch dto.SSMethod {
 		case "aes-128-gcm":
 			cipherType = shadowsocks.CipherType_AES_128_GCM
 		case "aes-256-gcm":
@@ -194,7 +155,7 @@ func (x *xrayApi) AddUser(dto dto.XrayAddUserDto) error {
 						Level: 0,
 						Account: serial.ToTypedMessage(&trojan.Account{
 							Password: dto.Password,
-							Flow:     nodeConfig.XrayFlow,
+							Flow:     dto.Flow,
 						}),
 					},
 				}),
@@ -209,7 +170,7 @@ func (x *xrayApi) AddUser(dto dto.XrayAddUserDto) error {
 						Level: 0,
 						Account: serial.ToTypedMessage(&vless.Account{
 							Id:         util.GenerateUUID(dto.Password),
-							Flow:       nodeConfig.XrayFlow,
+							Flow:       dto.Flow,
 							Encryption: "none",
 						}),
 					},
@@ -230,6 +191,8 @@ func (x *xrayApi) AddUser(dto dto.XrayAddUserDto) error {
 					},
 				}),
 		})
+	default:
+		return errors.New("unsupported Xray account protocol")
 	}
 	if err != nil {
 		if strings.HasSuffix(err.Error(), "already exists.") {
@@ -261,17 +224,10 @@ func (x *xrayApi) RemoveInboundHandler(tag string) error {
 
 // DeleteUser delete user
 func (x *xrayApi) DeleteUser(email string) error {
-	xrayStatsVo, err := x.GetUserStats(email, "downlink", false)
-	if err != nil {
-		return err
-	}
-	if xrayStatsVo == nil {
-		return nil
-	}
 	conn, ctx, clo, err := apiClient(x.apiPort)
 	defer clo()
 	if err != nil {
-		return nil
+		return err
 	}
 	hsClient := command.NewHandlerServiceClient(conn)
 	_, err = hsClient.AlterInbound(ctx, &command.AlterInboundRequest{

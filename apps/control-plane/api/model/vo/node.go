@@ -20,6 +20,7 @@ type NodeVo struct {
 
 	Status        int                   `json:"status"`
 	ServerTraffic ServerTrafficStatusVo `json:"serverTraffic"`
+	CanConnect    bool                  `json:"canConnect"`
 }
 
 type NodePageVo struct {

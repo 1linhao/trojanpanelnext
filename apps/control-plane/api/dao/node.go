@@ -93,7 +93,7 @@ func CreateNode(node *model.Node) error {
 	return tx.Commit()
 }
 
-func SelectNodePage(queryName *string, nodeServerId *uint, pageNum *uint, pageSize *uint) (*[]model.Node, uint, error) {
+func SelectNodePage(queryName *string, nodeServerId *uint, pageNum *uint, pageSize *uint, accesses ...AccountNodeAccess) (*[]model.Node, uint, error) {
 	var (
 		total uint
 		nodes []model.Node
@@ -108,6 +108,9 @@ func SelectNodePage(queryName *string, nodeServerId *uint, pageNum *uint, pageSi
 	}
 	if nodeServerId != nil && *nodeServerId != 0 {
 		whereCount["node_server_id"] = *nodeServerId
+	}
+	if !filterAccountNodes(whereCount, accesses) {
+		return &nodes, 0, nil
 	}
 	selectFieldsCount := []string{"count(1)"}
 	buildSelect, values, err := builder.BuildSelect("node", whereCount, selectFieldsCount)
@@ -131,6 +134,7 @@ func SelectNodePage(queryName *string, nodeServerId *uint, pageNum *uint, pageSi
 	if nodeServerId != nil && *nodeServerId != 0 {
 		where["node_server_id"] = *nodeServerId
 	}
+	filterAccountNodes(where, accesses)
 	selectFields := []string{"id", "node_server_id", "`node_sub_id`", "node_type_id", "name", "node_server_ip", "node_server_grpc_port", "domain", "port", "external_port", "priority", "client_types", "naive_uot_enable", "naive_uot_version", "create_time"}
 	selectSQL, values, err := builder.BuildSelect("node", where, selectFields)
 	if err != nil {
@@ -310,12 +314,15 @@ func CountNodeByNameAndNodeServerId(id *uint, queryName *string, nodeServerId *u
 	return count, nil
 }
 
-func SelectNodes() ([]model.Node, error) {
+func SelectNodes(accesses ...AccountNodeAccess) ([]model.Node, error) {
 	var nodes []model.Node
 
 	where := map[string]interface{}{
 		"node_type_id not in": []uint{constant.TrojanGo, constant.Hysteria},
 		"_orderby":            "priority desc,create_time desc"}
+	if !filterAccountNodes(where, accesses) {
+		return nodes, nil
+	}
 	buildSelect, values, err := builder.BuildSelect("node", where, []string{
 		"id", "node_sub_id", "node_type_id", "name", "domain", "port", "external_port", "client_types", "naive_uot_enable", "naive_uot_version"})
 	if err != nil {
@@ -334,6 +341,17 @@ func SelectNodes() ([]model.Node, error) {
 		return nodes, errors.New(constant.SysError)
 	}
 	return nodes, nil
+}
+
+func filterAccountNodes(where map[string]interface{}, accesses []AccountNodeAccess) bool {
+	if len(accesses) == 0 || !accesses[0].Restricted {
+		return true
+	}
+	if len(accesses[0].NodeIDs) == 0 {
+		return false
+	}
+	where["id in"] = accesses[0].NodeIDs
+	return true
 }
 
 func SelectNodesIpGrpcPortDistinct() ([]model.Node, error) {

@@ -170,6 +170,16 @@
                     v-if="checkPermission(['sysadmin'])"
                     class="icon-btn"
                     type="button"
+                    :title="$t('accountNodeAccess.action')"
+                    :aria-label="$t('accountNodeAccess.action')"
+                    @click="nodeAccessAccount = row"
+                  >
+                    <app-icon name="node" />
+                  </button>
+                  <button
+                    v-if="checkPermission(['sysadmin'])"
+                    class="icon-btn"
+                    type="button"
                     :title="$t('table.resetAccountTraffic')"
                     :aria-label="$t('table.resetAccountTraffic')"
                     @click="handleReset(row)"
@@ -304,6 +314,11 @@
         </liquid-button>
       </div>
     </ui-dialog>
+    <AccountNodeAccess
+      v-if="nodeAccessAccount && canViewRemarks"
+      :account="nodeAccessAccount"
+      @close="nodeAccessAccount = null"
+    />
     <import-tip
       ref="importTip"
       :dialog-form-visible.sync="importVisible"
@@ -344,6 +359,7 @@ import checkPermission from '@/utils/permission'
 import { setting } from '@/api/system'
 import { downloadTemplate } from '@/api/file-task'
 import BatchOperation from '@/views/account/list/compoments/BatchOperation'
+import AccountNodeAccess from '@/views/account/list/compoments/AccountNodeAccess'
 import copy from 'copy-to-clipboard'
 
 export default {
@@ -357,7 +373,7 @@ export default {
       return deletedMap[deleted]
     }
   },
-  components: { BatchOperation, Pagination, ImportTip },
+  components: { AccountNodeAccess, BatchOperation, Pagination, ImportTip },
   mixins: [latestListRequest],
   data() {
     const validateUsername = (rule, value, callback) => {
@@ -594,6 +610,7 @@ export default {
         ]
       },
       dialogStatus: '',
+      nodeAccessAccount: null,
       roleList: []
     }
   },
@@ -611,6 +628,7 @@ export default {
       if (Array.isArray(this.list)) this.list = this.list.map(this.accountForRole)
       this.$delete(this.temp, 'remark')
       this.dialogFormVisible = false
+      this.nodeAccessAccount = null
     }
   },
   methods: {

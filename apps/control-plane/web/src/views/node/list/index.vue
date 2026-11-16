@@ -76,6 +76,9 @@
               row.xrayProtocol || nodeTypeFind(nodeTypes, row.nodeTypeId)
             }}</span>
             <span class="chip info">优先级 {{ row.priority }}</span>
+            <span v-if="row.canConnect === false" class="chip plain">
+              {{ $t('accountNodeAccess.unavailable') }}
+            </span>
             <span
               v-if="checkPermission(['sysadmin', 'admin'])"
               class="chip"
@@ -118,6 +121,7 @@
               }}</span
             >
             <button
+              v-if="row.canConnect !== false"
               class="cap small"
               type="button"
               @click="handlePrototypeDetail(row)"
@@ -145,7 +149,7 @@
           </div>
         </ui-panel>
         <ui-sheet
-          v-if="detailId === row.id"
+          v-if="row.canConnect !== false && detailId === row.id"
           :key="'detail-' + row.id"
           class="node-detail"
           motion-role="shared"
