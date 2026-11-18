@@ -8,7 +8,7 @@ TrojanPanel Next 是支持 Xray、Hysteria2 和 NaiveProxy 的多用户代理管
 
 ## 使用入口
 
-- [快速安装：Web → 下载 Node 资源包 → 安装 Node](#quick-install)
+- [快速安装：双机分开或单机一体](#quick-install)
 - [配置文件部署（备选）](#configuration-alternative)
 - [更新产品镜像](#product-update)
 - [卸载项目与依赖](#project-removal)
@@ -17,84 +17,91 @@ TrojanPanel Next 是支持 Xray、Hysteria2 和 NaiveProxy 的多用户代理管
 <a id="quick-install"></a>
 ## 快速安装
 
-按以下顺序部署：**准备 Web → 登录管理页面 → 登记服务器并下载 Node 部署资源包 → 在 Node 安装 → 创建代理**。
-
-### 1. 在 Web 主机准备依赖
-
-在 **root Bash 会话**执行。自动依赖安装支持 Debian 12/13、Ubuntu 22.04/24.04 的 amd64/arm64 主机，需要运行 systemd。
-
-```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.13/scripts/tp.sh) deps install
-```
-
-入口需要 Bash、curl、CA 证书、grep 和 coreutils；`deps` 还需要 util-linux 提供的 `flock`。缺少工具时先按[最小引导说明](docs/deployment.md#dependency-bootstrap)准备，其他 Linux 按[软件依赖](docs/deployment.md#dependency-manual)手动安装。准备 Web 域名解析和[网络访问](docs/deployment.md#network)。
-
-### 2. 安装 Web 并登录
-
-```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.13/scripts/tp.sh) web
-```
-
-按提示填写 Web 域名和证书邮箱。完成后访问该 HTTPS 域名，使用初始账户 `sysadmin` / `123456` 登录并修改密码。
-
-### 3. 在服务器管理登记 Node
-
-以系统管理员（`sysadmin` 角色）打开左侧 **服务器管理**，点击 **新增 Node 服务器**，填写服务器名称、Web 可连接的 Node IP / 域名、gRPC 端口（默认 `8100`）和被 Node 证书覆盖的 gRPC 证书域名。流量限制可保持默认。
-
-保存后，Web 自动生成 **大于或等于 `1` 的数值服务器 ID**，并打开 **部署 Node** 引导。ID 与 IP / 域名是两个字段；资源包自动使用正确 ID。已有服务器可点击该行的 **部署 Node** 图标重新打开引导，详见[登记节点服务器](docs/deployment.md#node-registration)。
-
-### 4. 选择证书方式并下载 Node 资源包
-
-在 **部署参数** 中选择证书方式：
-
-- **Caddy 自动签发与续签**：填写证书联系邮箱，并为 Node 证书域名准备解析和 ACME 验证端口。
-- **使用宿主机现有证书**：填写目标 Node 上已有完整证书链（fullchain）及匹配的未加密私钥绝对路径，由宿主机工具续签；此模式不要求邮箱。
-
-确认预填的 **Node 可连接的 Web 地址**，必要时调整为 Node 可访问的域名或 IP，不含协议、端口或路径。同时检查显示的数据库和 Redis 地址。点击 **下一步**，在 **下载与安装** 中点击 **下载部署包**。
-
-下载文件名为 `tpnext-node-<服务器 ID>.tar.gz`，包含：
-
-| 文件 | 用途 |
+| 你准备了什么 | 选哪种 |
 | --- | --- |
-| `tpnext/node.yaml` | 已填真实服务器 ID、Web 数据库 / Redis 连接参数与凭据的 Node 配置 |
-| `tpnext/client-ca.crt` | Web 当前公开客户端 CA |
-| `tpnext/install-dependencies.sh` | 准备部署依赖（脚本权限 `0700`） |
-| `tpnext/install-node.sh` | 准备公开 CA 并执行匹配版本的安装（脚本权限 `0700`） |
-| `tpnext/README.md` | 资源包使用说明 |
+| 两台 VPS，分别运行 Web 和 Node，两个域名分别解析到各自 VPS | [方式 A · 双机分开](#quick-install-separate) |
+| 一台 VPS 同时运行 Web 和 Node，两个域名解析到同一台 VPS，且 Node 域名已有宿主机证书 | [方式 B · 单机一体](#quick-install-colocated) |
 
-按此流程无需手工编辑 ID、数据库密码或复制 CA 文件。外部证书和私钥仍需在 Node 主机预先准备。资源包和 YAML 含敏感凭据，应保存为 **`0600`**，仅安全传输到目标 Node，不提交公开仓库；包不含 Web 私钥或 Node TLS 私钥。完整说明见[资源包安装](docs/deployment.md#node-deployment-package)。
+两种方式都先安装 Web，然后从面板下载 Node 部署包。示例域名 `panel.example.com` 和 `node.example.com` 请换成自己的域名。下方命令用于全新安装，请在运行 systemd 的 Debian 12/13 或 Ubuntu 22.04/24.04（amd64/arm64）上，用 **root Bash** 执行。其他 Linux 可按完整指南安装。 [手动依赖](docs/deployment.md#dependency-manual)
 
-### 5. 将资源包传到 Node 并安装
+### 先安装 Web
 
-在 Node 的 **root Bash 会话**先按[最小引导说明](docs/deployment.md#dependency-bootstrap)准备基础工具，并确认 systemd 正在运行。将资源包安全传到 Node 的私有工作目录；以下以服务器 ID `3` 的文件为例，按实际下载名称替换：
+在 **Web VPS** 上将面板域名解析到公网 IP，开放 TCP `80`、`443`，然后粘贴整段命令。登录普通 SSH 账号时，先执行 `sudo -i` 进入 root 会话。
 
 ```bash
-umask 077
-chmod 600 ./tpnext-node-3.tar.gz
-tar -xzf ./tpnext-node-3.tar.gz
+apt-get update &&
+apt-get install -y bash curl ca-certificates grep coreutils util-linux tar gzip &&
+install -d -m 700 /root/tpnext-web &&
+cd /root/tpnext-web &&
+umask 077 &&
+curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.13/scripts/tp.sh -o ./tp.sh &&
+bash ./tp.sh deps install &&
+bash ./tp.sh web
 ```
 
-解压后五个文件位于 `tpnext/` 目录（权限 `0700`）。先运行包内依赖入口：
+安装器会提示填写面板域名和证书联系邮箱。随后打开对应的 HTTPS 地址，以 `sysadmin` / `123456` 登录并修改密码。保留 `/root/tpnext-web/web.yaml`，后续更新和卸载会用到。
+
+上传 Node 部署包前，在运行 Node 的 VPS 上用 SSH 登录账号执行 `install -d -m 700 "$HOME/tpnext-node"`。用 SFTP 将文件上传到该目录，记下绝对路径。切换到 root Bash 后，用 `cd` 进入该目录。每台 Node 的部署包使用单独的解压目录。
+
+<a id="quick-install-separate"></a>
+### 方式 A · 双机分开
+
+1. 把 Node 域名解析到 **Node VPS** 的公网 IP。Node 使用 Caddy 自动签证时，开放 Node 的公网 TCP `80`。Web 的 TCP `9507`、`6378` 仅允许 Node 访问，Node 的 TCP `8100`、`8101` 仅允许 Web 访问。在 VPS 防火墙或安全组里按来源配置。 [网络要求](docs/deployment.md#network)
+2. 在面板打开 **服务器管理 → 新增 Node 服务器**。名称自定，**IP / 域名**填 Web 能访问的 Node 地址，**gRPC 端口**填 `8100`，**gRPC 证书域名**填 Node 域名。
+3. 保存后进入 **部署 Node**。证书选 **Caddy 自动签发与续签** 并填邮箱，**Node 可连接的 Web 地址**填 Node 能访问的 Web 域名或私网 IP。确认数据库和 Redis 地址，点击 **下一步 → 下载部署包**。
+4. 用 SSH 客户端的 SFTP 功能把下载的 `tpnext-node-*.tar.gz` 上传到 **Node VPS** 的私有目录。进入该目录并用 root Bash 粘贴下面整段，按提示输入实际文件名。
 
 ```bash
-bash ./tpnext/install-dependencies.sh
+(
+  set -e
+  umask 077
+  read -r -p '请输入已上传的部署包文件名 > ' bundle
+  [[ "$bundle" == tpnext-node-*.tar.gz && -f "$bundle" ]] ||
+    { printf '%s\n' '未找到部署包，请检查当前目录和文件名。' >&2; exit 1; }
+  chmod 600 -- "$bundle"
+  apt-get update
+  apt-get install -y bash curl ca-certificates grep coreutils util-linux tar gzip
+  tar -xzf "$bundle"
+  bash ./tpnext/install-dependencies.sh
+  bash ./tpnext/install-node.sh
+)
 ```
 
-它通过资源包对应版本的 `deps install` 准备 Docker、mikefarah/yq v4、OpenSSL 等部署依赖，复用已有兼容工具和依赖管理记录；此步骤不安装 Node，也不读取含凭据的配置。自动依赖安装支持 Debian 12/13、Ubuntu 22.04/24.04（amd64/arm64）。其他 Linux 按[手动依赖说明](docs/deployment.md#dependency-manual)准备后跳过此步骤。
+<a id="quick-install-colocated"></a>
+### 方式 B · 单机一体，也可再接外部 Node
 
-再运行安装入口：
+Web 和 Node 都运行在 **同一台 VPS**。Node 使用已存在且可续期的证书，避免两套 Caddy 同时占用 TCP `80`。提前把 Node 域名的完整证书链和匹配的未加密私钥放在宿主机专用目录，例如由 Certbot 管理的 `/etc/letsencrypt/live/node.example.com/`。续签由宿主机证书工具负责。 [Node 外部证书](docs/deployment.md#external-certificates)
+
+1. 在面板打开 **服务器管理 → 新增 Node 服务器**。名称可填「本机 Node」，**IP / 域名**填 `127.0.0.1`，**gRPC 端口**填 `8100`，**gRPC 证书域名**填证书覆盖的 Node 域名。
+2. 在 **部署 Node** 中选 **使用宿主机现有证书**，填当前 VPS 上的完整证书链和私钥的绝对路径。**Node 可连接的 Web 地址**保留面板域名，点 **下一步 → 下载部署包**。下面的命令会把包内数据库和 Redis 地址改为回环地址，并为 Node 设置单独的 CA 信任目录。
+3. 把部署包上传回这台 **Web VPS** 的另一个私有目录。在该目录用 root Bash 粘贴整段命令，按提示输入实际文件名。Web 安装步骤已经准备好 Docker 和 yq。
 
 ```bash
-bash ./tpnext/install-node.sh
+(
+  set -e
+  umask 077
+  read -r -p '请输入已上传的部署包文件名 > ' bundle
+  [[ "$bundle" == tpnext-node-*.tar.gz && -f "$bundle" ]] ||
+    { printf '%s\n' '未找到部署包，请检查当前目录和文件名。' >&2; exit 1; }
+  chmod 600 -- "$bundle"
+  tar -xzf "$bundle"
+  yq -i '
+    .trojanpanelnext.mariadb_host = "127.0.0.1" |
+    .trojanpanelnext.redis_host = "127.0.0.1" |
+    .trojanpanelnext.pki_bundle_dir = "/tpdata/trojan-panel-core/pki-bootstrap"
+  ' ./tpnext/node.yaml
+  chmod 600 -- ./tpnext/node.yaml
+  bash ./tpnext/install-node.sh
+)
 ```
 
-入口会验证版本和配置，再按 `tpnext/node.yaml` 安装，并使用包内当前 Web 的公开 CA 初始化或重新绑定管理信任。替换前会校验 CA 并备份旧信任文件；已有服务不会被强制重建。长期保留该 YAML，供[更新](docs/deployment.md#updates)和[卸载](docs/deployment.md#removal)使用。
+以后接入其他 VPS 时，继续在同一个面板新增服务器，为每台远程 Node 单独执行[方式 A](#quick-install-separate)。按需把 Web 的数据库和 Redis 端口仅开放给这些远程 Node。同机的 `8100`、`8101` 保持仅本机可访问。
 
-### 6. 返回 Web 创建代理节点
+### 验证安装
 
-在 **服务器管理** 检查 Node 在线，再进入 **节点管理** 创建所需代理。Node 安装前显示离线是正常状态。数据库、Redis、gRPC 和维护端口须按配置连通，详见[网络要求](docs/deployment.md#network)。
+在 **服务器管理** 确认 Node 在线，再进入 **节点管理** 创建代理。代理域名填客户端能访问的 **Node 公网域名**，按代理协议开放对应的 TCP 或 UDP 端口，然后导出订阅或连接信息，在客户端连接验证。 [代理端口与转发](docs/port-forwarding.md)
 
-代理位于 Nginx 或 NAT 后时，可开启 **端口转发**：对外端口用于订阅和客户端，实际端口用于 Node 监听。实际转发由管理员配置；TCP SNI 透传、证书和 Hysteria2 UDP 的要求见[端口转发指南](docs/port-forwarding.md)。
+部署包会自动带入服务器 ID、数据库与 Redis 凭据和 Web 公开 CA。将部署包和 `tpnext/node.yaml` 保存在管理员私有目录并保持 `0600` 权限。保留原 YAML 用于[更新](docs/deployment.md#updates)和[卸载](docs/deployment.md#removal)。
 
 <a id="configuration-alternative"></a>
 ## 配置文件部署（备选）

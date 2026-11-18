@@ -8,7 +8,7 @@ Current pre-release: **v1.0.2-rc.13 (Pre-release)**. Deployment uses GHCR images
 
 ## Start here
 
-- [Quick installation: Web → download the Node package → install Node](#quick-install)
+- [Quick installation on one or two servers](#quick-install)
 - [Configuration deployment (alternative)](#configuration-alternative)
 - [Update product images](#product-update)
 - [Remove the project and dependencies](#project-removal)
@@ -17,84 +17,91 @@ Current pre-release: **v1.0.2-rc.13 (Pre-release)**. Deployment uses GHCR images
 <a id="quick-install"></a>
 ## Quick installation
 
-Follow this order: **prepare Web → sign in → register a server and download its Node package → install on Node → create proxies**.
-
-### 1. Prepare dependencies on Web
-
-Run in a **root Bash session**. Automatic dependency installation supports amd64/arm64 hosts running Debian 12/13 or Ubuntu 22.04/24.04 with systemd.
-
-```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.13/scripts/tp.sh) deps install
-```
-
-The entrypoint needs Bash, curl, CA certificates, grep, and coreutils; `deps` also needs `flock` from util-linux. Follow the [minimal bootstrap instructions](docs/deployment_EN.md#dependency-bootstrap) if tools are missing, or [prepare dependencies manually](docs/deployment_EN.md#dependency-manual) on other Linux distributions. Prepare Web DNS and [network access](docs/deployment_EN.md#network).
-
-### 2. Install Web and sign in
-
-```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.13/scripts/tp.sh) web
-```
-
-Enter the Web domain and certificate email when prompted. Visit that HTTPS domain after installation, sign in with the initial account `sysadmin` / `123456`, and change its password.
-
-### 3. Register Node in Server management
-
-With the `sysadmin` role, open **Server management** in the sidebar and click **Add Node server**. Enter the server name, Node IP / domain reachable from Web, gRPC port (default `8100`), and gRPC certificate domain covered by Node's certificate. Traffic limits can retain their defaults.
-
-Saving assigns a **numeric server ID greater than or equal to `1`** and automatically opens **Deploy Node**. ID and IP / domain are separate fields; the package uses the correct ID automatically. For an existing server, click its **Deploy Node** icon to reopen the guide. See [server registration](docs/deployment_EN.md#node-registration).
-
-### 4. Select certificates and download the Node package
-
-In **Deployment parameters**, select a certificate mode:
-
-- **Caddy automatic issuance and renewal**: enter the certificate contact email and prepare DNS and ACME validation ports for the Node certificate domain.
-- **Existing host certificates**: enter absolute paths to a full chain and matching unencrypted private key already present on Node. Host tools renew these certificates; this mode does not require email.
-
-Confirm the prefilled **Web address reachable from Node**, changing it if necessary to a hostname or IP Node can reach, without protocol, port, or path. Check the displayed database and Redis addresses. Click **Next**, then **Download deployment package** under **Download and install**.
-
-The filename is `tpnext-node-<server ID>.tar.gz`, containing:
-
-| File | Purpose |
+| What you have | Choose |
 | --- | --- |
-| `tpnext/node.yaml` | Node configuration with the actual server ID, Web database / Redis connections, and credentials |
-| `tpnext/client-ca.crt` | Web's current public client CA |
-| `tpnext/install-dependencies.sh` | Prepare deployment dependencies (script mode `0700`) |
-| `tpnext/install-node.sh` | Prepare the public CA and invoke matching-release installation (script mode `0700`) |
-| `tpnext/README.md` | Package instructions |
+| Two VPSs, one for Web and one for Node, with a domain pointing to each | [Option A · Separate servers](#quick-install-separate) |
+| One VPS for both Web and Node, with two domains pointing to it and an existing host certificate for the Node domain | [Option B · One server](#quick-install-colocated) |
 
-This flow requires no manual ID or database-password editing or separate CA copy. Prepare external certificates and keys on Node beforehand. Packages and YAML contain sensitive credentials: save them with **`0600`** permissions, transfer them securely only to the target Node, and never commit them publicly. Packages contain no Web private key or Node TLS private key. See [package installation](docs/deployment_EN.md#node-deployment-package).
+For either option, install Web first and download the Node deployment package from the panel. Replace `panel.example.com` and `node.example.com` with your domains. These commands are for a fresh installation in **root Bash** on Debian 12/13 or Ubuntu 22.04/24.04 (amd64 or arm64) running systemd. Follow the full guide for other Linux distributions. [Manual dependencies](docs/deployment_EN.md#dependency-manual)
 
-### 5. Transfer the package to Node and install
+### Install Web first
 
-In a **root Bash session** on Node, prepare basic tools using the [minimal bootstrap instructions](docs/deployment_EN.md#dependency-bootstrap) and confirm systemd is running. Securely transfer the package to a private working directory on Node. The example uses server ID `3`; replace the filename with the actual download:
+Point the panel domain at the **Web VPS** public IP and allow TCP `80` and `443`. If you signed in over SSH as a regular user, run `sudo -i` first. Paste the entire block into a root Bash session on that VPS.
 
 ```bash
-umask 077
-chmod 600 ./tpnext-node-3.tar.gz
-tar -xzf ./tpnext-node-3.tar.gz
+apt-get update &&
+apt-get install -y bash curl ca-certificates grep coreutils util-linux tar gzip &&
+install -d -m 700 /root/tpnext-web &&
+cd /root/tpnext-web &&
+umask 077 &&
+curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.13/scripts/tp.sh -o ./tp.sh &&
+bash ./tp.sh deps install &&
+bash ./tp.sh web
 ```
 
-The five files extract into `tpnext/` (mode `0700`). Run the included dependency entrypoint first:
+Enter the panel domain and certificate contact email when prompted. Open the HTTPS address, sign in with `sysadmin` / `123456`, and change the password. Keep `/root/tpnext-web/web.yaml` for updates and removal.
+
+Before uploading the Node deployment package, SSH into the VPS that will run Node and run `install -d -m 700 "$HOME/tpnext-node"` under your SSH account. Upload the file there with SFTP and note the absolute path. After switching to root Bash, use `cd` to enter that directory. Use a separate extraction directory for each Node package.
+
+<a id="quick-install-separate"></a>
+### Option A · Separate servers
+
+1. Point the Node domain at the **Node VPS** public IP. Allow public TCP `80` on Node for Caddy certificate issuance. On Web, allow TCP `9507` and `6378` from Node only. On Node, allow TCP `8100` and `8101` from Web only. Configure these source restrictions in your VPS firewall or security group. [Network requirements](docs/deployment_EN.md#network)
+2. In the panel, open **Server management → Add Node server**. Enter a name, put the Node address reachable from Web in **IP / domain**, set **gRPC port** to `8100`, and enter the Node domain under **gRPC certificate domain**.
+3. In **Deploy Node**, choose **Caddy automatic issuance and renewal** and enter the certificate email. For **Web address reachable from Node**, use a Web domain or private IP that Node can reach. Confirm the database and Redis addresses and select **Next → Download package**.
+4. Use your SSH client's SFTP feature to upload the downloaded `tpnext-node-*.tar.gz` into a private directory on the **Node VPS**. Enter that directory in root Bash, paste this block, and enter the exact filename when prompted.
 
 ```bash
-bash ./tpnext/install-dependencies.sh
+(
+  set -e
+  umask 077
+  read -r -p 'Enter the uploaded package filename > ' bundle
+  [[ "$bundle" == tpnext-node-*.tar.gz && -f "$bundle" ]] ||
+    { printf '%s\n' 'Package not found. Check the current directory and filename.' >&2; exit 1; }
+  chmod 600 -- "$bundle"
+  apt-get update
+  apt-get install -y bash curl ca-certificates grep coreutils util-linux tar gzip
+  tar -xzf "$bundle"
+  bash ./tpnext/install-dependencies.sh
+  bash ./tpnext/install-node.sh
+)
 ```
 
-It invokes the package release's `deps install` to prepare Docker, mikefarah/yq v4, OpenSSL, and other deployment dependencies, reusing compatible tools and dependency management records. This step does not install Node or read credential-bearing configuration. Automatic installation supports Debian 12/13 and Ubuntu 22.04/24.04 on amd64/arm64. On other Linux distributions, [prepare dependencies manually](docs/deployment_EN.md#dependency-manual) and skip this step.
+<a id="quick-install-colocated"></a>
+### Option B · One server, with room to add remote Nodes
 
-Then run the installation entrypoint:
+Web and Node both run on the **same VPS**. Use an existing, renewable host certificate for Node to avoid a conflict on TCP `80` with Web Caddy. Prepare a full chain and matching unencrypted private key for the Node domain in a dedicated host directory, such as `/etc/letsencrypt/live/node.example.com/` when using Certbot. The host certificate tool handles renewal. [External Node certificates](docs/deployment_EN.md#external-certificates)
+
+1. In **Server management → Add Node server**, enter a name such as “Local Node”. Set **IP / domain** to `127.0.0.1`, **gRPC port** to `8100`, and **gRPC certificate domain** to the Node domain covered by the certificate.
+2. In **Deploy Node**, choose **Existing host certificates** and enter the absolute paths to the full chain and key on this VPS. Keep the panel domain under **Web address reachable from Node** and choose **Next → Download package**. The command below configures loopback addresses for the database and Redis and gives Node a separate CA trust directory.
+3. Upload the package to a separate private directory on the **Web VPS**. Enter that directory in root Bash, paste this block, and enter the exact filename when prompted. The Web installation has already prepared Docker and yq.
 
 ```bash
-bash ./tpnext/install-node.sh
+(
+  set -e
+  umask 077
+  read -r -p 'Enter the uploaded package filename > ' bundle
+  [[ "$bundle" == tpnext-node-*.tar.gz && -f "$bundle" ]] ||
+    { printf '%s\n' 'Package not found. Check the current directory and filename.' >&2; exit 1; }
+  chmod 600 -- "$bundle"
+  tar -xzf "$bundle"
+  yq -i '
+    .trojanpanelnext.mariadb_host = "127.0.0.1" |
+    .trojanpanelnext.redis_host = "127.0.0.1" |
+    .trojanpanelnext.pki_bundle_dir = "/tpdata/trojan-panel-core/pki-bootstrap"
+  ' ./tpnext/node.yaml
+  chmod 600 -- ./tpnext/node.yaml
+  bash ./tpnext/install-node.sh
+)
 ```
 
-The entrypoint validates the release and configuration, installs using `tpnext/node.yaml`, and initializes or rebinds management trust to the current Web public CA included in the package. It validates the CA and backs up replaced trust files; existing services are not forcibly recreated. Retain this YAML for future [updates](docs/deployment_EN.md#updates) and [removal](docs/deployment_EN.md#removal).
+To add another VPS later, register it in the same panel and follow [Option A](#quick-install-separate) for each remote Node. Open Web's database and Redis ports only to those remote Nodes as needed. Keep the colocated Node's ports `8100` and `8101` reachable only from the same host.
 
-### 6. Return to Web and create proxies
+### Verify the installation
 
-Check Node is online in **Server management**, then create proxies in **Node management**. Offline status is expected before Node installation. Database, Redis, gRPC, and maintenance ports must be reachable according to the configuration; see [network requirements](docs/deployment_EN.md#network).
+Check that Node is online in **Server management**, then create a proxy in **Node management**. Use the **public Node domain** for the proxy. Open its TCP or UDP port as required by the protocol, then export the subscription or connection details and connect from a client. [Proxy ports and forwarding](docs/port-forwarding_EN.md)
 
-For a proxy behind Nginx or NAT, enable **Port forwarding**: the external port appears in subscriptions/client configuration, while Node listens on the actual port. Administrators configure forwarding separately. See [port forwarding](docs/port-forwarding_EN.md) for TCP SNI passthrough, certificates, and Hysteria2 UDP.
+The deployment package includes the server ID, database and Redis credentials, and the Web public CA. Store the archive and `tpnext/node.yaml` privately at mode `0600`. Keep the original YAML for [updates](docs/deployment_EN.md#updates) and [removal](docs/deployment_EN.md#removal).
 
 <a id="configuration-alternative"></a>
 ## Configuration deployment (alternative)
