@@ -14,6 +14,7 @@ import (
 	"trojan-panel/model/constant"
 	"trojan-panel/model/vo"
 	"trojan-panel/service/clientcompat"
+	"trojan-panel/service/clientrouting"
 	"trojan-panel/util"
 )
 
@@ -40,6 +41,11 @@ func SubscribeClash(pass string) (*model.Account, string, []byte, vo.SystemVo, e
 		*account.Quota,
 		*account.ExpireTime/1000)
 
+	snapshot, err := loadRoutingProfile("default")
+	if err != nil {
+		return nil, "", nil, vo.SystemVo{}, err
+	}
+	var members []clientrouting.Member
 	clashConfig := bo.ClashConfig{}
 	var ClashConfigInterface []interface{}
 	var proxies []string
@@ -47,6 +53,11 @@ func SubscribeClash(pass string) (*model.Account, string, []byte, vo.SystemVo, e
 		if !clientcompat.Includes(item.ClientTypes, constant.ClientClashMeta) {
 			continue
 		}
+		if snapshot != nil {
+			tag := clientrouting.NodeTag(*item.Id, *item.Name)
+			item.Name = &tag
+		}
+		before := len(ClashConfigInterface)
 		if *item.NodeTypeId == constant.Xray {
 			nodeXray, err := dao.SelectNodeXrayById(item.NodeSubId)
 			if err != nil {
@@ -109,7 +120,6 @@ func SubscribeClash(pass string) (*model.Account, string, []byte, vo.SystemVo, e
 					vless.Smux = &bo.Smux{Enabled: true, Protocol: "h2mux"}
 				}
 				ClashConfigInterface = append(ClashConfigInterface, vless)
-				proxies = append(proxies, *item.Name)
 			case constant.ProtocolVmess:
 				vmess := bo.Vmess{
 					Name:    *item.Name,
@@ -147,7 +157,6 @@ func SubscribeClash(pass string) (*model.Account, string, []byte, vo.SystemVo, e
 					vmess.Smux = &bo.Smux{Enabled: true, Protocol: "h2mux"}
 				}
 				ClashConfigInterface = append(ClashConfigInterface, vmess)
-				proxies = append(proxies, *item.Name)
 			case constant.ProtocolTrojan:
 				trojan := bo.Trojan{
 					Name:     *item.Name,
@@ -174,7 +183,6 @@ func SubscribeClash(pass string) (*model.Account, string, []byte, vo.SystemVo, e
 					trojan.Smux = &bo.Smux{Enabled: true, Protocol: "h2mux"}
 				}
 				ClashConfigInterface = append(ClashConfigInterface, trojan)
-				proxies = append(proxies, *item.Name)
 			case constant.ProtocolShadowsocks:
 				shadowsocks := bo.Shadowsocks{
 					Name:     *item.Name,
@@ -190,7 +198,6 @@ func SubscribeClash(pass string) (*model.Account, string, []byte, vo.SystemVo, e
 					shadowsocks.UdpOverTcpVersion = xrayUotVersion(nodeXray.UotVersion)
 				}
 				ClashConfigInterface = append(ClashConfigInterface, shadowsocks)
-				proxies = append(proxies, *item.Name)
 			case constant.ProtocolSocks:
 				socks := bo.Socks{
 					Name:     *item.Name,
@@ -209,7 +216,6 @@ func SubscribeClash(pass string) (*model.Account, string, []byte, vo.SystemVo, e
 					socks.SkipCertVerify = false
 				}
 				ClashConfigInterface = append(ClashConfigInterface, socks)
-				proxies = append(proxies, *item.Name)
 			}
 		} else if *item.NodeTypeId == constant.TrojanGo {
 			nodeTrojanGo, err := dao.SelectNodeTrojanGoById(item.NodeSubId)
@@ -231,7 +237,6 @@ func SubscribeClash(pass string) (*model.Account, string, []byte, vo.SystemVo, e
 				trojanGo.WsOpts.Headers.Host = *nodeTrojanGo.WebsocketHost
 			}
 			ClashConfigInterface = append(ClashConfigInterface, trojanGo)
-			proxies = append(proxies, *item.Name)
 		} else if *item.NodeTypeId == constant.Hysteria {
 			nodeHysteria, err := dao.SelectNodeHysteriaById(item.NodeSubId)
 			if err != nil {
@@ -252,7 +257,6 @@ func SubscribeClash(pass string) (*model.Account, string, []byte, vo.SystemVo, e
 				FastOpen:       *nodeHysteria.FastOpen == 1,
 			}
 			ClashConfigInterface = append(ClashConfigInterface, hysteria)
-			proxies = append(proxies, *item.Name)
 		} else if *item.NodeTypeId == constant.Hysteria2 {
 			nodeHysteria2, err := dao.SelectNodeHysteria2ById(item.NodeSubId)
 			if err != nil {
@@ -280,8 +284,18 @@ func SubscribeClash(pass string) (*model.Account, string, []byte, vo.SystemVo, e
 				hysteria2.HopInterval = uintValue(nodeHysteria2.HopInterval)
 			}
 			ClashConfigInterface = append(ClashConfigInterface, hysteria2)
-			proxies = append(proxies, *item.Name)
 		}
+		if len(ClashConfigInterface) == before {
+			continue
+		}
+		proxies = append(proxies, *item.Name)
+		if snapshot != nil {
+			members = append(members, clientrouting.Member{ID: *item.Id, ServerID: *item.NodeServerId, Tag: *item.Name})
+		}
+	}
+	if snapshot != nil {
+		data, err := yaml.Marshal(snapshot.RenderClash(ClashConfigInterface, members))
+		return account, userInfo, data, vo.SystemVo{}, err
 	}
 	if len(proxies) == 0 {
 		proxies = append(proxies, "DIRECT")
@@ -325,11 +339,20 @@ func SubscribeSingBox(pass string, templateId string) (*model.Account, string, [
 		*account.Quota,
 		*account.ExpireTime/1000)
 
+	snapshot, err := loadRoutingProfile(templateId)
+	if err != nil {
+		return nil, "", nil, err
+	}
+	var members []clientrouting.Member
 	outbounds := make([]map[string]interface{}, 0)
 	proxyTags := make([]string, 0)
 	for _, item := range nodes {
 		if !clientcompat.Includes(item.ClientTypes, constant.ClientSingBox) {
 			continue
+		}
+		if snapshot != nil {
+			tag := clientrouting.NodeTag(*item.Id, *item.Name)
+			item.Name = &tag
 		}
 		outbound, err := buildSingBoxOutbound(item, pass, *account.Username)
 		if err != nil {
@@ -338,8 +361,15 @@ func SubscribeSingBox(pass string, templateId string) (*model.Account, string, [
 		if outbound == nil {
 			continue
 		}
+		if snapshot != nil {
+			members = append(members, clientrouting.Member{ID: *item.Id, ServerID: *item.NodeServerId, Tag: *item.Name})
+		}
 		outbounds = append(outbounds, outbound)
 		proxyTags = append(proxyTags, *item.Name)
+	}
+	if snapshot != nil {
+		data, err := json.MarshalIndent(snapshot.RenderSingBox(outbounds, members), "", "  ")
+		return account, userInfo, data, err
 	}
 	systemName := constant.SystemName
 	systemConfig, err := SelectSystemByName(&systemName)
@@ -415,6 +445,24 @@ func SubscribeURI(pass string, userAgent string, client string) (*model.Account,
 		*account.ExpireTime/1000)
 	content := base64.StdEncoding.EncodeToString([]byte(strings.Join(urls, "\n")))
 	return account, userInfo, []byte(content), nil
+}
+
+func loadRoutingProfile(templateID string) (*clientrouting.Snapshot, error) {
+	if templateID != "default" && templateID != "tun" {
+		return nil, nil
+	}
+	data, err := dao.ActiveRoutingSnapshot()
+	if err != nil {
+		return nil, errors.New(constant.SysError)
+	}
+	if data == nil {
+		return nil, nil
+	}
+	var snapshot clientrouting.Snapshot
+	if err := json.Unmarshal(data, &snapshot); err != nil {
+		return nil, errors.New(constant.SysError)
+	}
+	return &snapshot, nil
 }
 
 func selectSubscriptionNodes(accountID uint) ([]model.Node, error) {

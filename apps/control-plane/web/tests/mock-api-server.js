@@ -255,6 +255,10 @@ const deploymentArchive = (nodeServer, options) => {
   return zlib.gzipSync(Buffer.concat([...chunks, Buffer.alloc(1024)]))
 }
 
+const routingReleases = []
+let activeRouting = 0
+let nextRoutingID = 1
+
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://127.0.0.1')
   const path = url.pathname.replace(/^\/api/, '')
@@ -340,6 +344,41 @@ const server = http.createServer((req, res) => {
         if (req.method !== 'POST' || Object.keys(params).length !== 1 || !Number.isSafeInteger(params.nodeServerId) || params.nodeServerId <= 0) throw new Error('Only a valid node server ID is accepted')
         res.end(ok(startContainerUpdate(params.nodeServerId)))
       } catch (error) { res.end(JSON.stringify({ code: 50000, type: 'error', message: error.message })) }
+    })
+    return
+  }
+
+  if (path.startsWith('/system/clientRouting')) {
+    if (!isSysadminSession) { res.end(JSON.stringify({ code: 50401, message: 'System administrator required' })); return }
+    if (req.method === 'GET') {
+      if (url.searchParams.has('id')) {
+        const release = routingReleases.find(r => r.id === Number(url.searchParams.get('id')))
+        res.end(release ? ok(release.profile) : JSON.stringify({ code: 50000, message: 'Version not found' }))
+      } else {
+        const releases = routingReleases.map(({ id, profile, createdAt }) => ({ id, name: profile.name, active: id === activeRouting, createdAt }))
+        const catalog = nodes.map(n => ({ id: n.id, name: n.name, serverId: n.nodeServerId, serverName: nodeServers.find(s => s.id === n.nodeServerId)?.name || '' }))
+        res.end(ok({ nodes: catalog, releases }))
+      }
+      return
+    }
+    let body = ''
+    req.on('data', chunk => { body += chunk })
+    req.on('end', () => {
+      try {
+        const data = JSON.parse(body)
+        if (path.endsWith('/publish')) {
+          if (!data.name) throw new Error('请输入版本名称')
+          activeRouting = nextRoutingID++
+          routingReleases.unshift({ id: activeRouting, profile: data, createdAt: new Date().toISOString() })
+          res.end(ok(activeRouting))
+          return
+        }
+        const i = routingReleases.findIndex(r => r.id === data.id)
+        if (path.endsWith('/activate') && (i >= 0 || data.id === 0)) activeRouting = data.id
+        else if (path.endsWith('/delete') && i >= 0 && data.id !== activeRouting) routingReleases.splice(i, 1)
+        else throw new Error('版本操作无效')
+        res.end(ok(null))
+      } catch (e) { res.end(JSON.stringify({ code: 50000, message: e.message })) }
     })
     return
   }

@@ -47,6 +47,9 @@ func InitMySQL() {
 			panic(err)
 		}
 	}
+	if err = migrateClientRouting(); err != nil {
+		panic(err)
+	}
 	if err = migrateAccountRemarkColumn(); err != nil {
 		logrus.Errorf("account remark database migration err: %v", err)
 		panic(err)

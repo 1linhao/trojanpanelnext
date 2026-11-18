@@ -27,11 +27,8 @@ import (
 // Run only against disposable MariaDB/Redis instances. The production database
 // initializer uses trojan_panel_db; exclusive creation prevents overwriting an
 // existing database, and cleanup only drops the database created by this test.
-func TestAccountRemarkAPIPrivacy(t *testing.T) {
-	dsn, redisAddress := os.Getenv("TP_ACCOUNT_REMARK_TEST_DSN"), os.Getenv("TP_ACCOUNT_REMARK_TEST_REDIS")
-	if dsn == "" || redisAddress == "" {
-		t.Skip("TP_ACCOUNT_REMARK_TEST_DSN and TP_ACCOUNT_REMARK_TEST_REDIS are not set")
-	}
+func disposableAPIStore(t *testing.T, dsn, redisAddress string) *sql.DB {
+	t.Helper()
 	config, err := mysql.ParseDSN(dsn)
 	if err != nil {
 		t.Fatal(err)
@@ -81,6 +78,15 @@ func TestAccountRemarkAPIPrivacy(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { testDB.Close() })
+	return testDB
+}
+
+func TestAccountRemarkAPIPrivacy(t *testing.T) {
+	dsn, redisAddress := os.Getenv("TP_ACCOUNT_REMARK_TEST_DSN"), os.Getenv("TP_ACCOUNT_REMARK_TEST_REDIS")
+	if dsn == "" || redisAddress == "" {
+		t.Skip("TP_ACCOUNT_REMARK_TEST_DSN and TP_ACCOUNT_REMARK_TEST_REDIS are not set")
+	}
+	testDB := disposableAPIStore(t, dsn, redisAddress)
 	var bootstrapUser, bootstrapRemark string
 	if err := testDB.QueryRow("SELECT username,remark FROM account WHERE id=1").Scan(&bootstrapUser, &bootstrapRemark); err != nil || bootstrapUser != "sysadmin" || bootstrapRemark != "" {
 		t.Fatalf("fresh bootstrap/migration corrupted initial account: %s %s %v", bootstrapUser, bootstrapRemark, err)

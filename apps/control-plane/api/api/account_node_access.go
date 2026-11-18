@@ -13,7 +13,7 @@ import (
 )
 
 func SelectAccountNodeAccess(c *gin.Context) {
-	if !authorizeAccountNodeAccess(c) {
+	if !requireCurrentSysAdmin(c) {
 		return
 	}
 	var query struct {
@@ -41,7 +41,7 @@ func SelectAccountNodeAccess(c *gin.Context) {
 }
 
 func UpdateAccountNodeAccess(c *gin.Context) {
-	if !authorizeAccountNodeAccess(c) {
+	if !requireCurrentSysAdmin(c) {
 		return
 	}
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 1024*1024)
@@ -64,7 +64,7 @@ func UpdateAccountNodeAccess(c *gin.Context) {
 	vo.Success(nil, c)
 }
 
-func authorizeAccountNodeAccess(c *gin.Context) bool {
+func requireCurrentSysAdmin(c *gin.Context) bool {
 	allowed, err := service.IsCurrentSysAdmin(accountManagementToken(c))
 	if err != nil {
 		vo.Fail(err.Error(), c)

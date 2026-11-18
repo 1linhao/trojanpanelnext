@@ -9,6 +9,10 @@ func initSystemRouter(trojanApi *gin.RouterGroup) {
 	system := trojanApi.Group("/system")
 	{
 		// 查询系统设置
+		system.GET("/clientRouting", api.ClientRouting)
+		system.POST("/clientRouting/publish", api.PublishClientRouting)
+		system.POST("/clientRouting/activate", api.ChangeClientRouting(false))
+		system.POST("/clientRouting/delete", api.ChangeClientRouting(true))
 		system.GET("/selectSystemByName", api.SelectSystemByName)
 		// 更新系统配置
 		system.POST("/updateSystemById", api.UpdateSystemById)

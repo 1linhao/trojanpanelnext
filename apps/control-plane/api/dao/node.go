@@ -324,7 +324,7 @@ func SelectNodes(accesses ...AccountNodeAccess) ([]model.Node, error) {
 		return nodes, nil
 	}
 	buildSelect, values, err := builder.BuildSelect("node", where, []string{
-		"id", "node_sub_id", "node_type_id", "name", "domain", "port", "external_port", "client_types", "naive_uot_enable", "naive_uot_version"})
+		"id", "node_server_id", "node_sub_id", "node_type_id", "name", "domain", "port", "external_port", "client_types", "naive_uot_enable", "naive_uot_version"})
 	if err != nil {
 		logrus.Errorln(err.Error())
 		return nodes, errors.New(constant.SysError)
