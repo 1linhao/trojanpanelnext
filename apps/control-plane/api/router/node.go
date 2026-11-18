@@ -26,5 +26,8 @@ func initNodeRouter(trojanApi *gin.RouterGroup) {
 		node.POST("/nodeURL", api.NodeURL)
 		// 节点部分属性的默认值
 		node.GET("/nodeDefault", api.NodeDefault)
+		node.GET("/serverTrafficDisplay", api.SelectServerTrafficDisplay)
+		node.POST("/serverTrafficDisplay", api.UpdateServerTrafficDisplay)
+		node.GET("/serverTrafficSummaries", api.SelectServerTrafficSummaries)
 	}
 }

@@ -388,6 +388,25 @@ export default {
     zeroUnlimited: '额度为 0 表示对应口径不限制。', remaining: '额度状态',
     serverRemaining: '服务器剩余流量', reached: '已达额度'
   },
+  trafficDisplay: {
+    save: '保存',
+    sync: '同步服务器流量信息',
+    on: '开启',
+    off: '关闭',
+    selectServers: '选择要同步的服务器',
+    noServers: '没有可同步的服务器。',
+    loading: '正在加载同步设置…',
+    retry: '重试',
+    loadFailed: '无法加载同步设置，请重试。',
+    saveFailed: '无法保存同步设置，请重试。',
+    selectionChanged: '所选服务器已被移除，请重新选择。',
+    saved: '服务器流量同步设置已保存',
+    summary: '服务器流量',
+    used: '已用 {traffic}',
+    limit: '总额度 {traffic}',
+    upload: '上传 {used} / {limit}',
+    download: '下载 {used} / {limit}'
+  },
   exportNode: {
     title: '导出节点',
     template: '配置模板',

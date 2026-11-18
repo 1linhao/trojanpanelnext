@@ -174,6 +174,7 @@ const startContainerUpdate = (id) => {
   return { ...state.job }
 }
 
+let serverTrafficDisplay = { enabled: false, serverIds: [] }
 const clearedServerTraffic = new Set()
 const serverTrafficStatus = (server) => {
   const unlimited = server.trafficPeriod === 'none'
@@ -277,6 +278,47 @@ const server = http.createServer((req, res) => {
     return
   }
   res.setHeader('Content-Type', 'application/json; charset=utf-8')
+
+  if (path === '/node/serverTrafficDisplay') {
+    if (isUserSession) { res.end(JSON.stringify({ code: 50401, message: 'Administrator required' })); return }
+    if (req.method === 'GET') {
+      res.end(ok({ ...serverTrafficDisplay, servers: nodeServers.map(({ id, name }) => ({ id, name })) }))
+      return
+    }
+    let body = ''
+    req.on('data', (chunk) => { body += chunk })
+    req.on('end', () => {
+      try {
+        const { enabled, serverIds } = JSON.parse(body)
+        if (req.method !== 'POST' || typeof enabled !== 'boolean' || !Array.isArray(serverIds)) {
+          throw new Error('Invalid traffic display settings')
+        }
+        if (serverIds.some((id) => !nodeServers.some((server) => server.id === id))) {
+          throw new Error('a selected server does not exist or is being removed')
+        }
+        serverTrafficDisplay = { enabled, serverIds }
+        res.end(ok(null))
+      } catch (error) { res.end(JSON.stringify({ code: 50000, message: error.message })) }
+    })
+    return
+  }
+
+  if (path === '/node/serverTrafficSummaries') {
+    res.end(ok(nodeServers.filter((server) => serverTrafficDisplay.enabled && serverTrafficDisplay.serverIds.includes(server.id))
+      .map((server) => {
+        const status = serverTrafficStatus(server)
+        const summary = { serverId: server.id, serverName: server.name, period: status.period, totalUsed: status.totalUsed, totalLimit: 0 }
+        if (status.period === 'none') return summary
+        if (status.limitMode === 'separate') {
+          summary.upload = { used: status.uploadUsed, limit: status.uploadLimit }
+          summary.download = { used: status.downloadUsed, limit: status.downloadLimit }
+        } else {
+          summary.totalLimit = status.totalLimit
+        }
+        return summary
+      })))
+    return
+  }
 
   if (path === '/container/inventory') {
     if (!isSysadminSession) { res.end(JSON.stringify({ code: 50401, message: 'System administrator required' })); return }

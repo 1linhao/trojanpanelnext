@@ -86,6 +86,10 @@ func InitMySQL() {
 	if err = migrateNodeRemovalSchema(); err != nil {
 		panic(err)
 	}
+	if err = migrateServerTrafficDisplay(); err != nil {
+		logrus.Errorf("server traffic display database migration err: %v", err)
+		panic(err)
+	}
 	if err = migrateNodeServerRemovalPermissions(); err != nil {
 		panic(err)
 	}

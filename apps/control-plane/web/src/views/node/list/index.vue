@@ -42,9 +42,19 @@
       </div>
     </ui-panel>
 
+    <ServerTrafficDisplaySettings
+      v-if="checkPermission(['sysadmin', 'admin'])"
+      @saved="getList"
+    />
+
     <div class="node-grid" v-liquid-loading="listLoading">
+      <ServerTrafficSummaryCard
+        v-for="summary in serverTrafficSummaries"
+        :key="'server-traffic-' + summary.serverId"
+        :summary="summary"
+      />
       <p v-if="!listLoading && listError" class="node-grid__empty">{{ listError }}</p>
-      <p v-else-if="!listLoading && !list.length" class="node-grid__empty">暂无数据</p>
+      <p v-else-if="!listLoading && !list.length && !serverTrafficSummaries.length" class="node-grid__empty">暂无数据</p>
       <template v-for="(row, index) in list">
         <ui-panel
           :key="'node-' + row.id"
@@ -227,7 +237,8 @@ import {
   nodeDefault,
   selectNodeById,
   selectNodeInfo,
-  selectNodePage
+  selectNodePage,
+  selectServerTrafficSummaries
 } from '@/api/node'
 import { selectNodeTypeList } from '@/api/node-type'
 import {
@@ -242,6 +253,8 @@ import { timeStampToDate } from '@/utils'
 import { getFlow } from '@/utils/account'
 import { selectNodeServerList } from '@/api/node-server'
 import NodeForm from '@/views/node/list/components/NodeForm'
+import ServerTrafficDisplaySettings from './components/ServerTrafficDisplaySettings'
+import ServerTrafficSummaryCard from './components/ServerTrafficSummaryCard'
 import latestListRequest from '@/mixins/latest-list-request'
 
 export default {
@@ -249,7 +262,9 @@ export default {
   components: {
     NodeForm,
     ExportNodeDialog,
-    Pagination
+    Pagination,
+    ServerTrafficDisplaySettings,
+    ServerTrafficSummaryCard
   },
   mixins: [latestListRequest],
   filters: {
@@ -271,7 +286,8 @@ export default {
       tableKey: 0,
       listLoading: true,
       listError: '',
-      list: null,
+      list: [],
+      serverTrafficSummaries: [],
       total: 0,
       listQuery: {
         pageNum: 1,
@@ -623,6 +639,13 @@ export default {
     },
     getList() {
       const request = this.beginListRequest()
+      selectServerTrafficSummaries().then(({ data }) => {
+        if (this.ownsListRequest(request)) {
+          this.serverTrafficSummaries = Array.isArray(data) ? data : []
+        }
+      }).catch(() => {
+        if (this.ownsListRequest(request)) this.serverTrafficSummaries = []
+      })
       return selectNodePage(this.listQuery).then((response) => {
         if (!this.ownsListRequest(request)) return
         this.list = response.data.nodes

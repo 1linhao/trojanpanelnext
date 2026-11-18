@@ -116,3 +116,28 @@ export function nodeDefault(data) {
     params: data
   })
 }
+
+export function selectServerTrafficDisplay() {
+  return request({
+    url: '/node/serverTrafficDisplay',
+    method: 'get',
+    silentError: true
+  })
+}
+
+export function updateServerTrafficDisplay(data) {
+  return request({
+    url: '/node/serverTrafficDisplay',
+    method: 'post',
+    data,
+    silentError: true
+  })
+}
+
+export function selectServerTrafficSummaries() {
+  return request({
+    url: '/node/serverTrafficSummaries',
+    method: 'get',
+    silentError: true
+  })
+}

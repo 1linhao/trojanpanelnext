@@ -2,7 +2,9 @@ package dao
 
 import (
 	"database/sql"
+	"errors"
 	"os"
+	"reflect"
 	"testing"
 	"time"
 
@@ -22,9 +24,9 @@ func TestTrafficMigrationAndQueries(t *testing.T) {
 	defer testDB.Close()
 	db = testDB
 	statements := []string{
-		`DROP TABLE IF EXISTS account_traffic_daily,account_server_traffic_daily,account_traffic_total,casbin_rule,account,node_server`,
+		`DROP TABLE IF EXISTS server_traffic_display_selection,server_traffic_display,node_removal_cleanup,account_traffic_daily,account_server_traffic_daily,account_traffic_total,casbin_rule,account,node_server`,
 		`CREATE TABLE account (id bigint unsigned primary key,username varchar(64) not null,role_id bigint unsigned not null,deleted tinyint unsigned not null,quota bigint not null,download bigint unsigned not null,upload bigint unsigned not null)`,
-		`CREATE TABLE node_server (id bigint unsigned primary key,name varchar(64) not null,ip varchar(64) not null,grpc_port int unsigned not null,grpc_tls_mode varchar(16) not null,grpc_tls_server_name varchar(253) not null)`,
+		`CREATE TABLE node_server (id bigint primary key,name varchar(64) not null,ip varchar(64) not null,grpc_port int unsigned not null,grpc_tls_mode varchar(16) not null,grpc_tls_server_name varchar(253) not null)`,
 		`CREATE TABLE casbin_rule (p_type varchar(32),v0 varchar(255),v1 varchar(255),v2 varchar(255),v3 varchar(255),v4 varchar(255),v5 varchar(255))`,
 		`INSERT INTO account VALUES (7,'alice',3,0,-1,20,10),(8,'bob',1,0,-1,0,0)`,
 		`INSERT INTO node_server VALUES (2,'sf','127.0.0.1',8100,'mtls','sf.example.com'),(3,'hk','127.0.0.2',8100,'mtls','hk.example.com')`,
@@ -125,6 +127,82 @@ func TestTrafficMigrationAndQueries(t *testing.T) {
 		if err != nil || len(statuses) != 1 || statuses[0].Period != "none" ||
 			statuses[0].UploadUsed != 1142 || statuses[0].DownloadUsed != 1156 || statuses[0].Reached {
 			t.Fatalf("unlimited server should report all historical traffic without reaching a limit: %#v err=%v", statuses, err)
+		}
+	})
+
+	t.Run("server_traffic_display_settings_and_selection", func(t *testing.T) {
+		if err := migrateNodeRemovalSchema(); err != nil {
+			t.Fatal(err)
+		}
+		if err := migrateServerTrafficDisplay(); err != nil {
+			t.Fatal(err)
+		}
+		initial, err := SelectServerTrafficDisplay()
+		if err != nil || initial.Enabled || len(initial.ServerIDs) != 0 || len(initial.Servers) != 3 {
+			t.Fatalf("unexpected initial traffic display settings: %#v err=%v", initial, err)
+		}
+		if err := UpdateServerTrafficDisplay(true, []uint{4, 3, 3}); err != nil {
+			t.Fatal(err)
+		}
+		if err := migrateServerTrafficDisplay(); err != nil {
+			t.Fatalf("migration is not idempotent: %v", err)
+		}
+		var permissionCount int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM casbin_rule WHERE v1 IN
+			('/api/node/serverTrafficDisplay','/api/node/serverTrafficSummaries')`).Scan(&permissionCount); err != nil || permissionCount != 7 {
+			t.Fatalf("unexpected permissions: count=%d err=%v", permissionCount, err)
+		}
+		if err := db.QueryRow(`SELECT COUNT(*) FROM casbin_rule WHERE v0='user'
+			AND v1='/api/node/serverTrafficDisplay'`).Scan(&permissionCount); err != nil || permissionCount != 0 {
+			t.Fatalf("user has management permissions: count=%d err=%v", permissionCount, err)
+		}
+
+		if err := UpdateServerTrafficDisplay(false, []uint{2, 999}); !errors.Is(err, ErrServerTrafficDisplayInvalidServer) {
+			t.Fatalf("expected invalid selection to fail: %v", err)
+		}
+		active, err := SelectServerTrafficDisplay()
+		if err != nil || !active.Enabled || !reflect.DeepEqual(active.ServerIDs, []uint{3, 4}) {
+			t.Fatalf("a failed update replaced the previous settings: %#v err=%v", active, err)
+		}
+		summaries, err := SelectServerTrafficSummaries()
+		if err != nil || len(summaries) != 2 || summaries[0].NodeServerId != 3 ||
+			summaries[0].UploadUsed != 10 || summaries[0].DownloadUsed != 20 || summaries[1].NodeServerId != 4 ||
+			summaries[1].UploadUsed != 1142 || summaries[1].DownloadUsed != 1156 {
+			t.Fatalf("unexpected summaries for selected servers: %#v err=%v", summaries, err)
+		}
+
+		if err := UpdateServerTrafficDisplay(false, active.ServerIDs); err != nil {
+			t.Fatal(err)
+		}
+		summaries, err = SelectServerTrafficSummaries()
+		if err != nil || len(summaries) != 0 {
+			t.Fatalf("disabled display returned summaries: %#v err=%v", summaries, err)
+		}
+		inactive, err := SelectServerTrafficDisplay()
+		if err != nil || inactive.Enabled || !reflect.DeepEqual(inactive.ServerIDs, active.ServerIDs) {
+			t.Fatalf("disabling did not preserve the selection: %#v err=%v", inactive, err)
+		}
+
+		if err := UpdateServerTrafficDisplay(true, inactive.ServerIDs); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(`UPDATE node_server SET removing=1 WHERE id=3`); err != nil {
+			t.Fatal(err)
+		}
+		summaries, err = SelectServerTrafficSummaries()
+		if err != nil || len(summaries) != 1 || summaries[0].NodeServerId != 4 {
+			t.Fatalf("a server being removed was published: %#v err=%v", summaries, err)
+		}
+		if _, err := db.Exec(`DELETE FROM node_server WHERE id IN (3,4)`); err != nil {
+			t.Fatal(err)
+		}
+		summaries, err = SelectServerTrafficSummaries()
+		if err != nil || len(summaries) != 0 {
+			t.Fatalf("removal left visible summaries: %#v err=%v", summaries, err)
+		}
+		var selectionCount int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM server_traffic_display_selection`).Scan(&selectionCount); err != nil || selectionCount != 0 {
+			t.Fatalf("removal left stale selections: count=%d err=%v", selectionCount, err)
 		}
 	})
 }

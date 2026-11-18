@@ -389,6 +389,25 @@ export default {
     zeroUnlimited: 'A zero limit leaves that measure unlimited.', remaining: 'Quota status',
     serverRemaining: 'Server traffic remaining', reached: 'Quota reached'
   },
+  trafficDisplay: {
+    save: 'Save',
+    sync: 'Sync server traffic',
+    on: 'On',
+    off: 'Off',
+    selectServers: 'Select servers to sync',
+    noServers: 'No servers are available to sync.',
+    loading: 'Loading sync settings…',
+    retry: 'Retry',
+    loadFailed: 'Could not load sync settings. Try again.',
+    saveFailed: 'Could not save sync settings. Try again.',
+    selectionChanged: 'A selected server was removed. Select servers again.',
+    saved: 'Server traffic sync settings saved',
+    summary: 'Server traffic',
+    used: 'Used {traffic}',
+    limit: 'Total quota {traffic}',
+    upload: 'Upload {used} / {limit}',
+    download: 'Download {used} / {limit}'
+  },
   exportNode: {
     title: 'Export nodes',
     template: 'Configuration template',

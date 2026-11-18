@@ -155,6 +155,10 @@ func SelectServerTrafficStatuses(serverIDs []uint) ([]vo.ServerTrafficStatusVo, 
 	for i, id := range serverIDs {
 		args[i] = id
 	}
+	return selectServerTrafficStatuses("ns.id IN ("+placeholders+")", args...)
+}
+
+func selectServerTrafficStatuses(predicate string, args ...any) ([]vo.ServerTrafficStatusVo, error) {
 	query := fmt.Sprintf(`SELECT ns.id AS node_server_id,ns.name AS node_server_name,ns.traffic_period,
 		ns.traffic_limit_mode,ns.traffic_total_limit,ns.traffic_upload_limit,ns.traffic_download_limit,
 		COALESCE(SUM(CASE
@@ -170,8 +174,9 @@ func SelectServerTrafficStatuses(serverIDs []uint) ([]vo.ServerTrafficStatusVo, 
 			WHEN ns.traffic_period='year' AND d.traffic_date>=MAKEDATE(YEAR(CURRENT_DATE()),1) THEN d.download
 			ELSE 0 END),0) AS download_used
 		FROM node_server ns LEFT JOIN account_server_traffic_daily d ON d.node_server_id=ns.id
-		WHERE ns.id IN (%s) GROUP BY ns.id,ns.name,ns.traffic_period,ns.traffic_limit_mode,
-		ns.traffic_total_limit,ns.traffic_upload_limit,ns.traffic_download_limit`, placeholders)
+		WHERE %s GROUP BY ns.id,ns.name,ns.traffic_period,ns.traffic_limit_mode,
+		ns.traffic_total_limit,ns.traffic_upload_limit,ns.traffic_download_limit
+		ORDER BY ns.name,ns.id`, predicate)
 	rows, err := db.Query(query, args...)
 	if err != nil {
 		logrus.Errorln(err)

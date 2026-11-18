@@ -20,6 +20,38 @@ func ServerTrafficStatuses(serverIDs []uint) (map[uint]vo.ServerTrafficStatusVo,
 	return result, nil
 }
 
+func ServerTrafficSummaries() ([]vo.ServerTrafficSummaryVo, error) {
+	statuses, err := dao.SelectServerTrafficSummaries()
+	if err != nil {
+		return nil, err
+	}
+	summaries := make([]vo.ServerTrafficSummaryVo, 0, len(statuses))
+	for _, status := range statuses {
+		hydrateTrafficStatus(&status)
+		summaries = append(summaries, summarizeServerTraffic(status))
+	}
+	return summaries, nil
+}
+
+func summarizeServerTraffic(status vo.ServerTrafficStatusVo) vo.ServerTrafficSummaryVo {
+	summary := vo.ServerTrafficSummaryVo{
+		ServerID:   status.NodeServerId,
+		ServerName: status.NodeServerName,
+		Period:     status.Period,
+		TotalUsed:  status.TotalUsed,
+	}
+	if status.Period == "none" {
+		return summary
+	}
+	if status.LimitMode == "separate" {
+		summary.Upload = &vo.ServerTrafficDirectionVo{Used: status.UploadUsed, Limit: status.UploadLimit}
+		summary.Download = &vo.ServerTrafficDirectionVo{Used: status.DownloadUsed, Limit: status.DownloadLimit}
+	} else {
+		summary.TotalLimit = status.TotalLimit
+	}
+	return summary
+}
+
 func hydrateTrafficStatus(status *vo.ServerTrafficStatusVo) {
 	location, _ := time.LoadLocation("Asia/Shanghai")
 	now := time.Now().In(location)
