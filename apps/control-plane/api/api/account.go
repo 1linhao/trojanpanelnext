@@ -47,7 +47,7 @@ func Login(c *gin.Context) {
 		return
 	}
 	if account != nil {
-		if !util.Sha1Match(*account.Pass, fmt.Sprintf("%s%s", *accountLoginDto.Username, *accountLoginDto.Pass)) {
+		if !util.Sha1Match(account.LoginVerifier(), fmt.Sprintf("%s%s", *accountLoginDto.Username, *accountLoginDto.Pass)) {
 			vo.Fail(constant.UsernameOrPassError, c)
 			service.LoginLimit(*account.Username)
 			return
@@ -62,11 +62,12 @@ func Login(c *gin.Context) {
 			return
 		}
 		accountVo := vo.AccountVo{
-			Id:       *account.Id,
-			Username: *account.Username,
-			RoleId:   *account.RoleId,
-			Deleted:  *account.Deleted,
-			Roles:    roles,
+			SessionVersion: account.SessionVersion,
+			Id:             *account.Id,
+			Username:       *account.Username,
+			RoleId:         *account.RoleId,
+			Deleted:        *account.Deleted,
+			Roles:          roles,
 		}
 		tokenStr, err := service.GenToken(accountVo)
 		if err != nil {
@@ -267,8 +268,7 @@ func UpdateAccountPass(c *gin.Context) {
 		return
 	}
 	account := service.GetCurrentAccount(c)
-	if err := service.UpdateAccountPass(util.GetToken(c), accountUpdatePassDto.OldPass, accountUpdatePassDto.NewPass,
-		&account.Username); err != nil {
+	if err := service.UpdateAccountPass(util.GetToken(c), accountUpdatePassDto.OldPass, accountUpdatePassDto.NewPass, account.Id); err != nil {
 		vo.Fail(err.Error(), c)
 		return
 	}
@@ -284,17 +284,19 @@ func UpdateAccountProperty(c *gin.Context) {
 	}
 	account := service.GetCurrentAccount(c)
 	// 校验用户名是否重复
-	count, err := service.CountAccountByUsername(accountUpdatePropertyDto.Username)
-	if err != nil {
-		vo.Fail(err.Error(), c)
-		return
-	}
-	if count > 0 {
-		vo.Fail(constant.UsernameExist, c)
-		return
+	if proposed := accountUpdatePropertyDto.Username; proposed != nil && *proposed != "" && *proposed != account.Username {
+		count, err := service.CountAccountByUsername(accountUpdatePropertyDto.Username)
+		if err != nil {
+			vo.Fail(err.Error(), c)
+			return
+		}
+		if count > 0 {
+			vo.Fail(constant.UsernameExist, c)
+			return
+		}
 	}
 
-	if err := service.UpdateAccountProperty(util.GetToken(c), &account.Username,
+	if err := service.UpdateAccountProperty(util.GetToken(c), account.Id,
 		accountUpdatePropertyDto.Pass, accountUpdatePropertyDto.Username, accountUpdatePropertyDto.Email); err != nil {
 		vo.Fail(err.Error(), c)
 		return
@@ -345,10 +347,14 @@ func UpdateAccountById(c *gin.Context) {
 		}
 	}
 
-	toByte := util.ToByte(*accountUpdateDto.Quota)
+	var quota *int
+	if accountUpdateDto.Quota != nil {
+		value := util.ToByte(*accountUpdateDto.Quota)
+		quota = &value
+	}
 	account := model.Account{
 		Id:         accountUpdateDto.Id,
-		Quota:      &toByte,
+		Quota:      quota,
 		Username:   accountUpdateDto.Username,
 		Pass:       accountUpdateDto.Pass,
 		Email:      accountUpdateDto.Email,
@@ -364,7 +370,12 @@ func UpdateAccountById(c *gin.Context) {
 		vo.Fail(err.Error(), c)
 		return
 	}
-	vo.Success(nil, c)
+	saved, err := service.SelectAccountById(account.Id)
+	if err != nil {
+		vo.Fail(err.Error(), c)
+		return
+	}
+	vo.Success(gin.H{"quota": saved.Quota, "expireTime": saved.ExpireTime}, c)
 }
 
 func ResetAccountLoginLimit(c *gin.Context) {
@@ -420,6 +431,28 @@ func ResetAccountDownloadAndUpload(c *gin.Context) {
 	vo.Success(nil, c)
 }
 
+func ResetAllAccountDownloadAndUpload(c *gin.Context) {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 1024)
+	decoder := json.NewDecoder(c.Request.Body)
+	decoder.DisallowUnknownFields()
+	var request struct {
+		Confirm bool `json:"confirm"`
+	}
+	if err := decoder.Decode(&request); err != nil || !request.Confirm {
+		vo.Fail(constant.ValidateFailed, c)
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		vo.Fail(constant.ValidateFailed, c)
+		return
+	}
+	if err := service.ResetAllAccountDownloadAndUpload(accountManagementToken(c)); err != nil {
+		vo.Fail(err.Error(), c)
+		return
+	}
+	vo.Success(nil, c)
+}
+
 func CreateAccountBatch(c *gin.Context) {
 	var createAccountBatchDto dto.CreateAccountBatchDto
 	_ = c.ShouldBindJSON(&createAccountBatchDto)
@@ -427,10 +460,10 @@ func CreateAccountBatch(c *gin.Context) {
 		vo.Fail(constant.ValidateFailed, c)
 		return
 	}
-	account := service.GetCurrentAccount(c)
-	if err := service.CreateAccountBatch(account.Id, account.Username, createAccountBatchDto); err != nil {
+	accounts, err := service.CreateAccountBatch(createAccountBatchDto)
+	if err != nil {
 		vo.Fail(err.Error(), c)
 		return
 	}
-	vo.Success(nil, c)
+	downloadJSON(c, exportFilename("batchCreateAccountExport"), accounts)
 }

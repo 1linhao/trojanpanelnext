@@ -8,6 +8,7 @@ type AccountUpdateBo struct {
 }
 
 type AccountBo struct {
+	ID       uint
 	Username string
 	Pass     string
 	Hash     string

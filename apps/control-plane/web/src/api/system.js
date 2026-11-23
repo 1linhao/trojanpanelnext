@@ -31,10 +31,18 @@ export function selectSystemByName(data) {
  * @param data
  * @returns
  */
-export function updateSystemById(data) {
+export function updateSystemById(settings, saveTemplates = false) {
+  const data = { ...settings }
+  if (!saveTemplates) {
+    for (const key of ['templateLibrary', 'clashRule', 'singBoxTun', 'singBoxOutbound', 'xrayTemplate', 'clashTemplateName', 'singBoxTunTemplateName', 'singBoxOutboundTemplateName', 'xrayTemplateName']) {
+      delete data[key]
+    }
+  }
+  for (const key of ['singBoxTunEntity', 'singBoxOutboundEntity', 'xrayTemplateEntity']) delete data[key]
   return request({
     url: '/system/updateSystemById',
     method: 'post',
+    ...(saveTemplates ? { timeout: 20000 } : {}),
     data
   })
 }

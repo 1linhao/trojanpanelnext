@@ -55,7 +55,7 @@
       />
       <p v-if="!listLoading && listError" class="node-grid__empty">{{ listError }}</p>
       <p v-else-if="!listLoading && !list.length && !serverTrafficSummaries.length" class="node-grid__empty">暂无数据</p>
-      <template v-for="(row, index) in list">
+      <template v-for="row in list">
         <ui-panel
           :key="'node-' + row.id"
           variant="metric"
@@ -151,7 +151,7 @@
                 class="icon-btn danger"
                 type="button"
                 title="删除"
-                @click="handleDelete(row, index)"
+                @click="handleDelete(row)"
               >
                 <app-icon name="delete" />
               </button>
@@ -170,7 +170,7 @@
               <span class="kicker">Connection</span>
               <h2>{{ row.name }} · 连接参数</h2>
             </div>
-                  <button class="icon-btn" type="button" aria-label="关闭节点详情" @click="detailId = 0">
+                  <button class="icon-btn" type="button" aria-label="关闭节点详情" @click="closeNodeDetail">
               <app-icon name="close" />
             </button>
           </div>
@@ -492,6 +492,7 @@ export default {
       dialogInfoVisible: false,
       exportDialogVisible: false,
       detailId: 0,
+      detailVersion: 0,
       nodeTypes: [],
       nodeServers: [],
       textMap: {
@@ -506,20 +507,34 @@ export default {
     this.getList()
   },
   methods: {
-    handlePrototypeDetail(row) {
-      if (this.detailId === row.id) {
-        this.detailId = 0
-        return
-      }
-      this.nodeDetail = Object.assign({}, row)
-      selectNodeInfo({ id: row.id }).then((response) => {
+    closeNodeDetail() {
+      this.detailVersion++
+      this.detailId = 0
+      this.nodeDetail = {}
+    },
+    async handlePrototypeDetail(row) {
+      const wasOpen = this.detailId === row.id
+      this.closeNodeDetail()
+      if (wasOpen) return
+      const version = this.detailVersion
+      try {
+        const { data } = await selectNodeInfo({ id: row.id }, true)
+        if (!this.listRequestActive || version !== this.detailVersion) return
         try {
-          this.nodeDetail = handleNodeDetail(this.nodeDetail, response.data)
-        } catch (error) {
-          this.nodeDetail = Object.assign({}, this.nodeDetail, response.data)
+          this.nodeDetail = handleNodeDetail({ ...row }, data)
+        } catch (_) {
+          this.nodeDetail = { ...row, ...data }
         }
         this.detailId = row.id
-      })
+      } catch (error) {
+        if (!this.listRequestActive || version !== this.detailVersion) return
+        if (error.code === 50403 || error.message === 'the node does not exist') {
+          this.$message.error(this.$t('confirm.nodeAccessChanged'))
+          await this.getList()
+        } else {
+          this.$message.error(error.message || this.$t('confirm.nodeDetailFailed'))
+        }
+      }
     },
     getFlow,
     quotaFlow(limit, remaining) {
@@ -691,34 +706,36 @@ export default {
         })
       })
     },
-    handleDetail(row) {
-      this.nodeDetail = Object.assign(this.temp, row)
-      selectNodeInfo({ id: row.id }).then((response) => {
-        this.nodeDetail = handleNodeDetail(this.nodeDetail, response.data)
-        this.dialogInfoVisible = true
-      })
-    },
-    handleDelete(row, index) {
-      MessageBox.confirm(
-        this.$t('confirm.deleteNode').toString(),
-        this.$t('confirm.warn').toString(),
-        {
-          confirmButtonText: this.$t('confirm.yes').toString(),
-          cancelButtonText: this.$t('confirm.cancel').toString(),
-          type: 'warning'
+    async handleDelete(row) {
+      try {
+        const { data } = await selectNodeById({ id: row.id, deleteImpact: true })
+        const lines = [this.$t('confirm.deleteNode')]
+        const fallback = this.$t(data.empty === 'DIRECT' ? 'confirm.routeDirect' : 'confirm.routeReject')
+        if (data.emptyGroups.length) {
+          lines.push(this.$t('confirm.nodeDeleteEmpty', { groups: data.emptyGroups.join(', '), fallback }))
         }
-      ).then(() => {
-        const tempData = Object.assign({}, row)
-        deleteNodeById(tempData).then(() => {
-          this.list.splice(index, 1)
-          this.$notify({
-            title: 'Success',
-            message: this.$t('confirm.deleteSuccess').toString(),
-            type: 'success',
-            duration: 2000
-          })
+        if (data.otherGroups.length) {
+          lines.push(this.$t('confirm.nodeDeleteMembers', { groups: data.otherGroups.join(', '), fallback }))
+        }
+        await MessageBox.confirm(
+          lines.join(' '),
+          this.$t('confirm.warn').toString(),
+          {
+            confirmButtonText: this.$t('confirm.yes').toString(),
+            cancelButtonText: this.$t('confirm.cancel').toString(),
+            type: 'warning'
+          }
+        )
+        await deleteNodeById({ id: row.id })
+        await this.getList()
+        this.$notify({
+          message: this.$t('confirm.deleteSuccess').toString(),
+          type: 'success',
+          duration: 2000
         })
-      })
+      } catch (_) {
+        // Cancellation sends no request; API failures use the shared feedback.
+      }
     }
   }
 }

@@ -1,4 +1,5 @@
 import request from '@/utils/request'
+import downloadJSON from '@/utils/download-json'
 
 /**
  * 根据id查询服务器
@@ -151,29 +152,26 @@ export function selectNodeServerList(data) {
  * @param data
  * @returns
  */
-export function nodeServerState(data) {
+export function nodeServerState(data, signal) {
   return request({
     url: '/nodeServer/nodeServerState',
     method: 'get',
-    params: data
+    params: data,
+    signal,
+    silentError: true
   })
 }
 
 /**
  * 导出服务器
- * @param data
  * @returns {*}
  */
-export function exportNodeServer(data) {
-  return request({
-    url: '/nodeServer/exportNodeServer',
-    method: 'post',
-    data
-  })
+export function exportNodeServer() {
+  return downloadJSON('/nodeServer/exportNodeServer')
 }
 
 /**
- * 导出服务器
+ * 导入服务器
  * @param data
  * @returns {*}
  */
@@ -181,6 +179,11 @@ export function importNodeServer(data) {
   return request({
     url: '/nodeServer/importNodeServer',
     method: 'post',
+    timeout: 0,
     data
   })
+}
+
+export function downloadNodeServerImportTemplate() {
+  return downloadJSON('/nodeServer/downloadImportTemplate')
 }

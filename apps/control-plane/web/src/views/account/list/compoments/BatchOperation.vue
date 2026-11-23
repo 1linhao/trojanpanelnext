@@ -43,7 +43,7 @@
       <liquid-button @click="$emit('update:dialogFormVisibleProps', false)"
         >{{ $t('table.cancel') }}
       </liquid-button>
-      <liquid-button type="primary" @click="createAccountBatch">
+      <liquid-button type="primary" :disabled="creating" @click="createAccountBatch">
         {{ $t('table.confirm') }}
       </liquid-button>
     </div>
@@ -67,6 +67,7 @@ export default {
   },
   data() {
     return {
+      creating: false,
       temp: {
         num: 5,
         presetQuota: 1024,
@@ -124,21 +125,23 @@ export default {
         this.$refs['dataForm'].clearValidate()
       })
     },
-    createAccountBatch() {
-      this.$refs['dataForm'].validate((valid) => {
-        if (valid) {
-          createAccountBatch(this.temp).then(() => {
-            this.getListProps()
-            this.$emit('update:dialogFormVisibleProps', false)
-            this.$notify({
-              title: 'Success',
-              message: this.$t('confirm.createSuccess').toString(),
-              type: 'success',
-              duration: 2000
-            })
-          })
-        }
-      })
+    async createAccountBatch() {
+      if (this.creating) return
+      this.creating = true
+      try {
+        if (!(await this.$refs.dataForm.validate())) return
+        await createAccountBatch(this.temp)
+        this.getListProps()
+        this.$emit('update:dialogFormVisibleProps', false)
+        this.$notify({
+          title: 'Success',
+          message: this.$t('confirm.createSuccess').toString(),
+          type: 'success',
+          duration: 2000
+        })
+      } finally {
+        this.creating = false
+      }
     }
   }
 }

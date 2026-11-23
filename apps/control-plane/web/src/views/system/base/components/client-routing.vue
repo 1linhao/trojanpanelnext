@@ -8,13 +8,14 @@
       <section v-if="releases.length">
         <h3>版本历史</h3>
         <div class="fields">
-          <label>版本
-            <select v-model="selected">
+          <div class="select-field release-version">
+            <label for="routing-release">版本</label>
+            <liquid-select id="routing-release" v-model="selected">
               <option v-for="r in releases" :key="r.id" :value="r.id">
                 #{{ r.id }} · {{ r.name }} · {{ new Date(r.createdAt).toLocaleString() }}{{ r.active ? '（活动）' : '' }}
               </option>
-            </select>
-          </label>
+            </liquid-select>
+          </div>
           <button class="cap small" @click="loadCopy">查看 / 复制到编辑器</button>
           <button class="cap small" :disabled="selected === activeId" @click="activate(selected)">恢复此版本</button>
           <button class="cap small" :disabled="selected === activeId" @click="remove">删除此版本</button>
@@ -27,7 +28,12 @@
           <label>版本名称<input v-model.trim="draft.name" maxlength="64" placeholder="例如：办公网络"></label>
           <label>Mihomo 混合监听端口<input v-model.number="draft.base.mixedPort" type="number" min="1" max="65535"></label>
           <label>sing-box TUN MTU<input v-model.number="draft.base.tunMtu" type="number" min="1280" max="9000"></label>
-          <label>日志级别<select v-model="draft.base.logLevel"><option>debug</option><option>info</option><option>error</option></select></label>
+          <div class="select-field">
+            <label for="routing-log-level">日志级别</label>
+            <liquid-select id="routing-log-level" v-model="draft.base.logLevel">
+              <option>debug</option><option>info</option><option>error</option>
+            </liquid-select>
+          </div>
         </div>
       </section>
       <section>
@@ -36,11 +42,14 @@
         <div v-for="(g, i) in draft.traffic.groups" :key="g.id" class="routing-row">
           <div class="fields">
             <label>组名<input v-model.trim="g.name" maxlength="64"></label>
-            <label>服务器<select v-model="g.serverId" @change="g.nodeIds = []">
-              <option :value="0" disabled>选择服务器</option>
-              <option v-if="g.serverId && !servers.some(s => s.id === g.serverId)" :value="g.serverId">已移除 #{{ g.serverId }}</option>
-              <option v-for="s in servers" :key="s.id" :value="s.id">{{ s.name }} (#{{ s.id }})</option>
-            </select></label>
+            <div class="select-field">
+              <label :for="'routing-server-' + i">服务器</label>
+              <liquid-select :id="'routing-server-' + i" :value="g.serverId" @input="setGroupServer(g, $event)">
+                <option :value="0" disabled>选择服务器</option>
+                <option v-if="g.serverId && !servers.some(s => s.id === g.serverId)" :value="g.serverId">已移除 #{{ g.serverId }}</option>
+                <option v-for="s in servers" :key="s.id" :value="s.id">{{ s.name }} (#{{ s.id }})</option>
+              </liquid-select>
+            </div>
             <label class="check"><input v-model="g.autoTest" type="checkbox">自动测速选路</label>
             <button class="cap small" :disabled="inUse(g.id)" :title="inUse(g.id) ? '先更改引用此组的规则与默认策略' : ''" @click="draft.traffic.groups.splice(i, 1)">移除组</button>
           </div>
@@ -57,19 +66,37 @@
         <h3>流量规则</h3>
         <p>按从上到下的顺序匹配。首条命中的规则决定出口。</p>
         <div v-for="(r, i) in draft.traffic.rules" :key="i" class="routing-row fields">
-          <label>第 {{ i + 1 }} 条<select v-model="r.kind">
-            <option value="domain">精确域名</option><option value="suffix">域名后缀</option><option value="ip">IP / CIDR</option>
-          </select></label>
+          <div class="select-field">
+            <label :for="'routing-rule-kind-' + i">第 {{ i + 1 }} 条</label>
+            <liquid-select :id="'routing-rule-kind-' + i" v-model="r.kind">
+              <option value="domain">精确域名</option><option value="suffix">域名后缀</option><option value="ip">IP / CIDR</option>
+            </liquid-select>
+          </div>
           <label>目标<input v-model.trim="r.value" :placeholder="r.kind === 'ip' ? '192.0.2.0/24' : 'example.com'"></label>
-          <label>出口<select v-model="r.target"><option v-for="t in targets" :key="t.id" :value="t.id">{{ t.name }}</option></select></label>
+          <div class="select-field">
+            <label :for="'routing-rule-target-' + i">出口</label>
+            <liquid-select :id="'routing-rule-target-' + i" v-model="r.target">
+              <option v-for="t in targets" :key="t.id" :value="t.id">{{ t.name }}</option>
+            </liquid-select>
+          </div>
           <button class="cap small" :disabled="!i" @click="move(i, -1)">上移</button>
           <button class="cap small" :disabled="i + 1 === draft.traffic.rules.length" @click="move(i, 1)">下移</button>
           <button class="cap small" @click="draft.traffic.rules.splice(i, 1)">移除</button>
         </div>
         <button class="cap small" @click="addRule">添加流量规则</button>
         <div class="fields defaults">
-          <label>未匹配流量<select v-model="draft.traffic.default"><option v-for="t in targets" :key="t.id" :value="t.id">{{ t.name }}</option></select></label>
-          <label>所选出口无可用节点<select v-model="draft.traffic.empty"><option value="REJECT">拒绝连接</option><option value="DIRECT">直连</option></select></label>
+          <div class="select-field">
+            <label for="routing-default-target">未匹配流量</label>
+            <liquid-select id="routing-default-target" v-model="draft.traffic.default">
+              <option v-for="t in targets" :key="t.id" :value="t.id">{{ t.name }}</option>
+            </liquid-select>
+          </div>
+          <div class="select-field">
+            <label for="routing-empty-target">所选出口无可用节点</label>
+            <liquid-select id="routing-empty-target" v-model="draft.traffic.empty">
+              <option value="REJECT">拒绝连接</option><option value="DIRECT">直连</option>
+            </liquid-select>
+          </div>
         </div>
       </section>
       <section>
@@ -129,11 +156,11 @@ export default {
       try { await action() } catch (e) { if (e !== 'cancel') this.error = e.message || '操作失败' }
       finally { this.busy = false }
     },
-    async refresh() {
+    async refresh(selectActive = true) {
       const { data } = await routingSettings()
       this.nodes = data.nodes
       this.releases = data.releases
-      this.selected = this.activeId || this.releases[0]?.id || 0
+      if (selectActive) this.selected = this.activeId || this.releases[0]?.id || 0
     },
     async read(id) {
       const { data } = await routingSettings(id)
@@ -150,7 +177,10 @@ export default {
       })
     },
     loadCopy() {
-      return this.run(() => this.read(this.selected))
+      return this.run(async () => {
+        await this.refresh(false)
+        await this.read(this.selected)
+      })
     },
     memberOptions(group) {
       const available = this.nodes.filter(n => n.serverId === group.serverId)
@@ -166,6 +196,11 @@ export default {
       while (this.draft.traffic.groups.some(g => g.id === 'g' + n)) n++
       this.draft.traffic.groups.push({ id: 'g' + n, name: '', serverId: 0, nodeIds: [], autoTest: true })
     },
+    setGroupServer(group, serverId) {
+      if (group.serverId === serverId) return
+      group.serverId = serverId
+      group.nodeIds = []
+    },
     addRule() {
       this.draft.traffic.rules.push({ kind: 'suffix', value: '', target: this.targets[0].id })
     },
@@ -176,15 +211,17 @@ export default {
     },
     publish() {
       return this.run(async () => {
-        await publishRouting(this.draft)
-        await this.refresh()
+        try { await publishRouting(this.draft) }
+        finally { await this.refresh(false) }
+        this.selected = this.activeId
         Message.success('分流版本已发布')
       })
     },
     activate(id) {
       return this.run(async () => {
-        await activateRouting(id)
-        await this.refresh()
+        try { await activateRouting(id) }
+        finally { await this.refresh(false) }
+        this.selected = this.activeId || this.releases[0]?.id || 0
         if (id) await this.read(id)
         Message.success(id ? '已恢复分流版本' : '已恢复各客户端原有模板')
       })
@@ -209,9 +246,11 @@ export default {
 .editor section { padding-block: 18px; border-top: 1px solid var(--rim); }
 .editor h3 { font-size: 1.05rem; margin: 0 0 12px; }
 .fields, .members { display: flex; align-items: end; gap: 10px; flex-wrap: wrap; }
-.editor label { display: grid; gap: 5px; font-size: 14px; max-width: 100%; }
+.editor label, .select-field { display: grid; gap: 5px; font-size: 14px; max-width: 100%; }
+.select-field { grid-template-columns: minmax(0, 1fr); width: 12em; }
+.release-version { width: var(--control-max-width); }
 .editor label.check { display: inline-flex; align-items: center; gap: 6px; padding: 6px 0; }
-.editor input:not([type="checkbox"]), .editor select { max-width: 100%; box-sizing: border-box; min-height: 36px; padding: 5px 9px; border: 1px solid var(--rim); border-radius: 8px; color: var(--ink); background: var(--glass-popover); font: inherit; }
+.editor input:not([type="checkbox"]) { max-width: 100%; box-sizing: border-box; min-height: 36px; padding: 5px 9px; border: 1px solid var(--rim); border-radius: 8px; color: var(--ink); background: var(--glass-popover); font: inherit; }
 .editor input[type="number"] { width: 10em; }
 .editor .routing-row { padding: 12px; margin-bottom: 8px; border: 1px solid var(--rim); border-radius: 10px; }
 .members, .defaults { margin-top: 10px; }

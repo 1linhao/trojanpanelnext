@@ -130,11 +130,16 @@ func SelectNodeInfo(id *uint, c *gin.Context) (*vo.NodeOneVo, error) {
 	if err != nil {
 		return nil, err
 	}
-	account, err := dao.SelectAccountByUsername(&accountInfo.Username)
+	account, err := dao.SelectAccountIdentity(accountInfo.Id)
 	if err != nil {
 		return nil, err
 	}
 	nodeOneVo.Password = *account.Pass
+	if nodeOneVo.NodeTypeId == constant.Xray && nodeOneVo.XrayProtocol == constant.ProtocolSocks {
+		user, pass := util.SocksCredentials(*account.Id, *account.Pass)
+		nodeOneVo.Password = pass
+		nodeOneVo.XraySettingEntity.Accounts = []vo.XraySocksAccount{{User: user, Pass: pass}}
+	}
 	if nodeOneVo.NodeTypeId == constant.Xray && (nodeOneVo.XrayProtocol == "vless" || nodeOneVo.XrayProtocol == "vmess") {
 		nodeOneVo.Uuid = util.GenerateUUID(*account.Pass)
 		nodeOneVo.AlterId = 0
@@ -187,8 +192,7 @@ func CreateNode(token string, nodeCreateDto dto.NodeCreateDto) error {
 		return err
 	}
 
-	systemName := constant.SystemName
-	systemConfig, err := SelectSystemByName(&systemName)
+	xrayTemplate, err := nodeServerTemplate(*nodeCreateDto.NodeTypeId)
 	if err != nil {
 		return err
 	}
@@ -206,7 +210,7 @@ func CreateNode(token string, nodeCreateDto dto.NodeCreateDto) error {
 		Domain:     *nodeCreateDto.Domain,
 
 		//  Xray
-		XrayTemplate:       systemConfig.XrayTemplate,
+		XrayTemplate:       xrayTemplate,
 		XrayFlow:           stringValue(nodeCreateDto.XrayFlow),
 		XraySSMethod:       stringValue(nodeCreateDto.XraySSMethod),
 		XrayProtocol:       stringValue(nodeCreateDto.XrayProtocol),
@@ -537,8 +541,7 @@ func UpdateNodeById(token string, nodeUpdateDto *dto.NodeUpdateDto) error {
 		return err
 	}
 
-	systemName := constant.SystemName
-	systemConfig, err := SelectSystemByName(&systemName)
+	xrayTemplate, err := nodeServerTemplate(*nodeUpdateDto.NodeTypeId)
 	if err != nil {
 		return err
 	}
@@ -571,7 +574,7 @@ func UpdateNodeById(token string, nodeUpdateDto *dto.NodeUpdateDto) error {
 		Domain:     *nodeUpdateDto.Domain,
 
 		//  Xray
-		XrayTemplate:       systemConfig.XrayTemplate,
+		XrayTemplate:       xrayTemplate,
 		XrayProtocol:       *nodeUpdateDto.XrayProtocol,
 		XrayFlow:           *nodeUpdateDto.XrayFlow,
 		XraySSMethod:       *nodeUpdateDto.XraySSMethod,
@@ -910,14 +913,8 @@ func nodeURLForClient(accountId *uint, username *string, id *uint, client string
 			headBuilder.WriteString(fmt.Sprintf("ss://%s", base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%s@%s:%d", *nodeXray.XraySSMethod,
 				connectPass, *node.Domain, node.ClientPort())))))
 		} else if *nodeXray.Protocol == "socks" {
-			settings := bo.Settings{}
-			if nodeXray.Settings != nil && *nodeXray.Settings != "" {
-				if err := json.Unmarshal([]byte(*nodeXray.Settings), &settings); err != nil {
-					return "", 0, errors.New(constant.NodeURLError)
-				}
-			}
-			headBuilder.WriteString(fmt.Sprintf("socks://%s", base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%s@%s:%d", settings.Accounts[0].User,
-				settings.Accounts[0].Pass, *node.Domain, node.ClientPort())))))
+			user, pass := util.SocksCredentials(*accountId, password)
+			headBuilder.WriteString(fmt.Sprintf("socks://%s", base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%s@%s:%d", user, pass, *node.Domain, node.ClientPort())))))
 		}
 	} else if *nodeType.Id == constant.TrojanGo {
 		nodeTrojanGo, err := dao.SelectNodeTrojanGoById(node.NodeSubId)

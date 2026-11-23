@@ -223,6 +223,22 @@ async function main() {
       }
       await clickText('button', 'Clash.Meta')
       await waitFor(() => execute("return document.querySelector('.subscription-config-editor textarea').value.trim() === 'rules: []'"), 'template state across clients')
+      for (const client of ['Clash.Meta', 'Xray']) {
+        await clickText('button', client)
+        const original = await execute("return document.querySelector('.subscription-config-editor textarea').value")
+        const add = await waitFor(() => find('.client-template-editor__management button:first-child'), client + ' add action')
+        await command(`/element/${elementId(add)}/click`, 'POST', {})
+        await waitFor(() => find('.template-config-editor__template-select .liquid-select__trigger'), client + ' named template')
+        const name = await find('.client-template-editor__name-field input')
+        await command(`/element/${elementId(name)}/value`, 'POST', { text: '\uE009a\uE000' + '测试模板' })
+        await waitFor(() => execute("return document.querySelector('.template-config-editor__template-select .liquid-select__trigger').textContent.includes('测试模板')"), client + ' renamed template')
+        const remove = await find('.client-template-editor__management button:nth-child(2)')
+        await command(`/element/${elementId(remove)}/click`, 'POST', {})
+        await waitFor(() => execute("return !document.querySelector('.template-config-editor__template-select')"), client + ' delete draft')
+        const restored = await execute("return document.querySelector('.subscription-config-editor textarea').value")
+        if (original !== restored) throw new Error(client + ' draft changed the original')
+      }
+      await clickText('button', 'Clash.Meta')
       const settingsSmallControls = await waitFor(
         () => assertNavigationControls(
           'system settings',

@@ -12,7 +12,7 @@ func InitCron() {
 	c := cron.New(cron.WithLocation(location))
 	_, _ = c.AddFunc("@every 5m", service.MaintainCertificates)
 	go service.MaintainCertificates()
-	// 定时任务：扫描无效用户 1. 被禁用 2.到期的用户
+	// 定时任务：清空自然到期账号的配额
 	_, _ = c.AddFunc("@every 1m", service.CronScanAccounts)
 	// 每天12:00发送到期提醒邮件
 	_, _ = c.AddFunc("0 0 12 * * *", service.CronScanAccountExpireWarn)

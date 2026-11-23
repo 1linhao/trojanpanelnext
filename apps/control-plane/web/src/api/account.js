@@ -1,4 +1,5 @@
 import request from '@/utils/request'
+import downloadJSON from '@/utils/download-json'
 
 /**
  * 登录
@@ -177,6 +178,14 @@ export function resetAccountDownloadAndUpload(data) {
   })
 }
 
+export function resetAllAccountDownloadAndUpload() {
+  return request({
+    url: '/account/resetAllAccountDownloadAndUpload',
+    method: 'post',
+    data: { confirm: true }
+  })
+}
+
 export function resetAccountLoginLimit(data) {
   return request({
     url: '/account/resetAccountLoginLimit',
@@ -185,11 +194,11 @@ export function resetAccountLoginLimit(data) {
   })
 }
 
-export function selectAccountNodeAccess(id) {
+export function selectAccountNodeAccess(id, syncOnly = false) {
   return request({
     url: '/account/nodeAccess',
     method: 'get',
-    params: { id },
+    params: { id, syncOnly },
     silentError: true
   })
 }
@@ -205,15 +214,10 @@ export function updateAccountNodeAccess(data) {
 
 /**
  * 导出用户
- * @param data
  * @returns {*}
  */
-export function exportAccount(data) {
-  return request({
-    url: '/account/exportAccount',
-    method: 'post',
-    data
-  })
+export function exportAccount() {
+  return downloadJSON('/account/exportAccount')
 }
 
 /**
@@ -225,6 +229,8 @@ export function importAccount(data) {
   return request({
     url: '/account/importAccount',
     method: 'post',
+    silentError: true,
+    timeout: 0,
     data
   })
 }
@@ -248,23 +254,18 @@ export function generateCaptcha() {
  */
 
 export function createAccountBatch(data) {
-  return request({
-    url: '/account/createAccountBatch',
-    method: 'post',
-    data
-  })
+  return downloadJSON('/account/createAccountBatch', data)
 }
 
 /**
  * 导出未使用的账户
- * @param data
  * @returns {*}
  */
 
-export function exportAccountUnused(data) {
-  return request({
-    url: '/account/exportAccountUnused',
-    method: 'post',
-    data
-  })
+export function exportAccountUnused() {
+  return downloadJSON('/account/exportAccountUnused')
+}
+
+export function downloadAccountImportTemplate() {
+  return downloadJSON('/account/downloadImportTemplate')
 }

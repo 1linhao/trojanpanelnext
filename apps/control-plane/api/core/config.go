@@ -105,36 +105,6 @@ func init() {
 		logrus.Warnf("optimize panel logo: %v", err)
 	}
 
-	ExportPath := constant.ExportPath
-	if !util.Exists(ExportPath) {
-		if err := os.Mkdir(ExportPath, os.ModePerm); err != nil {
-			logrus.Errorf("create config/export folder err: %v", err)
-			panic(err)
-		}
-	}
-
-	// 创建AccountTemplate模板
-	exportAccountTemplate := constant.ExportAccountTemplate
-	if !util.Exists(exportAccountTemplate) {
-		var accountTemplate []map[string]any
-		accountTemplate = append(accountTemplate, map[string]any{"username": "example", "pass": "example", "hash": "example", "role_id": 3, "email": "test@example.com", "expire_time": int64(4078656000000), "deleted": 0, "quota": -1, "download": 0, "upload": 0})
-		if err := util.ExportJson(exportAccountTemplate, accountTemplate); err != nil {
-			logrus.Errorf("create file AccountTemplate.json err: %v", err)
-			panic(err)
-		}
-	}
-
-	// 创建NodeServerTemplate模板
-	exportNodeServerTemplate := constant.ExportNodeServerTemplate
-	if !util.Exists(exportNodeServerTemplate) {
-		var nodeServerTemplate []map[string]any
-		nodeServerTemplate = append(nodeServerTemplate, map[string]any{"ip": "127.0.0.1", "name": "example", "grpc_port": 8100})
-		if err := util.ExportJson(exportNodeServerTemplate, nodeServerTemplate); err != nil {
-			logrus.Errorf("create file NodeServerTemplate.json err: %v", err)
-			panic(err)
-		}
-	}
-
 	configFilePath := constant.ConfigFilePath
 	if !util.Exists(configFilePath) {
 		file, err := os.OpenFile(configFilePath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
@@ -265,49 +235,7 @@ m = g(r.sub, p.sub) && r.obj == p.obj && r.act == p.act
 		}
 		defer file.Close()
 
-		_, err = file.WriteString(`{
-  "log": {
-    "loglevel": "warning"
-  },
-  "inbounds": [],
-  "outbounds": [
-    {
-      "protocol": "freedom"
-    }
-  ],
-  "api": {
-    "tag": "api",
-    "services": [
-      "HandlerService",
-      "LoggerService",
-      "StatsService"
-    ]
-  },
-  "routing": {
-    "rules": [
-      {
-        "inboundTag": [
-          "api"
-        ],
-        "outboundTag": "api",
-        "type": "field"
-      }
-    ]
-  },
-  "stats": {},
-  "policy": {
-    "levels": {
-      "0": {
-        "statsUserUplink": true,
-        "statsUserDownlink": true
-      }
-    },
-    "system": {
-      "statsInboundUplink": true,
-      "statsInboundDownlink": true
-    }
-  }
-}`)
+		_, err = file.WriteString(constant.DefaultXrayTemplate)
 		if err != nil {
 			logrus.Errorf("template-xray.json file write err: %v", err)
 			panic(err)

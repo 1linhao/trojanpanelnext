@@ -1,5 +1,7 @@
 package vo
 
+import "trojan-panel/model"
+
 type SystemVo struct {
 	Id                          uint `json:"id" redis:"id"`
 	RegisterEnable              uint `json:"registerEnable" redis:"registerEnable"`
@@ -23,10 +25,11 @@ type SystemVo struct {
 	SingBoxOutbound string `json:"singBoxOutbound" redis:"singBoxOutbound"`
 	XrayTemplate    string `json:"xrayTemplate" redis:"xrayTemplate"`
 
-	ClashTemplateName           string `json:"clashTemplateName" redis:"clashTemplateName"`
-	SingBoxTunTemplateName      string `json:"singBoxTunTemplateName" redis:"singBoxTunTemplateName"`
-	SingBoxOutboundTemplateName string `json:"singBoxOutboundTemplateName" redis:"singBoxOutboundTemplateName"`
-	XrayTemplateName            string `json:"xrayTemplateName" redis:"xrayTemplateName"`
+	TemplateLibrary             model.TemplateLibrary `json:"templateLibrary"`
+	ClashTemplateName           string                `json:"clashTemplateName" redis:"clashTemplateName"`
+	SingBoxTunTemplateName      string                `json:"singBoxTunTemplateName" redis:"singBoxTunTemplateName"`
+	SingBoxOutboundTemplateName string                `json:"singBoxOutboundTemplateName" redis:"singBoxOutboundTemplateName"`
+	XrayTemplateName            string                `json:"xrayTemplateName" redis:"xrayTemplateName"`
 }
 
 type ClientTemplateVo struct {

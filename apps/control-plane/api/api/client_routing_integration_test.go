@@ -11,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"trojan-panel/dao/redis"
+	"trojan-panel/model"
 	"trojan-panel/model/constant"
 	"trojan-panel/model/vo"
 	"trojan-panel/service"
@@ -37,7 +38,8 @@ func TestClientRoutingPublishAndSubscribe(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	system, err := json.Marshal(vo.SystemVo{ClashRule: `rules: ["MATCH,DIRECT"]`, SingBoxTun: "{}", SingBoxOutbound: "{}", XrayTemplate: "{}"})
+	library := model.TemplateLibrary{Clash: []model.NamedTemplate{{ID: "travel", Name: "Travel", Content: "mixed-port: 7899\nproxies: [{name: forbidden}]\nproxy-groups: []\nrules: [\"MATCH,DIRECT\"]"}}}
+	system, err := json.Marshal(vo.SystemVo{TemplateLibrary: library, ClashRule: `rules: ["MATCH,DIRECT"]`, SingBoxTun: "{}", SingBoxOutbound: "{}", XrayTemplate: "{}"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,6 +84,31 @@ func TestClientRoutingPublishAndSubscribe(t *testing.T) {
 			t.Fatal(r)
 		}
 	}
+	options := ok(ExportOptions, "GET", "/options", "")
+	catalogJSON, _ := json.Marshal(options)
+	if !strings.Contains(string(catalogJSON), `"id":"travel","name":"Travel"`) || strings.Contains(string(catalogJSON), "mixed-port") {
+		t.Fatal("export options must expose custom Clash IDs and names only")
+	}
+	link := ok(ExportSubscribe, "GET", "/export?id=3&client=clash-meta&template=travel", "").(string)
+	if link != buildSubscribePath(pass, "clash-meta", "travel") {
+		t.Fatal("custom Clash export link", link)
+	}
+	for _, selection := range []string{"clash-meta&template=unknown", "v2ray&template=travel", "shadowrocket&template=travel"} {
+		if call(ExportSubscribe, "GET", "/export?id=3&client="+selection, "", sys)["type"] != "error" {
+			t.Fatal("invalid export", selection)
+		}
+	}
+	named := sub("clash-meta", "travel")
+	for _, want := range []string{"mixed-port: 7899", "MATCH,DIRECT", "name: PROXY", "visible.example", pass} {
+		if !strings.Contains(named, want) {
+			t.Fatal("missing named Clash field", want)
+		}
+	}
+	for _, forbidden := range []string{"forbidden", "hidden.example", "sing.example"} {
+		if strings.Contains(named, forbidden) {
+			t.Fatal("named Clash includes inaccessible proxy")
+		}
+	}
 	origClash, origTun := sub("clash-meta", "default"), sub("sing-box", "tun")
 	origOutbound, origURI := sub("sing-box", "outbound"), sub("v2ray", "default")
 	catalog := ok(ClientRouting, "GET", "/routing", "").(map[string]interface{})
@@ -104,6 +131,9 @@ func TestClientRoutingPublishAndSubscribe(t *testing.T) {
 	if !strings.Contains(tun, "urltest") || !strings.Contains(tun, "节点 10 · Shared") || !strings.Contains(tun, "节点 12 · Shared") || strings.Contains(tun, "hidden.example") || !strings.Contains(tun, pass) {
 		t.Fatal("incorrect sing-box groups or credentials")
 	}
+	if sub("clash-meta", "travel") != named {
+		t.Fatal("published default profile displaced named template")
+	}
 	if sub("sing-box", "outbound") != origOutbound || sub("v2ray", "default") != origURI {
 		t.Fatal("changed outbound or URI profile")
 	}
@@ -115,6 +145,9 @@ func TestClientRoutingPublishAndSubscribe(t *testing.T) {
 	}
 	if empty := sub("clash-meta", "default"); !strings.Contains(empty, "DOMAIN,office.test,REJECT") || strings.Contains(empty, pass) {
 		t.Fatal("revoked account received proxy or incorrect fallback")
+	}
+	if empty := sub("clash-meta", "travel"); strings.Contains(empty, "visible.example") || strings.Contains(empty, pass) || !strings.Contains(empty, "DIRECT") {
+		t.Fatal("named template ignored revoked access")
 	}
 	second := int(ok(PublishClientRouting, "POST", "/publish", strings.Replace(profile, "office.test", "second.test", 1)).(float64))
 	if !strings.Contains(sub("sing-box", "tun"), "second.test") {
@@ -132,4 +165,28 @@ func TestClientRoutingPublishAndSubscribe(t *testing.T) {
 	if sub("clash-meta", "default") != origClash || sub("sing-box", "tun") != origTun {
 		t.Fatal("disabling did not restore original subscriptions")
 	}
+	ok(ChangeClientRouting(false), "POST", "/activate", body)
+	if _, err := db.Exec("DELETE FROM node WHERE id IN (11,12)"); err != nil {
+		t.Fatal(err)
+	}
+	preview := ok(SelectNodeById, "GET", "/node/selectNodeById?id=10&deleteImpact=true", "").(map[string]interface{})
+	groups, present := preview["emptyGroups"].([]interface{})
+	if !present || len(groups) != 1 || groups[0] != "Office" || preview["empty"] != "REJECT" {
+		t.Fatalf("missing deletion impact: %v", preview)
+	}
+
+	ok(ChangeClientRouting(false), "POST", "/activate", `{"id":0}`)
+	result := call(ChangeClientRouting(false), "POST", "/activate", body, sys)
+	if result["type"] != "error" || !strings.Contains(fmt.Sprint(result["message"]), "#11") || !strings.Contains(fmt.Sprint(result["message"]), "REJECT") {
+		t.Fatalf("expected missing nodes and fallback on restore: %v", result)
+	}
+	if strings.Contains(sub("clash-meta", "default"), "office.test") {
+		t.Fatal("failed restore changed active routing")
+	}
+	source = ok(ClientRouting, "GET", fmt.Sprintf("/routing?id=%d", first), "").(map[string]interface{})
+	refs := source["traffic"].(map[string]interface{})["groups"].([]interface{})[0].(map[string]interface{})["nodeIds"].([]interface{})
+	if len(refs) != 3 {
+		t.Fatal("restore edited historical source")
+	}
+
 }

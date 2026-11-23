@@ -3,6 +3,7 @@ package api
 import (
 	"fmt"
 	"github.com/gin-gonic/gin"
+	"trojan-panel/dao"
 	"trojan-panel/model/constant"
 	"trojan-panel/model/dto"
 	"trojan-panel/model/vo"
@@ -15,6 +16,16 @@ func SelectNodeById(c *gin.Context) {
 	_ = c.ShouldBindQuery(&nodeRequireIdDto)
 	if err := validate.Struct(&nodeRequireIdDto); err != nil {
 		vo.Fail(constant.ValidateFailed, c)
+		return
+	}
+	if c.Query("deleteImpact") == "true" {
+		c.Header("Cache-Control", "private, no-store")
+		impact, err := dao.NodeRoutingDeleteImpact(*nodeRequireIdDto.Id)
+		if err != nil {
+			routingFailure(c, err)
+			return
+		}
+		vo.Success(impact, c)
 		return
 	}
 	nodeOneVo, err := service.SelectNodeById(nodeRequireIdDto.Id)

@@ -60,4 +60,17 @@ func TestUpdateAccountFlowWritesAllLedgers(t *testing.T) {
 	assertTraffic(`SELECT upload,download FROM account_traffic_total WHERE account_id=?`, []any{7}, 25, 17)
 	assertTraffic(`SELECT upload,download FROM account_traffic_daily WHERE account_id=? AND traffic_date=CURRENT_DATE()`, []any{7}, 5, 7)
 	assertTraffic(`SELECT upload,download FROM account_server_traffic_daily WHERE account_id=? AND node_server_id=? AND traffic_date=CURRENT_DATE()`, []any{7, 2}, 5, 7)
+
+	// The control plane clears only the current quota counters. The next
+	// node sample must start the quota at its delta and continue all ledgers.
+	if _, err = db.Exec(`UPDATE account SET download=0,upload=0 WHERE id=?`, 7); err != nil {
+		t.Fatal(err)
+	}
+	if err = UpdateAccountFlowByPassOrHash(&pass, nil, 3, 11); err != nil {
+		t.Fatal(err)
+	}
+	assertTraffic(`SELECT upload,download FROM account WHERE id=?`, []any{7}, 11, 3)
+	assertTraffic(`SELECT upload,download FROM account_traffic_total WHERE account_id=?`, []any{7}, 36, 20)
+	assertTraffic(`SELECT upload,download FROM account_traffic_daily WHERE account_id=? AND traffic_date=CURRENT_DATE()`, []any{7}, 16, 10)
+	assertTraffic(`SELECT upload,download FROM account_server_traffic_daily WHERE account_id=? AND node_server_id=? AND traffic_date=CURRENT_DATE()`, []any{7, 2}, 16, 10)
 }

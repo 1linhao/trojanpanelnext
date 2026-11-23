@@ -5,21 +5,22 @@ import (
 )
 
 type AccountVo struct {
-	Id            uint      `json:"id"`
-	Quota         int       `json:"quota"`
-	Download      int       `json:"download"`
-	Upload        int       `json:"upload"`
-	Username      string    `json:"username"`
-	Email         string    `json:"email"`
-	Remark        *string   `json:"remark,omitempty"`
-	RoleId        uint      `json:"roleId"`
-	Deleted       uint      `json:"deleted"`
-	PresetExpire  uint      `json:"presetExpire"`
-	PresetQuota   int       `json:"presetQuota"`
-	LastLoginTime uint      `json:"lastLoginTime"`
-	ExpireTime    uint      `json:"expireTime"`
-	CreateTime    time.Time `json:"createTime"`
-	Roles         []string  `json:"roles"`
+	SessionVersion uint64    `json:"sessionVersion,omitempty"`
+	Id             uint      `json:"id"`
+	Quota          int       `json:"quota"`
+	Download       int       `json:"download"`
+	Upload         int       `json:"upload"`
+	Username       string    `json:"username"`
+	Email          string    `json:"email"`
+	Remark         *string   `json:"remark,omitempty"`
+	RoleId         uint      `json:"roleId"`
+	Deleted        uint      `json:"deleted"`
+	PresetExpire   uint      `json:"presetExpire"`
+	PresetQuota    int       `json:"presetQuota"`
+	LastLoginTime  uint      `json:"lastLoginTime"`
+	ExpireTime     uint      `json:"expireTime"`
+	CreateTime     time.Time `json:"createTime"`
+	Roles          []string  `json:"roles"`
 }
 
 type AccountPageVo struct {
@@ -45,20 +46,21 @@ type AccountTrafficRankVo struct {
 }
 
 type AccountExportVo struct {
-	Username      string    `json:"username" ddb:"username"`
-	Pass          string    `json:"pass" ddb:"pass"`
-	Hash          string    `json:"hash" ddb:"hash"`
-	RoleId        uint      `json:"roleId" ddb:"role_id"`
-	Email         string    `json:"email" ddb:"email"`
-	PresetExpire  uint      `json:"presetExpire" ddb:"preset_expire"`
-	PresetQuota   int       `json:"presetQuota" ddb:"preset_quota"`
-	LastLoginTime uint      `json:"lastLoginTime" ddb:"last_login_time"`
-	ExpireTime    uint      `json:"expireTime" ddb:"expire_time"`
-	Deleted       uint      `json:"deleted" ddb:"deleted"`
-	Quota         int       `json:"quota" ddb:"quota"`
-	Download      int       `json:"download" ddb:"download"`
-	Upload        int       `json:"upload" ddb:"upload"`
-	CreateTime    time.Time `json:"createTime" ddb:"create_time"`
+	LegacyLoginVerifier string    `json:"loginVerifier,omitempty" ddb:"login_verifier"`
+	Username            string    `json:"username" ddb:"username"`
+	Pass                string    `json:"pass" ddb:"pass"`
+	Hash                string    `json:"hash" ddb:"hash"`
+	RoleId              uint      `json:"roleId" ddb:"role_id"`
+	Email               string    `json:"email" ddb:"email"`
+	PresetExpire        uint      `json:"presetExpire" ddb:"preset_expire"`
+	PresetQuota         int       `json:"presetQuota" ddb:"preset_quota"`
+	LastLoginTime       uint      `json:"lastLoginTime" ddb:"last_login_time"`
+	ExpireTime          uint      `json:"expireTime" ddb:"expire_time"`
+	Deleted             uint      `json:"deleted" ddb:"deleted"`
+	Quota               int       `json:"quota" ddb:"quota"`
+	Download            int       `json:"download" ddb:"download"`
+	Upload              int       `json:"upload" ddb:"upload"`
+	CreateTime          time.Time `json:"createTime" ddb:"create_time"`
 }
 
 type CaptureVo struct {

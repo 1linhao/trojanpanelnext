@@ -166,6 +166,10 @@
   border-radius: 999px;
 }
 
+.tp-ui-shell__topbar-brand {
+  display: none;
+}
+
 .tp-ui-shell__topbar h1 {
   flex: 1;
   min-width: 0;
@@ -204,6 +208,17 @@
 
 @media (max-width: 1060px) {
   .tp-ui-shell__side {
+    display: none;
+  }
+
+  .tp-ui-shell__topbar-brand {
+    display: flex;
+    flex: 0 0 auto;
+    width: auto;
+    padding: 0;
+  }
+
+  .tp-ui-shell__topbar-brand .tp-ui-shell__brand-label {
     display: none;
   }
 
@@ -287,6 +302,12 @@
     gap: var(--ui-space-2);
     margin-bottom: 0.875rem;
     padding: 0.625rem 0.75rem;
+  }
+
+  .tp-ui-shell__topbar h1 {
+    flex-basis: min-content;
+    overflow-wrap: anywhere;
+    white-space: normal;
   }
 
   .tp-ui-shell__actions {

@@ -1,7 +1,7 @@
 import axios from 'axios'
 import { Message, MessageBox } from '@/utils/liquid-feedback'
 import store from '@/store'
-import { getToken } from '@/utils/auth'
+import { isCurrentSession } from '@/utils/auth'
 import i18n from '@/lang'
 
 const service = axios.create({
@@ -11,8 +11,10 @@ const service = axios.create({
 
 service.interceptors.request.use(
   (config) => {
-    if (store.getters.token) {
-      config.headers['Authorization'] = getToken()
+    const { token, logoutVersion } = store.state.account
+    if (token) {
+      config.accountSession = { token, logoutVersion }
+      if (isCurrentSession(config.accountSession)) config.headers['Authorization'] = token
     }
     return config
   },
@@ -22,14 +24,27 @@ service.interceptors.request.use(
   }
 )
 
+const isStaleRequest = (config) => config?.accountSession && !isCurrentSession(config.accountSession)
+
 service.interceptors.response.use(
-  (response) => {
-    const res = response.data
+  async (response) => {
+    let res = response.data
+    if (res instanceof Blob && response.config.jsonAttachment) {
+      const disposition = response.headers['content-disposition'] || ''
+      if (/^attachment; filename=.+$/i.test(disposition)) return response
+      // Authentication and application errors still use the standard JSON envelope.
+      try {
+        res = JSON.parse(await res.text()) || {}
+      } catch (_) {
+        res = {}
+      }
+    }
     if (res.code === 20000) {
       return res
     } else if (res instanceof Blob) {
       return response
     } else {
+      if (isStaleRequest(response.config)) return Promise.reject(new Error(res.message || 'Error'))
       if (!response.config || !response.config.silentError) {
         Message({
           message: res.message || 'Error',
@@ -38,22 +53,22 @@ service.interceptors.response.use(
         })
       }
 
-      if (res.code === 50014 || res.code === 50008 || res.code === 50401) {
+      if (response.config.accountSession && [50014, 50008, 50401].includes(res.code)) {
         MessageBox.confirm(i18n.t('confirm.logoutPrompt'), 'Confirm logout', {
           confirmButtonText: i18n.t('confirm.logoutConfirm'),
           cancelButtonText: i18n.t('confirm.cancel'),
           type: 'warning'
-        }).then(() => {
-          store.dispatch('account/resetToken').then(() => {
-            location.reload()
-          })
-        })
+        }).then(async () => {
+          if (isStaleRequest(response.config)) return
+          await store.dispatch('account/resetToken')
+          location.reload()
+        }).catch(() => {})
       }
-      return Promise.reject(new Error(res.message || 'Error'))
+      return Promise.reject(Object.assign(new Error(res.message || 'Error'), { code: res.code }))
     }
   },
   (error) => {
-    // console.log('err' + error)
+    if (axios.isCancel(error) || isStaleRequest(error.config)) return Promise.reject(error)
     if (!error.config || !error.config.silentError) {
       Message({
         message: error.message,

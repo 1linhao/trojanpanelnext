@@ -27,6 +27,9 @@ func TestAccountRemarkMigrationAndDAO(t *testing.T) {
 	removalExec(t, testDB, strings.Replace(sqlInitStr[start:start+end], "CHARSET=utf8mb4", "CHARSET=utf8", 1))
 	removalExec(t, testDB, `INSERT INTO account (id,username,pass,hash,role_id,email,quota) VALUES (2,'fixtureuser','fixture-pass','fixture-hash',3,'',-1)`)
 	for i := 0; i < 2; i++ {
+		if err := migrateAccountStatus(); err != nil {
+			t.Fatal(err)
+		}
 		if err := migrateAccountRemarkColumn(); err != nil {
 			t.Fatal(err)
 		}
@@ -114,7 +117,7 @@ func TestAccountRemarkMigrationAndDAO(t *testing.T) {
 	}
 }
 
-func TestAccountLoginLimitResetPermissions(t *testing.T) {
+func TestAccountResetPermissions(t *testing.T) {
 	dsn := os.Getenv("TP_REMOVAL_TEST_DSN")
 	if dsn == "" {
 		t.Skip("TP_REMOVAL_TEST_DSN is not set")
@@ -123,9 +126,42 @@ func TestAccountLoginLimitResetPermissions(t *testing.T) {
 	removalExec(t, testDB, `CREATE TABLE casbin_rule (p_type varchar(32),v0 varchar(255),v1 varchar(255),v2 varchar(255),v3 varchar(255),v4 varchar(255),v5 varchar(255))`)
 	removalExec(t, testDB, `INSERT INTO casbin_rule VALUES ('p','admin','/api/account/selectAccountPage','GET','','','')`)
 	for i := 0; i < 2; i++ {
-		if err := migrateAccountLoginLimitResetPermissions(); err != nil {
+		if err := migrateAccountResetPermissions(); err != nil {
 			t.Fatal(err)
 		}
 	}
-	assertRemovalRows(t, testDB, `SELECT v0,v1,v2 FROM casbin_rule ORDER BY v0`, [][]string{{"admin", "/api/account/selectAccountPage", "GET"}, {"sysadmin", "/api/account/resetAccountLoginLimit", "POST"}})
+	assertRemovalRows(t, testDB, `SELECT v0,v1,v2 FROM casbin_rule ORDER BY v0,v1`, [][]string{
+		{"admin", "/api/account/selectAccountPage", "GET"},
+		{"sysadmin", "/api/account/resetAccountLoginLimit", "POST"},
+		{"sysadmin", "/api/account/resetAllAccountDownloadAndUpload", "POST"},
+	})
+}
+
+func TestAccountStatusKeepsPlanAndUsage(t *testing.T) {
+	dsn := os.Getenv("TP_REMOVAL_TEST_DSN")
+	if dsn == "" {
+		t.Skip("TP_REMOVAL_TEST_DSN is not set")
+	}
+	testDB := newNodeRemovalTestDB(t, dsn)
+	start := strings.Index(sqlInitStr, "CREATE TABLE `account` (")
+	end := strings.Index(sqlInitStr[start:], ";")
+	removalExec(t, testDB, sqlInitStr[start:start+end])
+	removalExec(t, testDB, "INSERT INTO account(id, username, quota, download, upload, expire_time) VALUES(2,'fixtureuser',67108864,12,34,4078656000000)")
+	if err := migrateAccountStatus(); err != nil {
+		t.Fatal(err)
+	}
+	id, role, disabled := uint(2), uint(3), uint(1)
+	if err := UpdateAccountById(&model.Account{Id: &id, RoleId: &role, Deleted: &disabled}); err != nil {
+		t.Fatal(err)
+	}
+	assertRemovalRows(t, testDB, "SELECT deleted, quota, download, upload FROM account WHERE id=2", [][]string{{"1", "0", "12", "34"}})
+	record, err := SelectAccountById(&id)
+	if err != nil || *record.Quota != 67108864 {
+		t.Fatalf("configured quota lost: %v", err)
+	}
+	disabled = 0
+	if err := UpdateAccountById(&model.Account{Id: &id, RoleId: &role, Deleted: &disabled}); err != nil {
+		t.Fatal(err)
+	}
+	assertRemovalRows(t, testDB, "SELECT deleted, quota, download, upload FROM account WHERE id=2", [][]string{{"0", "67108864", "12", "34"}})
 }

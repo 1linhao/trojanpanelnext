@@ -17,10 +17,21 @@ func SelectAccountNodeAccess(c *gin.Context) {
 		return
 	}
 	var query struct {
-		ID uint `form:"id" binding:"required"`
+		SyncOnly bool `form:"syncOnly"`
+		ID       uint `form:"id" binding:"required"`
 	}
 	if err := c.ShouldBindQuery(&query); err != nil {
 		vo.Fail(constant.ValidateFailed, c)
+		return
+	}
+	c.Header("Cache-Control", "private, no-store")
+	status, err := dao.SelectAccountNodeSync(query.ID)
+	if err != nil {
+		failAccountNodeAccess(c, err)
+		return
+	}
+	if query.SyncOnly {
+		vo.Success(status, c)
 		return
 	}
 	access, err := dao.SelectAccountNodeAccess(query.ID)
@@ -33,11 +44,11 @@ func SelectAccountNodeAccess(c *gin.Context) {
 		failAccountNodeAccess(c, err)
 		return
 	}
-	c.Header("Cache-Control", "private, no-store")
 	vo.Success(struct {
 		dao.AccountNodeAccess
 		Nodes []dao.AccountNodeOption `json:"nodes"`
-	}{access, options}, c)
+		Sync  dao.AccountNodeSync     `json:"sync"`
+	}{access, options, status}, c)
 }
 
 func UpdateAccountNodeAccess(c *gin.Context) {
@@ -54,14 +65,17 @@ func UpdateAccountNodeAccess(c *gin.Context) {
 		vo.Fail(constant.ValidateFailed, c)
 		return
 	}
-	if err := service.UpdateAccountNodeAccess(request.ID, dao.AccountNodeAccess{
+	revision, err := service.UpdateAccountNodeAccess(request.ID, dao.AccountNodeAccess{
 		Restricted: *request.Restricted,
 		NodeIDs:    request.NodeIDs,
-	}); err != nil {
+	})
+	if err != nil {
 		failAccountNodeAccess(c, err)
 		return
 	}
-	vo.Success(nil, c)
+	vo.Success(struct {
+		Revision uint64 `json:"revision,string"`
+	}{revision}, c)
 }
 
 func requireCurrentSysAdmin(c *gin.Context) bool {

@@ -153,8 +153,8 @@ async function main() {
   const base = `${driverUrl}/session/${session.sessionId}`
   const command = async (path, method = 'GET', body) =>
     (await request(`${base}${path}`, method, body)).value
-  const execute = (script) =>
-    command('/execute/sync', 'POST', { script, args: [] })
+  const execute = (script, ...args) =>
+    command('/execute/sync', 'POST', { script, args })
   const find = (selector) =>
     command('/element', 'POST', { using: 'css selector', value: selector })
   const id = (element) => element['element-6066-11e4-a52e-4f735466cecf']
@@ -169,11 +169,35 @@ async function main() {
     )
   const dialog = '.server-delete-dialog'
   const open = async (name) => {
-    const button = await command('/element', 'POST', {
+    const trigger = await command('/element', 'POST', {
       using: 'xpath',
-      value: `//tr[td/strong[normalize-space(.)='${name}']]//button[@title='删除']`
+      value: `//tr[td/strong[normalize-space(.)='${name}']]//button[@aria-haspopup='menu']`
     })
-    await command(`/element/${id(button)}/click`, 'POST', {})
+    const initialScroll = await execute("return document.querySelector('.tbl-wrap').scrollLeft")
+    const point = await execute(`
+      const trigger = arguments[0];
+      const rect = trigger.getBoundingClientRect();
+      const x = Math.round(rect.left + rect.width / 2);
+      const y = Math.round(rect.top + rect.height / 2);
+      return { x, y, visible: trigger.contains(document.elementFromPoint(x, y)) };
+    `, trigger)
+    assert.ok(point.visible, `The row actions for ${name} should be directly clickable`)
+    await command('/actions', 'POST', { actions: [{
+      type: 'pointer',
+      id: 'mouse',
+      parameters: { pointerType: 'mouse' },
+      actions: [
+        { type: 'pointerMove', duration: 0, x: point.x, y: point.y },
+        { type: 'pointerDown', button: 0 },
+        { type: 'pointerUp', button: 0 }
+      ]
+    }] })
+    await waitFor(
+      () => execute("return Boolean(document.querySelector('.liquid-action-menu__popup:popover-open'))"),
+      'row actions'
+    )
+    assert.equal(await execute("return document.querySelector('.tbl-wrap').scrollLeft"), initialScroll)
+    await click(".liquid-action-menu__popup:popover-open button[role=menuitem].danger")
     await waitFor(
       () => execute(`return Boolean(document.querySelector('${dialog}'))`),
       'dialog'
@@ -206,7 +230,7 @@ async function main() {
     await waitFor(
       () =>
         execute(
-          "return document.querySelectorAll('.row-actions button[title=删除]').length === 5"
+          "return document.querySelectorAll('.row-actions button[role=menuitem].danger').length === 5"
         ),
       'server rows'
     )
@@ -275,7 +299,7 @@ async function main() {
     assert.deepEqual(deletions[0], { path: '/api/nodeServer/uninstallNodeServerById', data: { id: 1, purge: false } })
     assert.equal(
       await execute(
-        "return [...document.querySelectorAll('.row-actions button[title=删除]')].every(b => b.disabled)"
+        "return [...document.querySelectorAll('.row-actions button[role=menuitem].danger')].every(b => b.disabled)"
       ),
       true
     )
@@ -319,7 +343,7 @@ async function main() {
     await waitFor(
       () =>
         execute(
-          "return [...document.querySelectorAll('.row-actions button[title=删除]')].every(b => !b.disabled)"
+          "return [...document.querySelectorAll('.row-actions button[role=menuitem].danger')].every(b => !b.disabled)"
         ),
       'retry enabled'
     )
@@ -343,7 +367,7 @@ async function main() {
     await waitFor(
       () =>
         execute(
-          "return document.querySelectorAll('.row-actions button[title=删除]').length === 2"
+          "return document.querySelectorAll('.row-actions button[role=menuitem].danger').length === 2"
         ),
       'mobile server rows'
     )

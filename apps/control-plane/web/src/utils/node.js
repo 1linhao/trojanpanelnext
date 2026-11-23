@@ -274,6 +274,7 @@ export function handleXraySettings(nodeProps) {
   }
   if (isXraySocks(nodeProps)) {
     nodeProps.xraySettingsEntity.auth = 'password'
+    nodeProps.xraySettingsEntity.accounts = undefined
     nodeProps.xraySettingsEntity.ip = '127.0.0.1'
   } else {
     nodeProps.xraySettingsEntity.udp = undefined

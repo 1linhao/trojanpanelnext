@@ -181,8 +181,12 @@ export default {
           this.$store
             .dispatch('account/login', this.loginForm)
             .then(() => {
+              const target = this.redirect
+              const localPath = typeof target === 'string' && target.startsWith('/') &&
+                !target.startsWith('//') && !target.includes('\\') &&
+                new URL(target, window.location.origin).origin === window.location.origin
               this.$router
-                .push({ path: this.redirect || '/' })
+                .replace(localPath ? target : '/')
                 .catch(() => true)
               this.loading = false
             })

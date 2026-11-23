@@ -18,9 +18,10 @@ export function selectNodeById(data) {
  * @param data
  * @returns
  */
-export function selectNodeInfo(data) {
+export function selectNodeInfo(data, silentError = false) {
   return request({
     url: '/node/selectNodeInfo',
+    silentError,
     method: 'get',
     params: data
   })

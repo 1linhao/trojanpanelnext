@@ -1,4 +1,15 @@
 export default {
+  accountImport: {
+    summary: '성공 {imported}개, 건너뜀 {skipped}개, 실패 {failed}개',
+    row: '{row}행: {reason}',
+    usernameRequired: '사용자 이름을 입력하세요',
+    roleRequired: '계정 역할을 선택하세요',
+    invalidRow: '계정 필드 유형이 잘못되었습니다',
+    writeFailed: '계정을 저장하지 못했습니다. 필드 값을 확인하고 다시 시도하세요.',
+    invalidJSON: '행이 하나 이상 포함된 올바른 JSON 파일을 선택하세요',
+    requestFailed: '가져오기에 실패했습니다. 다시 시도하세요.',
+    retry: '실패한 행 다시 시도',
+  },
   route: {
     dashboard: '첫 장',
     serverManage: '서버 관리',
@@ -10,12 +21,9 @@ export default {
     modifyPass: '비밀번호 변경',
     system: '환경 설정',
     baseConfig: '기본 설정',
-    blackList: '블랙리스트',
     emailManage: '메일 관리',
     emailRecord: '기록 보내기',
     profile: '개인 센터',
-    taskManage: '작업 관리',
-    taskList: '작업 목록',
     modify: '속성 수정'
   },
   navbar: {
@@ -23,6 +31,7 @@ export default {
     profile: '개인 센터',
     github: '프로젝트 주소',
     doc: '프로젝트 문서',
+    loggedOutElsewhere: '다른 탭에서 로그아웃했습니다.',
     logout: '로그아웃'
   },
   login: {
@@ -138,7 +147,6 @@ export default {
     nodeQRCode: 'QR 코드 생성',
     nodeURL: 'URL 복사',
     detail: '세부',
-    blackListIp: 'IP',
     toEmail: '받는 사람',
     subject: '주제',
     content: '콘텐츠',
@@ -153,23 +161,9 @@ export default {
     import: '수입',
     export: '내보내다',
     coverByAccountName: '사용자 이름으로 재정의할지 여부',
-    coverByNodeServerName: '서버 이름을 기반으로 재정의할지 여부',
+    coverByNodeServerIp: '같은 IP를 가진 서버 덮어쓰기',
     yes: '예',
     no: '아니요',
-    fileTaskName: '이름',
-    fileTaskType: '유형',
-    fileTaskStatus: '상태',
-    fileTaskErrMsg: '에러 메시지',
-    taskTypeAccountExport: '계정 내보내기',
-    taskTypeNodeServerExport: '서버 내보내기',
-    taskTypeAccountImport: '계정 가져오기',
-    taskTypeNodeServerImport: '서버 가져오기',
-    taskFail: '실패하다',
-    taskWait: '기다리다',
-    taskDoing: '진행 중',
-    taskSuccess: '성공',
-    fileTaskAccountUsername: '설립자',
-    fileTaskDownload: '다운로드',
     downloadTemplate: '템플릿 다운로드',
     deleted: '비활성화 여부',
     fingerprint: '지문',
@@ -402,10 +396,8 @@ export default {
     handleReset: '사용자의 다운로드 및 업로드 트래픽을 재설정하시겠습니까?',
     deleteNode: '이 노드를 삭제하시겠습니까?',
     deleteNodeServer: '이 서버를 삭제하시겠습니까?',
-    deleteBlack: '이 IP를 삭제하시겠습니까?',
-    taskSubmitSuccess:
-      '작업이 성공적으로 제출되었습니다. 나중에 작업 관리에서 확인하십시오',
-    taskDownloadSuccess: '다운로드 성공',
+    importSuccess: '가져오기 성공',
+    downloadSuccess: '다운로드 성공',
     alreadyExists: '이미 존재 함'
   },
   remark: {

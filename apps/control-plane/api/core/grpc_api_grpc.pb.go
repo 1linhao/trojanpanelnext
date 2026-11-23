@@ -445,6 +445,7 @@ var ApiStateService_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
+	ApiKernelService_CheckXrayTemplates_FullMethodName   = "/ApiKernelService/CheckXrayTemplates"
 	ApiKernelService_GetKernelInventory_FullMethodName   = "/ApiKernelService/GetKernelInventory"
 	ApiKernelService_StartKernelOperation_FullMethodName = "/ApiKernelService/StartKernelOperation"
 	ApiKernelService_GetKernelOperation_FullMethodName   = "/ApiKernelService/GetKernelOperation"
@@ -454,6 +455,7 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type ApiKernelServiceClient interface {
+	CheckXrayTemplates(ctx context.Context, in *XrayTemplatesRequest, opts ...grpc.CallOption) (*Response, error)
 	GetKernelInventory(ctx context.Context, in *KernelInventoryRequest, opts ...grpc.CallOption) (*Response, error)
 	StartKernelOperation(ctx context.Context, in *KernelOperationRequest, opts ...grpc.CallOption) (*Response, error)
 	GetKernelOperation(ctx context.Context, in *KernelOperationStateRequest, opts ...grpc.CallOption) (*Response, error)
@@ -465,6 +467,15 @@ type apiKernelServiceClient struct {
 
 func NewApiKernelServiceClient(cc grpc.ClientConnInterface) ApiKernelServiceClient {
 	return &apiKernelServiceClient{cc}
+}
+
+func (c *apiKernelServiceClient) CheckXrayTemplates(ctx context.Context, in *XrayTemplatesRequest, opts ...grpc.CallOption) (*Response, error) {
+	out := new(Response)
+	err := c.cc.Invoke(ctx, ApiKernelService_CheckXrayTemplates_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (c *apiKernelServiceClient) GetKernelInventory(ctx context.Context, in *KernelInventoryRequest, opts ...grpc.CallOption) (*Response, error) {
@@ -498,6 +509,7 @@ func (c *apiKernelServiceClient) GetKernelOperation(ctx context.Context, in *Ker
 // All implementations should embed UnimplementedApiKernelServiceServer
 // for forward compatibility
 type ApiKernelServiceServer interface {
+	CheckXrayTemplates(context.Context, *XrayTemplatesRequest) (*Response, error)
 	GetKernelInventory(context.Context, *KernelInventoryRequest) (*Response, error)
 	StartKernelOperation(context.Context, *KernelOperationRequest) (*Response, error)
 	GetKernelOperation(context.Context, *KernelOperationStateRequest) (*Response, error)
@@ -507,6 +519,9 @@ type ApiKernelServiceServer interface {
 type UnimplementedApiKernelServiceServer struct {
 }
 
+func (UnimplementedApiKernelServiceServer) CheckXrayTemplates(context.Context, *XrayTemplatesRequest) (*Response, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CheckXrayTemplates not implemented")
+}
 func (UnimplementedApiKernelServiceServer) GetKernelInventory(context.Context, *KernelInventoryRequest) (*Response, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetKernelInventory not implemented")
 }
@@ -526,6 +541,24 @@ type UnsafeApiKernelServiceServer interface {
 
 func RegisterApiKernelServiceServer(s grpc.ServiceRegistrar, srv ApiKernelServiceServer) {
 	s.RegisterService(&ApiKernelService_ServiceDesc, srv)
+}
+
+func _ApiKernelService_CheckXrayTemplates_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(XrayTemplatesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ApiKernelServiceServer).CheckXrayTemplates(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ApiKernelService_CheckXrayTemplates_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ApiKernelServiceServer).CheckXrayTemplates(ctx, req.(*XrayTemplatesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 func _ApiKernelService_GetKernelInventory_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -589,6 +622,10 @@ var ApiKernelService_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "ApiKernelService",
 	HandlerType: (*ApiKernelServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "CheckXrayTemplates",
+			Handler:    _ApiKernelService_CheckXrayTemplates_Handler,
+		},
 		{
 			MethodName: "GetKernelInventory",
 			Handler:    _ApiKernelService_GetKernelInventory_Handler,

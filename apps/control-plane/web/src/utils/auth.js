@@ -1,6 +1,21 @@
 import Cookies from 'js-cookie'
 
 const TokenKey = 'Authorization'
+export const logoutStorageKey = 'trojan-panel:logout'
+let logoutVersion = null
+
+export function getLogoutVersion() {
+  try {
+    return localStorage.getItem(logoutStorageKey) || logoutVersion
+  } catch (_) {
+    return logoutVersion
+  }
+}
+
+export function isCurrentSession(session) {
+  return Boolean(session.token) && session.token === getToken() &&
+    session.logoutVersion === getLogoutVersion()
+}
 
 /**
  * 获取token
@@ -24,5 +39,11 @@ export function setToken(token) {
  * @returns {*}
  */
 export function removeToken() {
-  return Cookies.remove(TokenKey)
+  Cookies.remove(TokenKey)
+  logoutVersion = `${Date.now()}-${Math.random()}`
+  try {
+    localStorage.setItem(logoutStorageKey, logoutVersion)
+  } catch (_) {
+    // Cookie removal still signs out this tab when storage is unavailable.
+  }
 }

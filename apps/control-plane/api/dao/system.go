@@ -12,7 +12,7 @@ import (
 func SelectSystemByName(name *string) (*model.System, error) {
 	var system model.System
 	buildSelect, values, err := builder.NamedQuery(
-		"select id,account_config,email_config,template_config from `system` where name = {{name}}",
+		"select id,account_config,email_config,template_config,template_library from `system` where name = {{name}}",
 		map[string]interface{}{"name": *name})
 	if err != nil {
 		logrus.Errorln(err.Error())
@@ -37,27 +37,16 @@ func SelectSystemByName(name *string) (*model.System, error) {
 }
 
 func UpdateSystemById(system *model.System) error {
-	where := map[string]interface{}{"id": *system.Id}
-	update := map[string]interface{}{}
-	if system.AccountConfig != nil {
-		update["account_config"] = *system.AccountConfig
-	}
-	if system.EmailConfig != nil {
-		update["email_config"] = *system.EmailConfig
-	}
-	if system.TemplateConfig != nil {
-		update["template_config"] = *system.TemplateConfig
-	}
-	if len(update) > 0 {
-		buildUpdate, values, err := builder.BuildUpdate("`system`", where, update)
-		if err != nil {
-			logrus.Errorln(err.Error())
-			return errors.New(constant.SysError)
-		}
-		if _, err = db.Exec(buildUpdate, values...); err != nil {
-			logrus.Errorln(err.Error())
-			return errors.New(constant.SysError)
-		}
+	// Merge just the template names sent by the caller. Older settings forms
+	// omit those fields and the library, and can run alongside catalog edits.
+	_, err := db.Exec("UPDATE `system` SET "+
+		"account_config=COALESCE(?,account_config), email_config=COALESCE(?,email_config), "+
+		"template_config=JSON_MERGE_PATCH(template_config,COALESCE(?, '{}')), "+
+		"template_library=COALESCE(?,template_library) WHERE id=?",
+		system.AccountConfig, system.EmailConfig, system.TemplateConfig, system.TemplateLibrary, system.Id)
+	if err != nil {
+		logrus.Errorln(err.Error())
+		return errors.New(constant.SysError)
 	}
 	return nil
 }

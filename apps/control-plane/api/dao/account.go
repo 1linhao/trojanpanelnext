@@ -1,6 +1,7 @@
 package dao
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"github.com/didi/gendry/builder"
@@ -16,7 +17,7 @@ func SelectAccountById(id *uint, includeRemark ...bool) (*model.Account, error) 
 	var account model.Account
 
 	where := map[string]interface{}{"id": *id}
-	selectFields := []string{"id", "username", "role_id", "email", "preset_expire", "preset_quota", "expire_time", "deleted", "quota",
+	selectFields := []string{"id", "username", "role_id", "email", "preset_expire", "preset_quota", "expire_time", "deleted", accountPlanQuota,
 		"download", "upload"}
 	if len(includeRemark) > 0 && includeRemark[0] {
 		selectFields = append(selectFields, "remark")
@@ -75,7 +76,7 @@ func CreateAccount(account *model.Account) error {
 		accountCreate["deleted"] = *account.Deleted
 	}
 	if account.Quota != nil {
-		accountCreate["`quota`"] = *account.Quota
+		setAccountQuota(accountCreate, *account.Quota, account.Deleted != nil && *account.Deleted != 0)
 	}
 	if account.IpLimit != nil {
 		accountCreate["ip_limit"] = *account.IpLimit
@@ -87,6 +88,7 @@ func CreateAccount(account *model.Account) error {
 		accountCreate["download_speed_limit"] = *account.DownloadSpeedLimit
 	}
 	var data []map[string]interface{}
+	clearQuotaIfPastExpiry(accountCreate, account.ExpireTime)
 	data = append(data, accountCreate)
 
 	buildInsert, values, err := builder.BuildInsert("account", data)
@@ -183,7 +185,7 @@ func SelectAccountPage(
 		where["_orderby"] = orderByStr
 	}
 	selectFields := []string{"id", "username", "role_id", "email", "preset_expire", "preset_quota", "last_login_time", "expire_time", "deleted",
-		"quota", "upload", "download", "create_time"}
+		accountPlanQuota, "upload", "download", "create_time"}
 	if len(includeRemark) > 0 && includeRemark[0] {
 		selectFields = append(selectFields, "remark")
 	}
@@ -251,11 +253,16 @@ func DeleteAccountById(id *uint) error {
 }
 
 func SelectAccountByUsername(username *string) (*model.Account, error) {
+	return selectAccountIdentity(map[string]interface{}{"username": *username})
+}
+
+func SelectAccountIdentity(id uint) (*model.Account, error) {
+	return selectAccountIdentity(map[string]interface{}{"id": id})
+}
+
+func selectAccountIdentity(where map[string]interface{}) (*model.Account, error) {
 	var account model.Account
-
-	where := map[string]interface{}{"username": *username}
-
-	selectFields := []string{"id", "username", "pass", "role_id", "preset_expire", "preset_quota", "last_login_time", "deleted"}
+	selectFields := []string{"id", "username", "pass", "login_verifier", "role_id", "preset_expire", "preset_quota", "last_login_time", "deleted", "session_version"}
 	buildSelect, values, err := builder.BuildSelect("account", where, selectFields)
 	if err != nil {
 		logrus.Errorln(err.Error())
@@ -277,64 +284,65 @@ func SelectAccountByUsername(username *string) (*model.Account, error) {
 	return &account, nil
 }
 
-func UpdateAccountPass(oldPass *string, newPass *string, username *string) error {
-	where := map[string]interface{}{"username": *username}
-	update := map[string]interface{}{}
-	if oldPass != nil && *oldPass != "" && newPass != nil && *newPass != "" {
-		sha1String := util.Sha1String(fmt.Sprintf("%s%s", *username, *newPass))
-		update["pass"] = sha1String
-		update["hash"] = util.SHA224String(sha1String)
-	}
-	if len(update) > 0 {
-		buildUpdate, values, err := builder.BuildUpdate("account", where, update)
-		if err != nil {
-			logrus.Errorln(err.Error())
-			return errors.New(constant.SysError)
-		}
-
-		if _, err = db.Exec(buildUpdate, values...); err != nil {
-			logrus.Errorln(err.Error())
-			return errors.New(constant.SysError)
-		}
-	}
-	return nil
+func UpdateAccountPass(account *model.Account, newPass string) error {
+	verifier := util.Sha1String(*account.Username + newPass)
+	return updateAccountIdentity(account, map[string]interface{}{"pass": verifier, "hash": util.SHA224String(verifier), "login_verifier": ""})
 }
 
-func UpdateAccountProperty(oldUsername *string, pass *string, username *string, email *string) error {
-	where := map[string]interface{}{"username": *oldUsername}
+func UpdateAccountProperty(account *model.Account, pass, username, email *string) error {
 	update := map[string]interface{}{}
-	if username != nil && *username != "" {
+	if username != nil && *username != "" && *username != *account.Username {
 		update["username"] = *username
-		sha1String := util.Sha1String(fmt.Sprintf("%s%s", *username, *pass))
-		update["pass"] = sha1String
-		update["hash"] = util.SHA224String(sha1String)
+		verifier := util.Sha1String(*username + *pass)
+		update["login_verifier"] = ""
+		update["pass"] = verifier
+		update["hash"] = util.SHA224String(verifier)
 	}
 	if email != nil && *email != "" {
 		update["email"] = *email
 	}
-	if len(update) > 0 {
-		buildUpdate, values, err := builder.BuildUpdate("account", where, update)
-		if err != nil {
-			logrus.Errorln(err.Error())
-			return errors.New(constant.SysError)
-		}
+	if len(update) == 0 {
+		return nil
+	}
+	return updateAccountIdentity(account, update)
+}
 
-		if _, err = db.Exec(buildUpdate, values...); err != nil {
-			logrus.Errorln(err.Error())
-			return errors.New(constant.SysError)
+// Keep a request bound to the signed account ID and the verifier checked by the
+// service, including when a concurrent rename or password change wins the race.
+func updateAccountIdentity(account *model.Account, update map[string]interface{}) error {
+	where := map[string]interface{}{"id": *account.Id, "pass": *account.Pass}
+	query, args, err := builder.BuildUpdate("account", where, update)
+	if err != nil {
+		return err
+	}
+	result, err := db.Exec(query, args...)
+	if err != nil {
+		return errors.New(constant.SysError)
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		var matches int
+		if err = db.QueryRow("SELECT COUNT(*) FROM account WHERE id=? AND pass=?", *account.Id, *account.Pass).Scan(&matches); err != nil {
+			return err
+		}
+		if matches == 0 {
+			return errors.New(constant.OriPassError)
 		}
 	}
 	return nil
 }
 
 func UpdateAccountById(account *model.Account) error {
-	where := map[string]interface{}{"id": *account.Id}
 	update := map[string]interface{}{}
 	if account.Remark != nil {
 		update["remark"] = *account.Remark
 	}
 	if account.Pass != nil && *account.Pass != "" {
 		sha1String := util.Sha1String(fmt.Sprintf("%s%s", *account.Username, *account.Pass))
+		update["login_verifier"] = ""
 		update["pass"] = sha1String
 		update["hash"] = util.SHA224String(sha1String)
 	}
@@ -356,12 +364,6 @@ func UpdateAccountById(account *model.Account) error {
 	if account.ExpireTime != nil {
 		update["expire_time"] = *account.ExpireTime
 	}
-	if account.RoleId != nil {
-		update["deleted"] = *account.Deleted
-	}
-	if account.Quota != nil {
-		update["quota"] = *account.Quota
-	}
 	if account.IpLimit != nil {
 		update["ip_limit"] = *account.IpLimit
 	}
@@ -372,17 +374,9 @@ func UpdateAccountById(account *model.Account) error {
 		update["download_speed_limit"] = *account.DownloadSpeedLimit
 	}
 
-	if len(update) > 0 {
-		buildUpdate, values, err := builder.BuildUpdate("account", where, update)
-		if err != nil {
-			logrus.Errorln(err.Error())
-			return errors.New(constant.SysError)
-		}
-
-		if _, err = db.Exec(buildUpdate, values...); err != nil {
-			logrus.Errorln(err.Error())
-			return errors.New(constant.SysError)
-		}
+	if err := updateAccountFields(account, update, map[string]interface{}{"id": *account.Id}); err != nil {
+		logrus.Error(err)
+		return errors.New(constant.SysError)
 	}
 	return nil
 }
@@ -426,65 +420,6 @@ func SelectConnectPassword(id *uint, username *string) (string, error) {
 	return "", errors.New(constant.SysError)
 }
 
-func UpdateAccountByUsernames(usernames []string, quota *int, download *uint, upload *uint, deleted *uint) error {
-	where := map[string]interface{}{"username in": usernames}
-
-	update := map[string]interface{}{}
-	if quota != nil {
-		update["quota"] = *quota
-	}
-	if download != nil {
-		update["download"] = *download
-	}
-	if upload != nil {
-		update["upload"] = *upload
-	}
-	if deleted != nil {
-		update["deleted"] = *deleted
-	}
-	if len(update) > 0 {
-		buildUpdate, values, err := builder.BuildUpdate("account", where, update)
-		if err != nil {
-			logrus.Errorln(err.Error())
-			return errors.New(constant.SysError)
-		}
-
-		if _, err = db.Exec(buildUpdate, values...); err != nil {
-			logrus.Errorln(err.Error())
-			return errors.New(constant.SysError)
-		}
-	}
-	return nil
-}
-
-// SelectAccountUsernameByDeletedOrExpireTime
-// 无效账户 1. 账户过期 2. 账户被拉黑
-func SelectAccountUsernameByDeletedOrExpireTime() ([]string, error) {
-	buildSelect, values, err := builder.NamedQuery("select username from account where quota != 0 and (expire_time <= unix_timestamp(NOW()) * 1000 or deleted = 1)",
-		nil)
-	if err != nil {
-		logrus.Errorln(err.Error())
-		return nil, errors.New(constant.SysError)
-	}
-	rows, err := db.Query(buildSelect, values...)
-	if err != nil {
-		logrus.Errorln(err.Error())
-		return nil, errors.New(constant.SysError)
-	}
-	defer rows.Close()
-
-	var usernames []string
-	result, err := scanner.ScanMap(rows)
-	if err != nil {
-		logrus.Errorln(err.Error())
-		return nil, errors.New(constant.SysError)
-	}
-	for _, record := range result {
-		usernames = append(usernames, fmt.Sprintf("%s", record["username"]))
-	}
-	return usernames, nil
-}
-
 // SelectAccountsByExpireTime 用于发邮件
 func SelectAccountsByExpireTime(expireTime uint) ([]model.Account, error) {
 	buildSelect, values, err := builder.NamedQuery("select username,email from account where (quota < 0 or quota > download + upload) and expire_time <= {{expire_time}}",
@@ -508,7 +443,9 @@ func SelectAccountsByExpireTime(expireTime uint) ([]model.Account, error) {
 	return accounts, nil
 }
 
-// ResetAccountDownloadAndUpload 重设下载和上传流量
+// ResetAccountDownloadAndUpload clears the counters used for account quotas.
+// The single UPDATE serializes with the node agent's row-locked increments.
+// Lifetime and daily traffic ledgers are cumulative across quota resets.
 func ResetAccountDownloadAndUpload(id *uint, roleIds *[]uint) error {
 	where := map[string]interface{}{
 		"quota <>": 0,
@@ -534,10 +471,13 @@ func ResetAccountDownloadAndUpload(id *uint, roleIds *[]uint) error {
 }
 
 func SelectAccountClashSubscribe(pass string) (*model.Account, error) {
+	if pass == "" {
+		return nil, errors.New(constant.UnauthorizedError)
+	}
 	var account model.Account
 
 	where := map[string]interface{}{"pass": pass}
-	selectFields := []string{"id", "username", "pass", "expire_time", "quota", "download", "upload"}
+	selectFields := []string{"id", "username", "pass", "deleted", "expire_time", "quota", "download", "upload"}
 	buildSelect, values, err := builder.BuildSelect("account", where, selectFields)
 	if err != nil {
 		logrus.Errorln(err.Error())
@@ -557,14 +497,20 @@ func SelectAccountClashSubscribe(pass string) (*model.Account, error) {
 		logrus.Errorln(err.Error())
 		return nil, errors.New(constant.SysError)
 	}
+	if account.Pass == nil || *account.Pass != pass {
+		return nil, errors.New(constant.UnauthorizedError)
+	}
+	if account.Deleted == nil || *account.Deleted != 0 {
+		return nil, errors.New(constant.AccountDisabled)
+	}
 	return &account, nil
 }
 
 // SelectAccountUnused 查询未使用的账户
 func SelectAccountUnused() ([]vo.AccountExportVo, error) {
 	var accountExportVo []vo.AccountExportVo
-	selectFields := []string{"username", "pass", "hash", "role_id", "email", "preset_expire", "preset_quota", "last_login_time", "expire_time", "deleted",
-		"quota", "download", "upload", "create_time"}
+	selectFields := []string{"username", "pass", "login_verifier", "hash", "role_id", "email", "preset_expire", "preset_quota", "last_login_time", "expire_time", "deleted",
+		accountPlanQuota, "download", "upload", "create_time"}
 	where := map[string]interface{}{"last_login_time": 0}
 	buildSelect, values, err := builder.BuildSelect("account", where, selectFields)
 	if err != nil {
@@ -588,8 +534,8 @@ func SelectAccountUnused() ([]vo.AccountExportVo, error) {
 
 func SelectAccountAll() ([]vo.AccountExportVo, error) {
 	var accountExportVo []vo.AccountExportVo
-	selectFields := []string{"username", "pass", "hash", "role_id", "email", "preset_expire", "preset_quota", "last_login_time", "expire_time", "deleted",
-		"quota", "download", "upload", "create_time"}
+	selectFields := []string{"username", "pass", "login_verifier", "hash", "role_id", "email", "preset_expire", "preset_quota", "last_login_time", "expire_time", "deleted",
+		accountPlanQuota, "download", "upload", "create_time"}
 	buildSelect, values, err := builder.BuildSelect("account", nil, selectFields)
 	if err != nil {
 		logrus.Errorln(err.Error())
@@ -610,7 +556,10 @@ func SelectAccountAll() ([]vo.AccountExportVo, error) {
 	return accountExportVo, nil
 }
 
-// CreateOrUpdateAccount 插入数据时，如果数据已经存在，则更新数据；如果数据不存在，则插入新数据
+// ErrAccountImportSkipped indicates that the row did not write an account.
+var ErrAccountImportSkipped = errors.New("existing or protected account skipped")
+
+// CreateOrUpdateAccount imports by username, preserving the protected administrator.
 func CreateOrUpdateAccount(accountModule model.Account, cover uint) error {
 	// 如果存在则更新
 	account, err := SelectAccountByUsername(accountModule.Username)
@@ -618,14 +567,31 @@ func CreateOrUpdateAccount(accountModule model.Account, cover uint) error {
 		logrus.Errorln(err.Error())
 		return errors.New(constant.SysError)
 	}
-	if account != nil && cover == 1 {
-		// 如果存在则更新，不存在则忽略
+	if account != nil && (cover != 1 || (account.RoleId != nil && *account.RoleId == constant.SYSADMIN)) {
+		return ErrAccountImportSkipped
+	}
+	if accountModule.Pass != nil && *accountModule.Pass != "" {
+		var id uint
+		if account != nil {
+			id = *account.Id
+		}
+		if err := checkImportedCredential(*accountModule.Pass, id); err != nil {
+			return err
+		}
+	}
+	if account != nil {
 		accountWhere := map[string]interface{}{
-			"username": *accountModule.Username,
+			"id":         *account.Id,
+			"username":   *accountModule.Username,
+			"role_id <>": constant.SYSADMIN,
 		}
 		accountUpdate := map[string]interface{}{}
 		if accountModule.Pass != nil && *accountModule.Pass != "" {
 			accountUpdate["`pass`"] = *accountModule.Pass
+			accountUpdate["login_verifier"] = ""
+			if accountModule.LegacyLoginVerifier != nil {
+				accountUpdate["login_verifier"] = *accountModule.LegacyLoginVerifier
+			}
 		}
 		if accountModule.Hash != nil && *accountModule.Hash != "" {
 			accountUpdate["hash"] = *accountModule.Hash
@@ -648,28 +614,21 @@ func CreateOrUpdateAccount(accountModule model.Account, cover uint) error {
 		if accountModule.ExpireTime != nil && *accountModule.ExpireTime != 0 {
 			accountUpdate["expire_time"] = *accountModule.ExpireTime
 		}
-		if accountModule.Deleted != nil {
-			accountUpdate["deleted"] = *accountModule.Deleted
-		}
-		if accountModule.Quota != nil {
-			accountUpdate["quota"] = *accountModule.Quota
-		}
 		if accountModule.Download != nil {
 			accountUpdate["download"] = *accountModule.Download
 		}
 		if accountModule.Upload != nil {
 			accountUpdate["upload"] = *accountModule.Upload
 		}
-		if len(accountUpdate) > 0 {
-			buildInsert, values, err := builder.BuildUpdate("account", accountWhere, accountUpdate)
-			if err != nil {
-				logrus.Errorln(err.Error())
-				return errors.New(constant.SysError)
+		if err := updateAccountFields(&accountModule, accountUpdate, accountWhere); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrAccountImportSkipped
 			}
-			if _, err = db.Exec(buildInsert, values...); err != nil {
-				logrus.Errorln(err.Error())
-				return errors.New(constant.SysError)
+			if insertCredentialError(err) == errSharedCredential {
+				return errSharedCredential
 			}
+			logrus.Error(err)
+			return errors.New(constant.SysError)
 		}
 	} else {
 		// 如果存在则忽略，不存在则添加
@@ -681,6 +640,9 @@ func CreateOrUpdateAccount(accountModule model.Account, cover uint) error {
 			}
 			if accountModule.Pass != nil && *accountModule.Pass != "" {
 				accountCreate["`pass`"] = *accountModule.Pass
+				if accountModule.LegacyLoginVerifier != nil {
+					accountCreate["login_verifier"] = *accountModule.LegacyLoginVerifier
+				}
 			}
 			if accountModule.Hash != nil && *accountModule.Hash != "" {
 				accountCreate["hash"] = *accountModule.Hash
@@ -707,7 +669,7 @@ func CreateOrUpdateAccount(accountModule model.Account, cover uint) error {
 				accountCreate["deleted"] = *accountModule.Deleted
 			}
 			if accountModule.Quota != nil {
-				accountCreate["quota"] = *accountModule.Quota
+				setAccountQuota(accountCreate, *accountModule.Quota, accountModule.Deleted != nil && *accountModule.Deleted != 0)
 			}
 			if accountModule.Download != nil {
 				accountCreate["download"] = *accountModule.Download
@@ -716,6 +678,7 @@ func CreateOrUpdateAccount(accountModule model.Account, cover uint) error {
 				accountCreate["upload"] = *accountModule.Upload
 			}
 			if len(accountCreate) > 0 {
+				clearQuotaIfPastExpiry(accountCreate, accountModule.ExpireTime)
 				data = append(data, accountCreate)
 				buildInsert, values, err := builder.BuildInsert("account", data)
 				if err != nil {
@@ -723,6 +686,9 @@ func CreateOrUpdateAccount(accountModule model.Account, cover uint) error {
 					return errors.New(constant.SysError)
 				}
 				if _, err = db.Exec(buildInsert, values...); err != nil {
+					if insertCredentialError(err) == errSharedCredential {
+						return errSharedCredential
+					}
 					logrus.Errorln(err.Error())
 					return errors.New(constant.SysError)
 				}

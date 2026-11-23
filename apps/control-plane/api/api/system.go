@@ -45,13 +45,20 @@ func Setting(c *gin.Context) {
 
 func UpdateSystemById(c *gin.Context) {
 	var systemUpdateDto dto.SystemUpdateDto
-	_ = c.ShouldBindJSON(&systemUpdateDto)
+	if err := c.ShouldBindJSON(&systemUpdateDto); err != nil {
+		vo.Fail(constant.ValidateFailed, c)
+		return
+	}
 	if err := validate.Struct(&systemUpdateDto); err != nil {
 		vo.Fail(constant.ValidateFailed, c)
 		return
 	}
-	if err := service.UpdateSystemById(systemUpdateDto); err != nil {
-		vo.Fail(constant.SysError, c)
+	if err := service.UpdateSystemById(c.Request.Context(), util.GetToken(c), systemUpdateDto); err != nil {
+		if errors.Is(err, service.ErrInvalidTemplateLibrary) {
+			vo.Fail(err.Error(), c)
+		} else {
+			vo.Fail(constant.SysError, c)
+		}
 		return
 	}
 	vo.Success(nil, c)

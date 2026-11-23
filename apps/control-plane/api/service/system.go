@@ -1,12 +1,14 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	redisgo "github.com/gomodule/redigo/redis"
 	"github.com/sirupsen/logrus"
 	"os"
+	"sync"
 	"time"
 	"trojan-panel/dao"
 	"trojan-panel/dao/redis"
@@ -104,6 +106,12 @@ func SelectSystemByName(name *string) (vo.SystemVo, error) {
 			XrayTemplateName:            systemTemplateConfigBo.XrayTemplateName,
 		}
 
+		if system.TemplateLibrary != nil {
+			if err := json.Unmarshal([]byte(*system.TemplateLibrary), &systemVo.TemplateLibrary); err != nil {
+				return systemVo, errors.New(constant.SysError)
+			}
+		}
+
 		systemVoJson, err := json.Marshal(systemVo)
 		if err != nil {
 			logrus.Errorln(fmt.Sprintf("SelectSystemByName SystemVo serialization err: %v", err))
@@ -147,7 +155,25 @@ func hydrateSystemTemplateDefaults(systemVo *vo.SystemVo) error {
 	return nil
 }
 
-func UpdateSystemById(systemDto dto.SystemUpdateDto) error {
+var settingsUpdateMutex sync.Mutex
+
+func UpdateSystemById(ctx context.Context, token string, systemDto dto.SystemUpdateDto) error {
+	settingsUpdateMutex.Lock()
+	defer settingsUpdateMutex.Unlock()
+	if systemDto.TemplateLibrary != nil || systemDto.XrayTemplate != nil {
+		if err := checkSystemTemplates(ctx, token, systemDto); err != nil {
+			return err
+		}
+	}
+	var libraryJSON *string
+	if library := systemDto.TemplateLibrary; library != nil {
+		b, err := json.Marshal(library)
+		if err != nil {
+			return err
+		}
+		encoded := string(b)
+		libraryJSON = &encoded
+	}
 	accountConfigBo := bo.SystemAccountConfigBo{}
 	if systemDto.RegisterEnable != nil {
 		accountConfigBo.RegisterEnable = *systemDto.RegisterEnable
@@ -201,23 +227,18 @@ func UpdateSystemById(systemDto dto.SystemUpdateDto) error {
 	}
 	systemEmailConfigBoStr := string(systemEmailConfigBoByte)
 
-	systemTemplateConfigBo := bo.SystemTemplateConfigBo{}
-	if systemDto.SystemName != nil {
-		systemTemplateConfigBo.SystemName = *systemDto.SystemName
+	names := map[string]*string{
+		"systemName":                  systemDto.SystemName,
+		"clashTemplateName":           systemDto.ClashTemplateName,
+		"singBoxTunTemplateName":      systemDto.SingBoxTunTemplateName,
+		"singBoxOutboundTemplateName": systemDto.SingBoxOutboundTemplateName,
+		"xrayTemplateName":            systemDto.XrayTemplateName,
 	}
-	if systemDto.ClashTemplateName != nil {
-		systemTemplateConfigBo.ClashTemplateName = *systemDto.ClashTemplateName
+	for key, name := range names {
+		if name == nil {
+			delete(names, key)
+		}
 	}
-	if systemDto.SingBoxTunTemplateName != nil {
-		systemTemplateConfigBo.SingBoxTunTemplateName = *systemDto.SingBoxTunTemplateName
-	}
-	if systemDto.SingBoxOutboundTemplateName != nil {
-		systemTemplateConfigBo.SingBoxOutboundTemplateName = *systemDto.SingBoxOutboundTemplateName
-	}
-	if systemDto.XrayTemplateName != nil {
-		systemTemplateConfigBo.XrayTemplateName = *systemDto.XrayTemplateName
-	}
-	normalizeTemplateNames(&systemTemplateConfigBo)
 	if systemDto.ClashRule != nil {
 		// 修改Clash规则默认模板文件
 		if err := os.WriteFile(constant.ClashTemplateFilePath, []byte(*systemDto.ClashRule), 0666); err != nil {
@@ -255,40 +276,28 @@ func UpdateSystemById(systemDto dto.SystemUpdateDto) error {
 		}
 	}
 	if systemDto.XrayTemplate != nil {
-		// 修改Xray默认模板文件
-		xrayConfigBo := bo.XrayConfigBo{}
-		// 将json字符串映射到模板对象
-		if err = json.Unmarshal([]byte(*systemDto.XrayTemplate), &xrayConfigBo); err != nil {
-			logrus.Errorf("systemDto XrayTemplate deserialization err: %v", err)
+		if err := os.WriteFile(constant.XrayTemplateFilePath, []byte(*systemDto.XrayTemplate), 0666); err != nil {
 			return err
-		}
-		xrayConfigBoStr, err := json.MarshalIndent(xrayConfigBo, "", "    ")
-		if err != nil {
-			logrus.Errorf("xrayConfigBo serialization err: %v", err)
-			return err
-		}
-		if err := os.WriteFile(constant.XrayTemplateFilePath, xrayConfigBoStr, 0666); err != nil {
-			logrus.Errorln(fmt.Sprintf("write Xray default template file err: %v", err))
 		}
 	}
-	systemTemplateConfigBoByte, err := json.Marshal(systemTemplateConfigBo)
+	systemTemplateConfigBoByte, err := json.Marshal(names)
 	if err != nil {
 		logrus.Errorln(fmt.Sprintf("UpdateSystemById SystemTemplateConfigBo serialization err: %v", err))
 	}
 	systemTemplateConfigBoStr := string(systemTemplateConfigBoByte)
 
 	system := model.System{
-		Id:             systemDto.Id,
-		AccountConfig:  &accountConfigBoJsonStr,
-		EmailConfig:    &systemEmailConfigBoStr,
-		TemplateConfig: &systemTemplateConfigBoStr,
+		Id:              systemDto.Id,
+		AccountConfig:   &accountConfigBoJsonStr,
+		EmailConfig:     &systemEmailConfigBoStr,
+		TemplateConfig:  &systemTemplateConfigBoStr,
+		TemplateLibrary: libraryJSON,
 	}
 
 	if err := dao.UpdateSystemById(&system); err != nil {
 		return err
 	}
-	_ = redis.Client.Key.RetryDel("trojan-panel:system")
-	return nil
+	return redis.Client.Key.RetryDel("trojan-panel:system")
 }
 
 func normalizeTemplateNames(config *bo.SystemTemplateConfigBo) {

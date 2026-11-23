@@ -36,12 +36,14 @@ func initAccountRouter(trojanApi *gin.RouterGroup) {
 		account.GET("/exportQRCode", api.ExportQRCode)
 		// 重设下载和上传流量
 		account.POST("/resetAccountDownloadAndUpload", api.ResetAccountDownloadAndUpload)
+		account.POST("/resetAllAccountDownloadAndUpload", api.ResetAllAccountDownloadAndUpload)
 		// 清除单个账号的登录失败计数和临时锁定
 		account.POST("/resetAccountLoginLimit", api.ResetAccountLoginLimit)
 		// 导出用户
 		account.POST("/exportAccount", api.ExportAccount)
 		// 导入用户
 		account.POST("/importAccount", api.ImportAccount)
+		account.POST("/downloadImportTemplate", api.DownloadAccountImportTemplate)
 		// 批量生成账户
 		account.POST("/createAccountBatch", api.CreateAccountBatch)
 		// 导出未使用的账户

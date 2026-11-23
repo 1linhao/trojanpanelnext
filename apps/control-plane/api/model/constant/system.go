@@ -29,13 +29,54 @@ const (
 	// XrayTemplateFilePath Xray模板
 	XrayTemplateFilePath string = "config/template/template-xray.json"
 
-	ExportPath               string = "config/export"
-	ExportAccountTemplate    string = "config/export/AccountTemplate.json"
-	ExportNodeServerTemplate string = "config/export/NodeServerTemplate.json"
-
 	TrojanPanelCertFilePath string = "/tpdata/trojan-panel/cert/"
 	TrojanPanelCrtFile      string = "trojan-panel.crt"
 	TrojanPanelKeyFile      string = "trojan-panel.key"
 
 	TrojanPanelVersion = "v1.0.2-rc.13"
 )
+
+// DefaultXrayTemplate is the configuration installed on a fresh panel.
+const DefaultXrayTemplate = `{
+  "log": {
+    "loglevel": "warning"
+  },
+  "inbounds": [],
+  "outbounds": [
+    {
+      "protocol": "freedom"
+    }
+  ],
+  "api": {
+    "tag": "api",
+    "services": [
+      "HandlerService",
+      "LoggerService",
+      "StatsService"
+    ]
+  },
+  "routing": {
+    "rules": [
+      {
+        "inboundTag": [
+          "api"
+        ],
+        "outboundTag": "api",
+        "type": "field"
+      }
+    ]
+  },
+  "stats": {},
+  "policy": {
+    "levels": {
+      "0": {
+        "statsUserUplink": true,
+        "statsUserDownlink": true
+      }
+    },
+    "system": {
+      "statsInboundUplink": true,
+      "statsInboundDownlink": true
+    }
+  }
+}`

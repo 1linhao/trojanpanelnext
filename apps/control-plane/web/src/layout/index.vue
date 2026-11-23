@@ -1,8 +1,8 @@
 <template>
-  <ui-app-shell :model="shellModel" :labels="shellLabels" :show-user="false" @navigate="go" @action="handleShellAction">
-    <template #brand>
+  <ui-app-shell v-if="token" :model="shellModel" :labels="shellLabels" :show-user="false" show-mobile-brand @navigate="go" @action="handleShellAction">
+    <template #brand="{ compact }">
       <panel-logo />
-      <span class="prototype-brand__name"><strong>{{ branding.systemName }}</strong></span>
+      <span v-if="!compact" class="prototype-brand__name"><strong>{{ branding.systemName }}</strong></span>
     </template>
     <template #icon="{ name }"><app-icon :name="name" class="prototype-nav-icon" /></template>
     <template #actions>
@@ -45,7 +45,7 @@ export default {
   }),
   created() { loadPanelSettings().catch(() => {}) },
   computed: {
-    ...mapGetters(['roles', 'username']),
+    ...mapGetters(['roles', 'username', 'token']),
     isAdmin() { return this.roles.some((role) => role === 'sysadmin' || role === 'admin') },
     isLocalPreview() {
       return import.meta.env.DEV && ['127.0.0.1', 'localhost'].includes(window.location.hostname)
@@ -78,8 +78,13 @@ export default {
     },
     go(path) { if (path !== this.$route.path) this.$router.push(path).catch(() => true) },
     async logout() {
-      await this.$store.dispatch('account/logout')
-      await this.$router.push('/login')
+      const redirect = this.$route.fullPath
+      try {
+        await this.$store.dispatch('account/logout')
+        if (!this.token) await this.$router.replace({ path: '/login', query: { redirect } })
+      } catch (_) {
+        // The request service reports sign-out failures.
+      }
     }
   }
 }

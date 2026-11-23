@@ -15,6 +15,7 @@
           clearable
           placeholder="账号状态"
           class="prototype-select"
+          @change="handleStatusFilter"
         >
           <option
             v-for="item in deletedList"
@@ -58,6 +59,17 @@
         </button>
         <button
           v-if="checkPermission(['sysadmin'])"
+          class="cap small"
+          type="button"
+          :disabled="resettingAllTraffic"
+          :title="$t('table.resetAllAccountTrafficLabel')"
+          :aria-label="$t('table.resetAllAccountTrafficLabel')"
+          @click="handleResetAllAccountTraffic"
+        >
+          <app-icon name="refresh" aria-hidden="true" />{{ $t('table.resetAllAccountTraffic') }}
+        </button>
+        <button
+          v-if="checkPermission(['sysadmin'])"
           class="cap primary small"
           type="button"
           @click="handleCreate"
@@ -68,32 +80,25 @@
     </ui-panel>
 
     <ui-panel motion-key="account-list">
-      <div class="tbl-wrap" v-liquid-loading="listLoading">
+      <div
+        ref="accountTable"
+        v-liquid-loading="listLoading"
+        class="tbl-wrap"
+        role="region"
+        :aria-label="$t('route.accountList')"
+        tabindex="0"
+      >
         <table class="tbl">
           <thead>
             <tr>
               <th>账号</th>
               <th v-if="canViewRemarks">{{ $t('table.accountRemark') }}</th>
               <th>角色</th>
-              <th class="traffic-reset-column">
-                <div class="traffic-reset-column-head">
-                  <span>流量（已用 / 配额）</span>
-                  <button
-                    v-if="checkPermission(['sysadmin'])"
-                    class="cap small traffic-reset-button"
-                    type="button"
-                    title="重置所有用户流量统计"
-                    aria-label="重置所有用户流量统计"
-                    @click="handleResetAllAccountTraffic"
-                  >
-                    <app-icon name="refresh" />重置全部
-                  </button>
-                </div>
-              </th>
+              <th>流量（已用 / 配额）</th>
               <th class="account-expiry-column">到期时间</th>
               <th>最近登录</th>
               <th>状态</th>
-              <th class="table-actions">操作</th>
+              <th scope="col" class="sticky-row-actions">{{ $t('table.actions') }}</th>
             </tr>
           </thead>
           <tbody>
@@ -103,7 +108,7 @@
             <tr v-else-if="!listLoading && !list.length" class="tbl-empty">
               <td :colspan="tableColumnCount">暂无数据</td>
             </tr>
-            <tr v-for="(row, index) in list" :key="row.id">
+            <tr v-for="row in list" :key="row.id">
               <td class="primary-cell">
                 <strong>{{ row.username }}</strong
                 ><small>{{ row.email || '未绑定邮箱' }}</small>
@@ -140,6 +145,7 @@
                 <time v-else class="account-expiry-value">
                   <span>{{ timePart(row.expireTime, 0) }}</span>
                   <span>{{ timePart(row.expireTime, 1) }}</span>
+                  <span v-if="row.expireTime <= accountNow" class="bad-text">{{ $t('accountStatus.expired') }}</span>
                 </time>
               </td>
               <td class="muted">
@@ -152,73 +158,83 @@
               <td>
                 <span class="chip" :class="row.deleted === 0 ? 'ok' : 'bad'"
                   ><span class="dot"></span
-                  >{{ row.deleted === 0 ? '正常' : '停用' }}</span
+                  >{{ row.deleted === 0 ? $t('table.enable') : $t('table.disable') }}</span
                 >
               </td>
-              <td>
-                <div class="row-actions">
+              <td class="sticky-row-actions">
+                <liquid-action-menu
+                  v-if="checkPermission(['sysadmin']) || (checkPermission(['admin']) && row.lastLoginTime !== 0)"
+                  :label="$t('table.actionsFor', { name: row.username })"
+                >
                   <button
                     v-if="checkPermission(['sysadmin'])"
-                    class="icon-btn"
                     type="button"
-                    title="编辑"
+                    role="menuitem"
+                    tabindex="-1"
+                    :title="$t('table.edit')"
                     @click="handleUpdate(row)"
                   >
-                    <app-icon name="edit" />
+                    <app-icon name="edit" aria-hidden="true" />
+                    {{ $t('table.edit') }}
                   </button>
                   <button
                     v-if="checkPermission(['sysadmin'])"
-                    class="icon-btn"
                     type="button"
+                    role="menuitem"
+                    tabindex="-1"
                     :title="$t('accountNodeAccess.action')"
-                    :aria-label="$t('accountNodeAccess.action')"
                     @click="nodeAccessAccount = row"
                   >
-                    <app-icon name="node" />
+                    <app-icon name="node" aria-hidden="true" />
+                    {{ $t('accountNodeAccess.action') }}
                   </button>
                   <button
                     v-if="checkPermission(['sysadmin'])"
-                    class="icon-btn"
                     type="button"
+                    role="menuitem"
+                    tabindex="-1"
                     :title="$t('table.resetAccountTraffic')"
-                    :aria-label="$t('table.resetAccountTraffic')"
                     @click="handleReset(row)"
                   >
-                    <app-icon name="reset-traffic" />
+                    <app-icon name="reset-traffic" aria-hidden="true" />
+                    {{ $t('table.resetAccountTraffic') }}
                   </button>
                   <button
                     v-if="checkPermission(['sysadmin'])"
-                    class="icon-btn"
                     type="button"
+                    role="menuitem"
+                    tabindex="-1"
                     :title="$t('table.resetAccountLoginLimit')"
-                    :aria-label="$t('table.resetAccountLoginLimit')"
                     :disabled="resettingLoginLimitId !== 0"
                     @click="handleResetLoginLimit(row)"
                   >
-                    <app-icon name="reset-login" />
+                    <app-icon name="reset-login" aria-hidden="true" />
+                    {{ $t('table.resetAccountLoginLimit') }}
                   </button>
                   <button
-                    v-if="
-                      checkPermission(['sysadmin', 'admin']) &&
-                      row.lastLoginTime !== 0
-                    "
-                    class="icon-btn"
+                    v-if="checkPermission(['sysadmin', 'admin']) && row.lastLoginTime !== 0"
                     type="button"
-                    title="复制订阅"
+                    role="menuitem"
+                    tabindex="-1"
+                    :title="$t('table.clashSubscribeForSb')"
                     @click="handleClashSubscribeForSb(row)"
                   >
-                    <app-icon name="document-copy" />
+                    <app-icon name="document-copy" aria-hidden="true" />
+                    {{ $t('table.clashSubscribeForSb') }}
                   </button>
                   <button
                     v-if="checkPermission(['sysadmin'])"
-                    class="icon-btn danger"
+                    class="danger"
                     type="button"
-                    title="删除"
-                    @click="handleDelete(row, index)"
+                    role="menuitem"
+                    tabindex="-1"
+                    :title="$t('table.delete')"
+                    @click="handleDelete(row)"
                   >
-                    <app-icon name="delete" />
+                    <app-icon name="delete" aria-hidden="true" />
+                    {{ $t('table.delete') }}
                   </button>
-                </div>
+                </liquid-action-menu>
               </td>
             </tr>
           </tbody>
@@ -229,7 +245,7 @@
         :total="total"
         :page.sync="listQuery.pageNum"
         :limit.sync="listQuery.pageSize"
-        @pagination="getList"
+        @pagination="handlePagination"
       />
     </ui-panel>
     <ui-dialog
@@ -292,6 +308,7 @@
             :inactive-value="1"
           >
           </liquid-switch>
+          <p v-if="temp.deleted === 1" class="ui-supporting-text">{{ $t('accountStatus.disabledHint') }}</p>
         </liquid-form-item>
         <liquid-form-item :label="$t('table.expireTime')" prop="expireTime">
           <liquid-date-picker
@@ -300,6 +317,7 @@
             value-format="timestamp"
             :placeholder="$t('table.expireTime')"
           />
+          <p v-if="dialogStatus === 'update' && temp.quota === 0" class="ui-supporting-text">{{ $t('accountStatus.renewalHint') }}</p>
         </liquid-form-item>
       </liquid-form>
       <div slot="footer" class="dialog-footer">
@@ -325,7 +343,18 @@
       :label="$t('table.coverByAccountName')"
       :import-data="importData"
       :download-template="downloadTemplate"
-    />
+      :retry="importFailures.length > 0"
+    >
+      <template #retry>
+        <div v-if="importFailures.length" class="account-import-retry">
+          <p role="status">{{ $t('accountImport.summary', importResult) }}</p>
+          <label v-for="row in importFailures" :key="row.number">
+            {{ $t('accountImport.row', { row: row.number, reason: $t(`accountImport.${row.reason}`) }) }}
+            <liquid-input v-model="row.source" type="textarea" spellcheck="false" />
+          </label>
+        </div>
+      </template>
+    </import-tip>
     <BatchOperation
       ref="batchOperationForm"
       :dialog-form-visible-props.sync="batchOperationDialogFormVisible"
@@ -338,29 +367,33 @@
 import {
   createAccount,
   deleteAccountById,
+  downloadAccountImportTemplate,
   exportAccount,
   exportAccountUnused,
   exportSubscribe,
   importAccount,
   resetAccountDownloadAndUpload,
+  resetAllAccountDownloadAndUpload,
   resetAccountLoginLimit,
   selectAccountPage,
   updateAccountById
 } from '@/api/account'
 import Pagination from '@/components/Pagination'
+import LiquidActionMenu from '@/components/LiquidActionMenu'
 import ImportTip from '@/components/ImportTip'
 import latestListRequest from '@/mixins/latest-list-request'
 
 import { Message, MessageBox } from '@/utils/liquid-feedback'
 import { timeStampToDate } from '@/utils'
-import { byteToMb, getFlow, mbToByte } from '@/utils/account'
+import { byteToMb, getFlow } from '@/utils/account'
 import { selectRoleList } from '@/api/role'
 import checkPermission from '@/utils/permission'
 import { setting } from '@/api/system'
-import { downloadTemplate } from '@/api/file-task'
+import accountExpiryClock from '@/mixins/account-expiry-clock'
 import BatchOperation from '@/views/account/list/compoments/BatchOperation'
 import AccountNodeAccess from '@/views/account/list/compoments/AccountNodeAccess'
 import copy from 'copy-to-clipboard'
+import accountImportRows from './account-import-rows'
 
 export default {
   name: 'AccountListPage',
@@ -373,8 +406,8 @@ export default {
       return deletedMap[deleted]
     }
   },
-  components: { AccountNodeAccess, BatchOperation, Pagination, ImportTip },
-  mixins: [latestListRequest],
+  components: { AccountNodeAccess, BatchOperation, Pagination, ImportTip, LiquidActionMenu },
+  mixins: [latestListRequest, accountExpiryClock],
   data() {
     const validateUsername = (rule, value, callback) => {
       if (this.temp.username.trim().indexOf('admin') >= 0) {
@@ -395,6 +428,9 @@ export default {
       list: null,
       total: 0,
       resettingLoginLimitId: 0,
+      originalQuota: null,
+      originalExpiry: null,
+      resettingAllTraffic: false,
       orderFieldArr: ['role_id', 'create_time'],
       listQuery: {
         pageNum: 1,
@@ -427,6 +463,8 @@ export default {
         create: this.$t('table.add')
       },
       importVisible: false,
+      importFailures: [],
+      importResult: null,
       deletedList: [
         { value: 0, label: this.$t('table.enable') },
         { value: 1, label: this.$t('table.disable') }
@@ -637,12 +675,32 @@ export default {
       if (!checkPermission(['sysadmin'])) delete result.remark
       return result
     },
-    handleResetAllAccountTraffic() {
-      this.$message({
-        type: 'info',
-        showClose: true,
-        message: '全部用户流量统计重置接口待接入，当前未修改任何数据'
-      })
+    async handleResetAllAccountTraffic() {
+      if (this.resettingAllTraffic || !checkPermission(['sysadmin'])) return
+      this.resettingAllTraffic = true
+      try {
+        await MessageBox.confirm(
+          this.$t('confirm.resetAllAccountTraffic'),
+          this.$t('table.resetAllAccountTrafficLabel'),
+          {
+            confirmButtonText: this.$t('table.resetAllAccountTraffic'),
+            cancelButtonText: this.$t('confirm.cancel'),
+            type: 'warning'
+          }
+        )
+        if (!checkPermission(['sysadmin'])) return
+        await resetAllAccountDownloadAndUpload()
+        await this.getList()
+        this.$notify({
+          message: this.$t('confirm.resetAllAccountTrafficSuccess'),
+          type: 'success',
+          duration: 2000
+        })
+      } catch (_) {
+        // Cancellation sends no request; API failures use the shared feedback.
+      } finally {
+        this.resettingAllTraffic = false
+      }
     },
     timePart(timestamp, index) {
       return timeStampToDate(timestamp, false).split(' ')[index] || '—'
@@ -671,13 +729,18 @@ export default {
         this.roleList = data
       })
     },
-    getList() {
+    getList(resetScroll = false) {
       const request = this.beginListRequest()
       this.listQuery.orderFields = this.orderFieldArr.join(',')
       return selectAccountPage(this.listQuery).then((response) => {
         if (!this.ownsListRequest(request)) return
         this.list = response.data.accounts.map(this.accountForRole)
         this.total = response.data.total
+        if (resetScroll) {
+          this.$nextTick(() => {
+            if (this.ownsListRequest(request)) this.$refs.accountTable.scrollTop = 0
+          })
+        }
       }).catch(() => {
         if (!this.ownsListRequest(request)) return
         this.list = []
@@ -701,9 +764,16 @@ export default {
         createTime: new Date()
       }
     },
+    handlePagination() {
+      this.getList(true)
+    },
+    handleStatusFilter(value) {
+      this.listQuery.deleted = value === '' ? undefined : value
+      this.handleFilter()
+    },
     handleFilter() {
       this.listQuery.pageNum = 1
-      this.getList()
+      this.getList(true)
     },
     handleCreate() {
       this.resetTemp()
@@ -723,34 +793,35 @@ export default {
     handleUpdate(row) {
       this.temp = this.accountForRole(row)
       this.temp.quota = byteToMb(row.quota)
+      this.originalQuota = this.temp.quota
+      this.originalExpiry = row.expireTime
       this.dialogStatus = 'update'
       this.dialogFormVisible = true
       this.$nextTick(() => {
         this.$refs['dataForm'].clearValidate()
       })
     },
-    handleDelete(row, index) {
-      MessageBox.confirm(
-        this.$t('confirm.deleteUser'),
-        this.$t('confirm.warn'),
-        {
-          confirmButtonText: this.$t('confirm.yes'),
-          cancelButtonText: this.$t('confirm.cancel'),
-          type: 'warning'
-        }
-      ).then(() => {
-        const tempData = Object.assign({}, row)
-        delete tempData.remark
-        deleteAccountById(tempData).then(() => {
-          this.list.splice(index, 1)
-          this.$notify({
-            title: 'Success',
-            message: this.$t('confirm.deleteSuccess'),
-            type: 'success',
-            duration: 2000
-          })
+    async handleDelete(row) {
+      try {
+        await MessageBox.confirm(
+          this.$t('confirm.deleteUser'),
+          this.$t('confirm.warn'),
+          {
+            confirmButtonText: this.$t('confirm.yes'),
+            cancelButtonText: this.$t('confirm.cancel'),
+            type: 'warning'
+          }
+        )
+        await deleteAccountById({ id: row.id })
+        await this.getList()
+        this.$notify({
+          message: this.$t('confirm.deleteSuccess'),
+          type: 'success',
+          duration: 2000
         })
-      })
+      } catch (_) {
+        // Cancellation sends no request; API failures use the shared feedback.
+      }
     },
     createData() {
       this.$refs['dataForm'].validate((valid) => {
@@ -775,19 +846,18 @@ export default {
         if (valid) {
           const tempData = Object.assign({}, this.temp)
           if (!checkPermission(['sysadmin']) || tempData.remark === undefined || tempData.remark === null) delete tempData.remark
-          updateAccountById(tempData).then(() => {
-            const index = this.list.findIndex((v) => v.id === tempData.id)
-            if (index >= 0) this.list.splice(index, 1, this.accountForRole({
-              ...this.list[index], ...tempData, quota: mbToByte(tempData.quota)
-            }))
+          if (tempData.quota === this.originalQuota) delete tempData.quota
+          updateAccountById(tempData).then(async ({ data }) => {
+            const renewedWithoutQuota = this.originalExpiry <= this.accountNow && data && data.expireTime > this.accountNow && data.quota === 0
+            await this.getList()
             this.dialogFormVisible = false
             this.$notify({
               title: 'Success',
-              message: this.$t('confirm.modifySuccess'),
-              type: 'success',
-              duration: 2000
+              message: this.$t(renewedWithoutQuota ? 'accountStatus.renewedZero' : 'confirm.modifySuccess'),
+              type: renewedWithoutQuota ? 'warning' : 'success',
+              duration: renewedWithoutQuota ? 6000 : 2000
             })
-          })
+          }).catch(() => { /* The request interceptor displays the error. */ })
         }
       })
     },
@@ -799,28 +869,27 @@ export default {
         return ''
       }
     },
-    handleReset(row) {
-      MessageBox.confirm(
-        this.$t('confirm.handleReset'),
-        this.$t('confirm.warn'),
-        {
-          confirmButtonText: this.$t('confirm.yes'),
-          cancelButtonText: this.$t('confirm.cancel'),
-          type: 'warning'
-        }
-      ).then(() => {
-        const tempData = Object.assign({}, row)
-        delete tempData.remark
-        resetAccountDownloadAndUpload(tempData).then(() => {
-          this.getList()
-          this.$notify({
-            title: 'Success',
-            message: this.$t('confirm.resetSuccess'),
-            type: 'success',
-            duration: 2000
-          })
+    async handleReset(row) {
+      try {
+        await MessageBox.confirm(
+          this.$t('confirm.handleReset'),
+          this.$t('confirm.warn'),
+          {
+            confirmButtonText: this.$t('confirm.yes'),
+            cancelButtonText: this.$t('confirm.cancel'),
+            type: 'warning'
+          }
+        )
+        await resetAccountDownloadAndUpload({ id: row.id })
+        await this.getList()
+        this.$notify({
+          message: this.$t('confirm.resetSuccess'),
+          type: 'success',
+          duration: 2000
         })
-      })
+      } catch (_) {
+        // Cancellation sends no request; API failures use the shared feedback.
+      }
     },
     async handleResetLoginLimit(row) {
       if (this.resettingLoginLimitId || !checkPermission(['sysadmin']) ||
@@ -851,35 +920,66 @@ export default {
         this.resettingLoginLimitId = 0
       }
     },
-    async importData(params) {
-      const valid = await this.$refs.importTip.$refs.dataForm.validate()
+    async importData({ file }) {
+      const tip = this.$refs.importTip
+      const valid = await tip.$refs.dataForm.validate()
       if (!valid) return false
+
+      const retrying = this.importFailures.length > 0
+      let rows
+      try {
+        if (retrying) {
+          rows = this.importFailures.map(({ number, source }) => {
+            JSON.parse(source)
+            return { number, source }
+          })
+        } else {
+          rows = accountImportRows(await file.text())
+        }
+      } catch (_) {
+        Message.error(this.$t('accountImport.invalidJSON'))
+        return false
+      }
+
       const formData = new FormData()
-      formData.append('file', params.file)
-      formData.append('cover', this.$refs.importTip.temp.cover)
-      await importAccount(formData)
+      formData.append('file', retrying
+        ? new File([`[${rows.map((row) => row.source).join(',')}]`], 'retry.json', { type: 'application/json' })
+        : file)
+      formData.append('cover', tip.temp.cover)
+      let result
+      try {
+        const response = await importAccount(formData)
+        result = response.data
+      } catch (_) {
+        Message.error(this.$t('accountImport.requestFailed'))
+        return false
+      }
+
+      if (!this.listRequestActive) return false
+      if (!result || result.imported > 0) {
+        this.listQuery.pageNum = 1
+        this.getList(true)
+      }
+      if (result?.failures.length) {
+        this.importResult = { ...result, failed: result.failures.length }
+        this.importFailures = result.failures.map(({ row, reason }) => ({ ...rows[row - 1], reason }))
+        return false
+      }
       this.importVisible = false
-      this.$notify({
-        title: 'Success',
-        message: this.$t('confirm.taskSubmitSuccess'),
-        type: 'success',
-        duration: 2000
-      })
+      this.importFailures = []
+      tip.fileList = []
+      if (tip.$refs.upload) tip.$refs.upload.value = ''
+      const message = result
+        ? this.$t('accountImport.summary', { ...result, failed: 0 })
+        : this.$t('confirm.importSuccess')
+      this.$notify({ message, type: 'success', duration: 4000 })
       return true
     },
     handleImport() {
       this.importVisible = true
     },
     handleExport() {
-      exportAccount().then(() => {
-        this.importVisible = false
-        this.$notify({
-          title: 'Success',
-          message: this.$t('confirm.taskSubmitSuccess').toString(),
-          type: 'success',
-          duration: 2000
-        })
-      })
+      return exportAccount().then(this.notifyDownload)
     },
     handleCreateBatch() {
       this.batchOperationDialogFormVisible = true
@@ -888,36 +988,17 @@ export default {
       })
     },
     exportAccountUnused() {
-      exportAccountUnused().then(() => {
-        this.$notify({
-          title: 'Success',
-          message: this.$t('confirm.taskSubmitSuccess').toString(),
-          type: 'success',
-          duration: 2000
-        })
-      })
+      return exportAccountUnused().then(this.notifyDownload)
     },
     downloadTemplate() {
-      downloadTemplate({ id: 1 }).then((res) => {
-        // 将二进制文件转化为可访问的url
-        const blob = new Blob([res.data], {
-          type: 'application/octet-stream'
-        })
-        let url = window.URL.createObjectURL(blob)
-        let a = document.createElement('a')
-        document.body.appendChild(a)
-        a.href = url
-        let dis = res.headers['content-disposition']
-        a.download = dis.split('attachment; filename=')[1]
-        // 模拟点击下载
-        a.click()
-        window.URL.revokeObjectURL(url)
-        this.$notify({
-          title: 'Success',
-          message: this.$t('confirm.taskDownloadSuccess'),
-          type: 'success',
-          duration: 2000
-        })
+      return downloadAccountImportTemplate().then(this.notifyDownload)
+    },
+    notifyDownload() {
+      this.$notify({
+        title: 'Success',
+        message: this.$t('confirm.downloadSuccess'),
+        type: 'success',
+        duration: 2000
       })
     },
     handleClashSubscribeForSb(row) {

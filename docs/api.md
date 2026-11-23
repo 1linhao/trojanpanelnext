@@ -41,11 +41,21 @@ JSON 响应包含 `code`、`type`、`message` 和 `data`。成功业务码为 `2
 | 系统设置与订阅模板 | `/api/system/` | [system.go](../apps/control-plane/api/router/system.go) |
 | 内核版本、清单与任务 | `/api/kernel/` | [kernel_upgrade.go](../apps/control-plane/api/router/kernel_upgrade.go) |
 | Node 产品容器与更新结果 | `/api/container/` | [node_container.go](../apps/control-plane/api/router/node_container.go) |
-| 黑名单 | `/api/blackList/` | [black_list.go](../apps/control-plane/api/router/black_list.go) |
 | 邮件记录 | `/api/emailRecord/` | [email_record.go](../apps/control-plane/api/router/email_record.go) |
-| 文件任务 | `/api/fileTask/` | [file_task.go](../apps/control-plane/api/router/file_task.go) |
 
 接口定义及模型随当前版本源码发布。完整路由参见 [router/](../apps/control-plane/api/router/)，Web 调用示例参见 [src/api/](../apps/control-plane/web/src/api/)。
+
+<a id="management-import-export"></a>
+## 账号与服务器导入导出
+
+系统管理员可通过以下 POST 接口直接下载 JSON 附件。
+
+- `/api/account/exportAccount` 和 `/api/account/exportAccountUnused` 导出账号。
+- `/api/account/createAccountBatch` 创建账号并下载成功创建的账号凭据。
+- `/api/nodeServer/exportNodeServer` 导出服务器。
+- `/api/account/downloadImportTemplate` 和 `/api/nodeServer/downloadImportTemplate` 下载导入模板。
+
+`POST /api/account/importAccount` 和 `POST /api/nodeServer/importNodeServer` 接收 multipart 表单。将 JSON 数组文件放在 `file` 字段，最大 10 MB。将 `cover` 设为 `0` 跳过已有记录，设为 `1` 按账号用户名或服务器 IP 覆盖。导入在请求内完成。单行失败时继续处理其他行，响应会给出失败数量及首个失败原因。
 
 <a id="account-remarks"></a>
 ## 用户备注

@@ -1,17 +1,19 @@
 import { getAccountInfo, login, logout, register } from '@/api/account'
-import { getToken, removeToken, setToken } from '@/utils/auth'
+import { getLogoutVersion, getToken, isCurrentSession, removeToken, setToken } from '@/utils/auth'
 import { resetRouter } from '@/router'
+import i18n from '@/lang'
 
-const getDefaultState = () => {
+const getDefaultState = (token) => {
   return {
-    token: getToken(),
+    token,
+    logoutVersion: getLogoutVersion(),
     avatar: '', // 头像
     username: '', // 用户名
     roles: [] // 角色
   }
 }
 
-const state = getDefaultState()
+const state = getDefaultState(getToken())
 
 const mutations = {
   RESET_STATE: (state) => {
@@ -19,6 +21,7 @@ const mutations = {
   },
   SET_TOKEN: (state, token) => {
     state.token = 'Bearer ' + token
+    state.logoutVersion = getLogoutVersion()
   },
   SET_USERNAME: (state, username) => {
     state.username = username
@@ -41,8 +44,8 @@ const actions = {
       })
         .then((response) => {
           const { data } = response
-          commit('SET_TOKEN', data.token)
           setToken('Bearer ' + data.token)
+          commit('SET_TOKEN', data.token)
           resolve()
         })
         .catch((error) => {
@@ -71,52 +74,31 @@ const actions = {
     })
   },
 
-  // get account info
-  getAccountInfo({ commit }) {
-    return new Promise((resolve, reject) => {
-      getAccountInfo()
-        .then((response) => {
-          const { data } = response
-
-          if (!data) {
-            return reject(this.$t('confirm.authFail'))
-          }
-
-          const { username, roles } = data
-
-          commit('SET_USERNAME', username)
-          commit('SET_ROLES', roles)
-          resolve(data)
-        })
-        .catch((error) => {
-          reject(error)
-        })
-    })
+  async getAccountInfo({ commit, state }) {
+    const session = { token: state.token, logoutVersion: state.logoutVersion }
+    const { data } = await getAccountInfo()
+    if (!isCurrentSession(session) || state.token !== session.token) return null
+    if (!data?.roles?.length) throw new Error(i18n.t('confirm.authFail'))
+    commit('SET_USERNAME', data.username)
+    commit('SET_ROLES', data.roles)
+    return data
   },
 
-  // account logout
-  logout({ commit }) {
-    return new Promise((resolve, reject) => {
-      logout()
-        .then(() => {
-          removeToken()
-          resetRouter()
-          commit('RESET_STATE')
-          resolve()
-        })
-        .catch((error) => {
-          reject(error)
-        })
-    })
+  async logout({ dispatch, state }) {
+    const session = { token: state.token, logoutVersion: state.logoutVersion }
+    await logout()
+    if (isCurrentSession(session)) await dispatch('resetToken')
   },
 
-  // remove token
-  resetToken({ commit }) {
-    return new Promise((resolve) => {
-      removeToken()
-      commit('RESET_STATE')
-      resolve()
-    })
+  resetToken({ dispatch }) {
+    removeToken()
+    return dispatch('clearSession')
+  },
+
+  clearSession({ commit }) {
+    resetRouter()
+    commit('RESET_STATE')
+    commit('permission/CLEAR_ROUTES', null, { root: true })
   }
 }
 

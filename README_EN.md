@@ -20,7 +20,7 @@ Current pre-release: **v1.0.2-rc.13 (Pre-release)**. Deployment uses GHCR images
 | What you have | Choose |
 | --- | --- |
 | Two VPSs, one for Web and one for Node, with a domain pointing to each | [Option A · Separate servers](#quick-install-separate) |
-| One VPS for both Web and Node, with two domains pointing to it and an existing host certificate for the Node domain | [Option B · One server](#quick-install-colocated) |
+| One VPS for both Web and Node, with two domains pointing to it | [Option B · One server](#quick-install-colocated) |
 
 For either option, install Web first and download the Node deployment package from the panel. Replace `panel.example.com` and `node.example.com` with your domains. These commands are for a fresh installation in **root Bash** on Debian 12/13 or Ubuntu 22.04/24.04 (amd64 or arm64) running systemd. Follow the full guide for other Linux distributions. [Manual dependencies](docs/deployment_EN.md#dependency-manual)
 
@@ -28,18 +28,31 @@ For either option, install Web first and download the Node deployment package fr
 
 Point the panel domain at the **Web VPS** public IP and allow TCP `80` and `443`. If you signed in over SSH as a regular user, run `sudo -i` first. Paste the entire block into a root Bash session on that VPS.
 
+The v1.0.2-rc.13 entrypoint omits `validate.sh` from the quick install downloads. The block below verifies the official entrypoint's SHA-256 and adds the missing download to a temporary copy. The script library, templates, and application images all come from v1.0.2-rc.13.
+
 ```bash
-apt-get update &&
-apt-get install -y bash curl ca-certificates grep coreutils util-linux tar gzip &&
-install -d -m 700 /root/tpnext-web &&
-cd /root/tpnext-web &&
-umask 077 &&
-curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.13/scripts/tp.sh -o ./tp.sh &&
-bash ./tp.sh deps install &&
-bash ./tp.sh web
+(
+  set -e -o pipefail
+  apt-get update
+  apt-get install -y bash curl ca-certificates grep coreutils util-linux tar gzip
+  install -d -m 700 /root/tpnext-web
+  cd /root/tpnext-web
+  umask 077
+  entry="$(mktemp -p . .tpnext-rc13.XXXXXX)"
+  trap 'unlink "$entry"' EXIT
+  curl -fsSL --proto '=https' --proto-redir '=https' --retry 2 --connect-timeout 10 --max-time 60 \
+    https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.13/scripts/tp.sh -o "$entry"
+  printf '%s  %s\n' d90249d6281087aeb1701e338215078ccdadb18b094137448f06229358952f15 "$entry" | sha256sum -c
+  sed -i 's/for dependency in quick\.sh config\.sh install\.sh uninstall\.sh; do/for dependency in quick.sh config.sh validate.sh install.sh uninstall.sh; do/' "$entry"
+  bash -n "$entry"
+  bash "$entry" deps install
+  bash "$entry" web
+)
 ```
 
 Enter the panel domain and certificate contact email when prompted. Open the HTTPS address, sign in with `sysadmin` / `123456`, and change the password. Keep `/root/tpnext-web/web.yaml` for updates and removal.
+
+For a later release that includes this fix, save `scripts/tp.sh` from that release tag as `tp.sh`. Run `bash ./tp.sh deps install` and then `bash ./tp.sh web` from the installation directory.
 
 Before uploading the Node deployment package, SSH into the VPS that will run Node and run `install -d -m 700 "$HOME/tpnext-node"` under your SSH account. Upload the file there with SFTP and note the absolute path. After switching to root Bash, use `cd` to enter that directory. Use a separate extraction directory for each Node package.
 
@@ -47,7 +60,7 @@ Before uploading the Node deployment package, SSH into the VPS that will run Nod
 ### Option A · Separate servers
 
 1. Point the Node domain at the **Node VPS** public IP. Allow public TCP `80` on Node for Caddy certificate issuance. On Web, allow TCP `9507` and `6378` from Node only. On Node, allow TCP `8100` and `8101` from Web only. Configure these source restrictions in your VPS firewall or security group. [Network requirements](docs/deployment_EN.md#network)
-2. In the panel, open **Server management → Add Node server**. Enter a name, put the Node address reachable from Web in **IP / domain**, set **gRPC port** to `8100`, and enter the Node domain under **gRPC certificate domain**.
+2. In the panel, open **Server management → Add Node server**. Enter a name, put the Node address reachable from Web in **Node connection address**, set **gRPC port** to `8100`, and enter the Node domain under **gRPC certificate domain**.
 3. In **Deploy Node**, choose **Caddy automatic issuance and renewal** and enter the certificate email. For **Web address reachable from Node**, use a Web domain or private IP that Node can reach. Confirm the database and Redis addresses and select **Next → Download package**.
 4. Use your SSH client's SFTP feature to upload the downloaded `tpnext-node-*.tar.gz` into a private directory on the **Node VPS**. Enter that directory in root Bash, paste this block, and enter the exact filename when prompted.
 
@@ -70,9 +83,57 @@ Before uploading the Node deployment package, SSH into the VPS that will run Nod
 <a id="quick-install-colocated"></a>
 ### Option B · One server, with room to add remote Nodes
 
-Web and Node both run on the **same VPS**. Use an existing, renewable host certificate for Node to avoid a conflict on TCP `80` with Web Caddy. Prepare a full chain and matching unencrypted private key for the Node domain in a dedicated host directory, such as `/etc/letsencrypt/live/node.example.com/` when using Certbot. The host certificate tool handles renewal. [External Node certificates](docs/deployment_EN.md#external-certificates)
+Web and Node both run on the **same VPS**. Node uses a host certificate. If you already have a certificate covering the Node domain, use its full chain and matching unencrypted private key. [External Node certificates](docs/deployment_EN.md#external-certificates)
 
-1. In **Server management → Add Node server**, enter a name such as “Local Node”. Set **IP / domain** to `127.0.0.1`, **gRPC port** to `8100`, and **gRPC certificate domain** to the Node domain covered by the certificate.
+On a fresh VPS, use Certbot's DNS-01 challenge to issue a separate certificate for Node. You need permission to add a DNS TXT record for the Node domain. DNS validation works while Web Caddy is running. Replace both occurrences of `node.example.com` with your Node domain and run this block in root Bash on that VPS.
+
+```bash
+apt-get install -y certbot &&
+certbot certonly --manual --preferred-challenges dns \
+  --cert-name tpnext-node-node.example.com -d node.example.com
+```
+
+Add the `_acme-challenge.node.example.com` TXT record requested by Certbot. Wait until public DNS returns the displayed value before continuing. After issuance, the full chain and private key are `fullchain.pem` and `privkey.pem` under `/etc/letsencrypt/live/tpnext-node-node.example.com/`. For manual DNS renewal, repeat the Certbot command and TXT verification before the certificate expires. Automatic renewal requires your DNS provider's Certbot plugin and API credentials that can edit the challenge record. [Certbot DNS plugins and manual validation](https://eff-certbot.readthedocs.io/en/stable/using.html#getting-certificates)
+
+**If you can only point the domain at the VPS**, use Certbot's HTTP-01 challenge. Point the Node domain at this VPS and allow public TCP `80`. If the domain has an AAAA record, it must also point at this VPS and accept validation requests. You can issue the certificate before installing Web. If Web already runs here, the block briefly stops Web Caddy during issuance and attempts to restart it on success, failure, or cancellation. Run it during a maintenance window. The command uses the email you enter to register and accept the Let's Encrypt terms of service. [Certbot standalone](https://eff-certbot.readthedocs.io/en/stable/using.html#standalone)
+
+```bash
+(
+  set -e
+  read -r -p 'Node domain > ' node_domain
+  read -r -p 'Certificate contact email > ' email
+  [[ -n "$node_domain" && -n "$email" ]] ||
+    { printf '%s\n' 'Enter the Node domain and certificate contact email.' >&2; exit 1; }
+  apt-get update
+  apt-get install -y certbot
+
+  caddy=trojan-panel-web-caddy
+  restart_caddy=0
+  restore_caddy() {
+    if [[ "$restart_caddy" == 1 ]]; then
+      docker start "$caddy" >/dev/null ||
+        { printf '%s\n' "Run docker start $caddy to restore Web Caddy." >&2; return 1; }
+    fi
+  }
+  trap restore_caddy EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  if [[ "$(docker inspect --format '{{.State.Running}}' "$caddy" 2>/dev/null || true)" == true ]]; then
+    restart_caddy=1
+    docker stop "$caddy" >/dev/null
+  fi
+
+  certbot certonly --standalone --preferred-challenges http --non-interactive \
+    --agree-tos --email "$email" --keep-until-expiring \
+    --cert-name "tpnext-node-$node_domain" -d "$node_domain"
+  printf '%s\n' "/etc/letsencrypt/live/tpnext-node-$node_domain/"
+)
+```
+
+Use `fullchain.pem` and `privkey.pem` from the displayed directory in the Node deployment package. HTTP-01 renewal also requires TCP `80`. Rerun the same block during a maintenance window before expiry. Use your DNS provider's plugin and API credentials for automatic renewal.
+
+1. In **Server management → Add Node server**, enter a name such as “Local Node”. Set **Node connection address** to `127.0.0.1`, **gRPC port** to `8100`, and **gRPC certificate domain** to the Node domain covered by the certificate.
 2. In **Deploy Node**, choose **Existing host certificates** and enter the absolute paths to the full chain and key on this VPS. Keep the panel domain under **Web address reachable from Node** and choose **Next → Download package**. The command below configures loopback addresses for the database and Redis and gives Node a separate CA trust directory.
 3. Upload the package to a separate private directory on the **Web VPS**. Enter that directory in root Bash, paste this block, and enter the exact filename when prompted. The Web installation has already prepared Docker and yq.
 
@@ -116,7 +177,7 @@ For manual YAML editing or automated deployment, follow the supplementary instru
 | Prepare public CA | [CA for manual configuration](docs/deployment_EN.md#configuration-node-ca) |
 | Validate and install | [Configuration deployment](docs/deployment_EN.md#configuration) |
 
-[Command-line Node installation](docs/deployment_EN.md#node-interactive) and [external certificate configuration](docs/deployment_EN.md#external-certificates) remain additional paths.
+For v1.0.2-rc.13 Node installs, use a deployment package or the configuration commands. For releases that include the fix above, you can also use the [interactive Node command](docs/deployment_EN.md#node-interactive).
 
 <a id="product-update"></a>
 ## Update product images
@@ -163,7 +224,7 @@ Only recorded newly installed Docker packages and an unchanged yq installed by t
 A single entrypoint can select the scripts, templates, and images of a specified release:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.13/scripts/tp.sh) --version 1.0.2-rc.13 web
+bash <(curl -fsSL https://raw.githubusercontent.com/1linhao/trojanpanelnext/v1.0.2-rc.13/scripts/tp.sh) --version 1.0.2-rc.13 validate --config ./web.yaml
 ```
 
 Version `1.0.2-rc.13` maps to Git tag `v1.0.2-rc.13` and product image tag `:1.0.2-rc.13`. Installation and validation require matching configuration, scripts, and product images. Updates bind existing supported configuration to the target release. See [release binding](docs/deployment_EN.md#versions) for version rules and support scope.

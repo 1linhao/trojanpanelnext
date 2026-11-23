@@ -39,6 +39,20 @@ func migrateAccountNodeAccess() error {
 			last_sync datetime NOT NULL,
 			FOREIGN KEY (node_server_id) REFERENCES node_server(id) ON DELETE CASCADE
 		) ENGINE=InnoDB`,
+		`CREATE TABLE IF NOT EXISTS node_access_generation (
+			id tinyint PRIMARY KEY, revision bigint unsigned NOT NULL
+		) ENGINE=InnoDB`,
+		`INSERT IGNORE INTO node_access_generation(id,revision) VALUES(1,1)`,
+		`CREATE TABLE IF NOT EXISTS account_node_change (
+			account_id bigint unsigned PRIMARY KEY, revision bigint unsigned NOT NULL,
+			FOREIGN KEY (account_id) REFERENCES account(id) ON DELETE CASCADE
+		) ENGINE=InnoDB`,
+		`INSERT IGNORE INTO account_node_change(account_id,revision)
+			SELECT account_id,1 FROM account_node_policy`,
+		`CREATE TABLE IF NOT EXISTS node_access_ack (
+			node_server_id bigint PRIMARY KEY, revision bigint unsigned NULL, reported_at datetime NOT NULL,
+			FOREIGN KEY (node_server_id) REFERENCES node_server(id) ON DELETE CASCADE
+		) ENGINE=InnoDB`,
 	}
 	for _, statement := range statements {
 		if _, err := db.Exec(statement); err != nil {
@@ -104,24 +118,24 @@ func SelectAccountNodeOptions() ([]AccountNodeOption, error) {
 	return options, rows.Err()
 }
 
-func UpdateAccountNodeAccess(accountID uint, access AccountNodeAccess) error {
+func UpdateAccountNodeAccess(accountID uint, access AccountNodeAccess) (uint64, error) {
 	tx, err := db.Begin()
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer tx.Rollback()
 	var id uint
 	if err = tx.QueryRow(`SELECT id FROM account WHERE id=? FOR UPDATE`, accountID).Scan(&id); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return errors.New(constant.UnauthorizedError)
+			return 0, errors.New(constant.UnauthorizedError)
 		}
-		return err
+		return 0, err
 	}
 	if _, err = tx.Exec(`DELETE FROM account_node_policy WHERE account_id=?`, id); err != nil {
-		return err
+		return 0, err
 	}
 	if !access.Restricted {
-		return tx.Commit()
+		return commitNodeAccessChange(tx, id)
 	}
 	var agentMissing bool
 	if err = tx.QueryRow(`SELECT EXISTS (
@@ -129,13 +143,13 @@ func UpdateAccountNodeAccess(accountID uint, access AccountNodeAccess) error {
 		WHERE n.node_type_id NOT IN (?,?)
 			AND (a.last_sync IS NULL OR a.last_sync < CURRENT_TIMESTAMP - INTERVAL 2 MINUTE)
 	)`, constant.TrojanGo, constant.Hysteria).Scan(&agentMissing); err != nil {
-		return err
+		return 0, err
 	}
 	if agentMissing {
-		return ErrNodeAccessAgentsNotReady
+		return 0, ErrNodeAccessAgentsNotReady
 	}
 	if _, err = tx.Exec(`INSERT INTO account_node_policy (account_id) VALUES (?)`, id); err != nil {
-		return err
+		return 0, err
 	}
 	nodeIDs := append([]uint(nil), access.NodeIDs...)
 	sort.Slice(nodeIDs, func(i, j int) bool { return nodeIDs[i] < nodeIDs[j] })
@@ -147,17 +161,64 @@ func UpdateAccountNodeAccess(accountID uint, access AccountNodeAccess) error {
 			SELECT ?,id FROM node WHERE id=? AND node_type_id NOT IN (?,?)`,
 			id, nodeID, constant.TrojanGo, constant.Hysteria)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		count, err := result.RowsAffected()
 		if err != nil {
-			return err
+			return 0, err
 		}
 		if count != 1 {
-			return fmt.Errorf("%w: %d", ErrNodeAccessInvalidNode, nodeID)
+			return 0, fmt.Errorf("%w: %d", ErrNodeAccessInvalidNode, nodeID)
 		}
 	}
-	return tx.Commit()
+	return commitNodeAccessChange(tx, id)
+}
+
+// Serialize revision assignment with commit, including across Web replicas.
+// A node acknowledging a revision has seen all earlier committed changes.
+func commitNodeAccessChange(tx *sql.Tx, id uint) (uint64, error) {
+	if _, err := tx.Exec("UPDATE node_access_generation SET revision=revision+1 WHERE id=1"); err != nil {
+		return 0, err
+	}
+	var revision uint64
+	if err := tx.QueryRow("SELECT revision FROM node_access_generation WHERE id=1").Scan(&revision); err != nil {
+		return 0, err
+	}
+	if _, err := tx.Exec(`INSERT INTO account_node_change(account_id,revision) VALUES(?,?)
+		ON DUPLICATE KEY UPDATE revision=VALUES(revision)`, id, revision); err != nil {
+		return 0, err
+	}
+	return revision, tx.Commit()
+}
+
+type AccountNodeSync struct {
+	Revision   uint64 `json:"revision,string"`
+	Restricted bool   `json:"restricted"`
+	Granted    int    `json:"granted"`
+	Servers    int    `json:"servers"`
+	Confirmed  int    `json:"confirmed"`
+	Legacy     int    `json:"legacy"`
+	Unreported int    `json:"unreported"`
+}
+
+func SelectAccountNodeSync(id uint) (AccountNodeSync, error) {
+	var status AccountNodeSync
+	err := db.QueryRow(`SELECT COALESCE(c.revision,0), p.account_id IS NOT NULL,
+		(SELECT COUNT(*) FROM account_node_grant g WHERE g.account_id=a.id),COUNT(n.node_server_id),
+		COUNT(CASE WHEN k.revision >= c.revision THEN 1 END),
+		COUNT(CASE WHEN k.node_server_id IS NULL AND h.node_server_id IS NOT NULL THEN 1 END),
+		COUNT(CASE WHEN n.node_server_id IS NOT NULL AND k.node_server_id IS NULL AND h.node_server_id IS NULL THEN 1 END)
+		FROM account a LEFT JOIN account_node_policy p ON p.account_id=a.id
+		LEFT JOIN account_node_change c ON c.account_id=a.id
+		LEFT JOIN (SELECT DISTINCT node_server_id FROM node WHERE node_type_id NOT IN (?,?)) n ON TRUE
+		LEFT JOIN node_access_ack k ON k.node_server_id=n.node_server_id AND k.reported_at >= CURRENT_TIMESTAMP - INTERVAL 2 MINUTE
+		LEFT JOIN node_access_agent h ON h.node_server_id=n.node_server_id AND h.last_sync >= CURRENT_TIMESTAMP - INTERVAL 2 MINUTE
+		WHERE a.id=? GROUP BY a.id,p.account_id,c.revision`, constant.TrojanGo, constant.Hysteria, id).
+		Scan(&status.Revision, &status.Restricted, &status.Granted, &status.Servers, &status.Confirmed, &status.Legacy, &status.Unreported)
+	if errors.Is(err, sql.ErrNoRows) {
+		return status, errors.New(constant.UnauthorizedError)
+	}
+	return status, err
 }
 
 func RequireAccountNodeAccess(accountID, nodeID uint) error {

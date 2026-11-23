@@ -4,6 +4,8 @@ import (
 	"errors"
 	"github.com/sirupsen/logrus"
 	"regexp"
+	"strconv"
+	"strings"
 	"sync"
 	"trojan-panel-core/app/hysteria2"
 	"trojan-panel-core/app/naiveproxy"
@@ -23,6 +25,10 @@ import (
 var userLinkRegex = regexp.MustCompile("user>>>([^>]+)>>>traffic>>>(downlink|uplink)")
 
 func InitApp() {
+	// A new agent process must reapply permissions before acknowledging them.
+	if err := dao.ReportNodeAccess(nil); err != nil {
+		logrus.WithError(err).Error("reset account access confirmation at startup")
+	}
 	InitBinFile()
 	if initializeTrafficQuota() {
 		return
@@ -221,7 +227,16 @@ func CronHandlerDownloadAndUpload() {
 							return
 						}
 						for _, account := range accountUpdateBos {
-							if err = dao.UpdateAccountFlowByPassOrHash(&account.Pass, nil, account.Download, account.Upload); err != nil {
+							if idText, socks := strings.CutPrefix(account.Pass, "tp-"); socks {
+								if id, parseErr := strconv.ParseUint(idText, 10, 64); parseErr == nil {
+									err = dao.UpdateSocksAccountFlow(id, account.Download, account.Upload)
+								} else {
+									err = dao.UpdateAccountFlowByPassOrHash(&account.Pass, nil, account.Download, account.Upload)
+								}
+							} else {
+								err = dao.UpdateAccountFlowByPassOrHash(&account.Pass, nil, account.Download, account.Upload)
+							}
+							if err != nil {
 								logrus.Errorf("xray UpdateAccountFlow err apiPort: %d err: %v", apiPort, err)
 								continue
 							}
@@ -327,6 +342,11 @@ func RemoveAccount(password string) error {
 		defer accountSync.Unlock()
 		process.NewXrayProcess().GetCmdMap().Range(func(key, command any) bool {
 			port := key.(uint)
+			// Managed SOCKS has a static account list. The next DB-backed sync
+			// replaces its inbound after the control plane commits this change.
+			if state := xrayAccounts[port]; state.process == command && state.socks != nil {
+				return true
+			}
 			if err := xray.NewXrayApi(port).DeleteUser(password); err != nil {
 				logrus.Errorf("xray DeleteUser err: %v", err)
 			} else if state := xrayAccounts[port]; state.process == command {

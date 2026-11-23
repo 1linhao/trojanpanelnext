@@ -45,7 +45,7 @@ func deleteNodeServer(id uint, deleteRecords func(uint) error) error {
 		nodeLifecycle.Lock()
 		defer nodeLifecycle.Unlock()
 		// Redis has no per-Node connection cache. Its JWT, system, account
-		// limits, blacklists and global operation locks must survive deletion.
+		// limits and global operation locks must survive deletion.
 		return deleteRecords(id)
 	})
 }

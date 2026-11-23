@@ -19,7 +19,7 @@ func routingFailure(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		vo.Fail("版本不存在", c)
-	case errors.Is(err, dao.ErrActiveRouting):
+	case errors.Is(err, dao.ErrActiveRouting), errors.Is(err, dao.ErrStaleRouting):
 		vo.Fail(err.Error(), c)
 	default:
 		logrus.WithError(err).Error("client routing")
@@ -74,11 +74,7 @@ func PublishClientRouting(c *gin.Context) {
 		routingFailure(c, err)
 		return
 	}
-	servers := make(map[uint]uint, len(nodes))
-	for _, n := range nodes {
-		servers[n.ID] = n.ServerID
-	}
-	snapshot, err := clientrouting.Compile(p, servers)
+	snapshot, err := clientrouting.Compile(p, dao.RoutingNodeServers(nodes))
 	if err != nil {
 		vo.Fail(err.Error(), c)
 		return

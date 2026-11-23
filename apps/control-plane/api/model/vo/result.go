@@ -50,3 +50,8 @@ func Fail(message string, c *gin.Context) {
 		Data:    nil,
 	})
 }
+
+// DisabledSession prompts an already authenticated client to return to login.
+func DisabledSession(c *gin.Context) {
+	c.JSON(http.StatusOK, result{Code: constant.CodeUnauthorizedError, Type: TypeError, Message: constant.AccountDisabled})
+}

@@ -49,3 +49,9 @@ func SHA224String(password string) string {
 	}
 	return str
 }
+
+// SocksCredentials binds the wire password to an account without exposing its subscription token.
+func SocksCredentials(id uint, pass string) (string, string) {
+	user := fmt.Sprintf("tp-%d", id)
+	return user, fmt.Sprintf("%x", sha256.Sum256([]byte("tpnext/socks/v1/"+user+"/"+pass)))
+}

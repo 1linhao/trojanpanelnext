@@ -19,7 +19,7 @@
         <web-file v-else-if="activeName === 'config-web-file'" />
         <panel-config v-else-if="activeName === 'config-panel'" />
         <client-routing v-else-if="activeName === 'config-routing'" />
-        <template-config v-else />
+        <template-config v-else-if="loaded" />
       </div>
     </ui-panel>
   </div>
@@ -45,6 +45,7 @@ export default {
   data() {
     return {
       activeName: 'account-config',
+      loaded: false,
       tabs: [
         { value: 'account-config', label: '账号' },
         { value: 'config-email', label: '邮件' },
@@ -79,7 +80,8 @@ export default {
         singBoxOutboundEntity: {},
         xrayTemplateName: 'Default',
         xrayTemplate: '',
-        xrayTemplateEntity: {}
+        xrayTemplateEntity: {},
+        templateLibrary: null
       }
     }
   },
@@ -99,6 +101,7 @@ export default {
         this.systemConfig.xrayTemplateEntity = JSON.parse(
           this.systemConfig.xrayTemplate
         )
+        this.loaded = true
       })
     }
   }

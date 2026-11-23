@@ -3,6 +3,7 @@ package app
 import (
 	"errors"
 	"sync"
+	"trojan-panel-core/app/hysteria2"
 	"trojan-panel-core/app/naiveproxy"
 	"trojan-panel-core/app/xray"
 	"trojan-panel-core/core/process"
@@ -12,6 +13,7 @@ import (
 	"trojan-panel-core/model/constant"
 	"trojan-panel-core/model/dto"
 	"trojan-panel-core/service"
+	"trojan-panel-core/util"
 
 	"github.com/sirupsen/logrus"
 )
@@ -21,6 +23,7 @@ var accountSync sync.Mutex
 type xrayListenerAccounts struct {
 	process any
 	users   map[string]bool
+	socks   *xray.SocksSync
 }
 
 var xrayAccounts = make(map[uint]xrayListenerAccounts)
@@ -31,7 +34,12 @@ func CronHandlerUser() {
 	}
 	defer accountSync.Unlock()
 
-	synced := true
+	revision, revisionErr := dao.NodeAccessRevision()
+	if revisionErr != nil {
+		logrus.WithError(revisionErr).Error("read account access revision")
+	}
+	synced := revisionErr == nil
+	completed := make(map[dao.AccessListener]any)
 	for _, listener := range []struct {
 		kind      uint
 		processes *sync.Map
@@ -49,6 +57,9 @@ func CronHandlerUser() {
 					allowed[account.Pass] = account
 				}
 				err = listener.sync(port, command, allowed)
+				if err == nil {
+					completed[dao.AccessListener{Kind: listener.kind, Port: port - 30000}] = command
+				}
 			}
 			if err != nil {
 				synced = false
@@ -63,20 +74,83 @@ func CronHandlerUser() {
 			delete(xrayAccounts, port)
 		}
 	}
+	if synced && revision != nil {
+		expected, err := dao.ConfiguredAccessListeners()
+		if err != nil {
+			logrus.WithError(err).Error("read expected account access listeners")
+		}
+		synced = err == nil && confirmedAccessListeners(expected, completed)
+	}
+	if !synced {
+		revision = nil
+	}
+	if err := dao.ReportNodeAccess(revision); err != nil {
+		logrus.WithError(err).Error("record account access revision report")
+	}
 	if synced {
 		if err := dao.MarkNodeAccessSynced(); err != nil {
-			logrus.WithError(err).Error("record account access sync")
+			logrus.WithError(err).Error("record account access heartbeat")
 		}
 	}
+}
+
+func confirmedAccessListeners(expected []dao.AccessListener, completed map[dao.AccessListener]any) bool {
+	for _, listener := range expected {
+		port := listener.Port + 30000
+		var current any
+		switch listener.Kind {
+		case constant.Xray:
+			current, _ = process.NewXrayProcess().GetCmdMap().Load(port)
+		case constant.NaiveProxy:
+			current, _ = process.NewNaiveProxyInstance().GetCmdMap().Load(port)
+		case constant.Hysteria2:
+			// Hysteria2 authenticates each new connection against the database.
+			processes := process.NewHysteria2Instance().GetCmdMap()
+			current, ok := processes.Load(port)
+			if !ok {
+				return false
+			}
+			if _, err := hysteria2.NewHysteria2Api(port).ListUsers(false); err != nil {
+				return false
+			}
+			if latest, _ := processes.Load(port); latest != current {
+				return false
+			}
+			continue
+		}
+		if current == nil || completed[listener] != current {
+			return false
+		}
+	}
+	return true
 }
 
 func reconcileXrayAccounts(port uint, command any, allowed map[string]bo.AccountBo) error {
 	state := xrayAccounts[port]
 	if state.process != command {
 		state = xrayListenerAccounts{process: command, users: make(map[string]bool)}
+		protocol, err := util.GetXrayProtocolByApiPort(port)
+		if err != nil {
+			return err
+		}
+		if protocol == constant.ProtocolSocks {
+			state.socks = &xray.SocksSync{}
+		}
 		xrayAccounts[port] = state
 	}
 	api := xray.NewXrayApi(port)
+	// Without account changes there may be no AddUser/DeleteUser RPC. Check
+	// that the kernel is serving its API before acknowledging an empty diff.
+	stats, err := api.GetSysStats()
+	if err != nil {
+		return err
+	}
+	if stats == nil {
+		return errors.New("Xray statistics API is not ready")
+	}
+	if state.socks != nil {
+		return state.socks.Apply(port, allowed)
+	}
 	var nodeConfig *model.NodeConfig
 	add := func(account bo.AccountBo) error {
 		if nodeConfig == nil {

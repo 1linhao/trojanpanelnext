@@ -1,10 +1,8 @@
 package service
 
 import (
-	"encoding/json"
 	"errors"
 	"github.com/gin-gonic/gin"
-	"github.com/sirupsen/logrus"
 	"mime/multipart"
 	"strings"
 	"sync"
@@ -222,86 +220,11 @@ func GetNodeServerInfo(token string, nodeServerId *uint) (*core.NodeServerInfoVo
 	return nodeServerInfoVo, nil
 }
 
-func ExportNodeServer(accountId uint, accountUsername string) error {
-	nodeServerExportVos, err := dao.SelectNodeServerAll()
-	if err != nil {
-		return err
-	}
-	if err = ExportTaskJson(accountId, accountUsername, constant.TaskTypeNodeServerExport, "nodeServerExport", nodeServerExportVos); err != nil {
-		return err
-	}
-	return nil
-}
-
-func ImportNodeServer(cover uint, file *multipart.FileHeader, accountId uint, accountUsername string) error {
-	fileName := file.Filename
-
-	var fileTaskType uint = constant.TaskTypeNodeServerImport
-	var fileTaskStatus = constant.TaskDoing
-	fileTask := model.FileTask{
-		Name:            &fileName,
-		Path:            nil,
-		Type:            &fileTaskType,
-		Status:          &fileTaskStatus,
-		AccountId:       &accountId,
-		AccountUsername: &accountUsername,
-	}
-	fileTaskId, err := dao.CreateFileTask(&fileTask)
-	if err != nil {
-		return err
-	}
-
-	go func(fileTaskId uint) {
-		var fail = constant.TaskFail
-		var success = constant.TaskSuccess
-		fileTask := model.FileTask{
-			Id:     &fileTaskId,
-			Status: &fail,
+func ImportNodeServer(cover uint, file *multipart.FileHeader) error {
+	return importJSON(file, func(nodeServer model.NodeServer) error {
+		if nodeServer.Ip == nil || *nodeServer.Ip == "" {
+			return errors.New("node server IP is required")
 		}
-
-		src, err := file.Open()
-		defer src.Close()
-		if err != nil {
-			logrus.Errorf("ImportNodeServer file Open err: %v", err)
-			fileUploadError := constant.FileUploadError
-			fileTask.ErrMsg = &fileUploadError
-			if err = dao.UpdateFileTaskById(&fileTask); err != nil {
-				logrus.Errorf("ImportNodeServer UpdateFileTaskById err: %v", err)
-			}
-			return
-		}
-
-		var nodeServers []model.NodeServer
-		decoder := json.NewDecoder(src)
-		if err = decoder.Decode(&nodeServers); err != nil {
-			logrus.Errorf("ImportNodeServer decoder Decode err: %v", err)
-			fileUploadError := constant.RowNotEnough
-			fileTask.ErrMsg = &fileUploadError
-			if err = dao.UpdateFileTaskById(&fileTask); err != nil {
-				logrus.Errorf("ImportNodeServer UpdateFileTaskById err: %v", err)
-			}
-			return
-		}
-		if len(nodeServers) == 0 {
-			logrus.Errorf("ImportNodeServer err: %s", constant.RowNotEnough)
-			fileUploadError := constant.RowNotEnough
-			fileTask.ErrMsg = &fileUploadError
-			if err = dao.UpdateFileTaskById(&fileTask); err != nil {
-				logrus.Errorf("ImportNodeServer UpdateFileTaskById err: %v", err)
-			}
-			return
-		}
-		// 在这里可以处理数据并将其存储到数据库中 todo 这里可能存在性能问题
-		for _, item := range nodeServers {
-			if err = dao.CreateOrUpdateNodeServer(item, cover); err != nil {
-				continue
-			}
-		}
-		fileTask.Status = &success
-		// 更新文件任务状态
-		if err = dao.UpdateFileTaskById(&fileTask); err != nil {
-			logrus.Errorf("ImportNodeServer UpdateFileTaskById err: %v", err)
-		}
-	}(fileTaskId)
-	return nil
+		return dao.CreateOrUpdateNodeServer(nodeServer, cover)
+	})
 }

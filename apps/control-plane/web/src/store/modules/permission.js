@@ -40,6 +40,10 @@ const state = {
 }
 
 const mutations = {
+  CLEAR_ROUTES: (state) => {
+    state.routes = []
+    state.addRoutes = []
+  },
   SET_ROUTES: (state, routes) => {
     state.addRoutes = routes
     state.routes = constantRoutes.concat(routes)
@@ -48,16 +52,9 @@ const mutations = {
 
 const actions = {
   generateRoutes({ commit }, roles) {
-    return new Promise((resolve) => {
-      let accessedRoutes
-      if (roles.includes('admin')) {
-        accessedRoutes = asyncRoutes || []
-      } else {
-        accessedRoutes = filterAsyncRoutes(asyncRoutes, roles)
-      }
-      commit('SET_ROUTES', accessedRoutes)
-      resolve(accessedRoutes)
-    })
+    const accessedRoutes = filterAsyncRoutes(asyncRoutes, roles)
+    commit('SET_ROUTES', accessedRoutes)
+    return accessedRoutes
   }
 }
 

@@ -50,7 +50,7 @@ curl() {
   case "${file}" in
   web.yaml | node.yaml) sed "s/${MOCK_VERSION}/${version}/g" "${SCRIPT_DIR}/templates/${file}" >"${destination}" ;;
   dependencies.sh | install.sh | update.sh | uninstall.sh | web.sh | node.sh)
-    if [[ "${MOCK_DISPATCH:-0}" == 1 ]]; then
+    if [[ "${MOCK_DISPATCH:-}" == 1 || "${MOCK_DISPATCH:-}" == "${file}" ]]; then
       printf '#!/usr/bin/env bash\nSCRIPT_VERSION="%s"\nprintf "arg:<%%s>\\n" "$@"\nexit %s\n' "${version}" "${MOCK_STATUS:-0}" >"${destination}"
     else sed "s/${MOCK_VERSION}/${version}/g" "${SCRIPT_DIR}/${file}" >"${destination}"; fi
     ;;
@@ -82,6 +82,29 @@ for target in common.sh validate.sh; do
   for failure in fail empty html syntax version term; do
     assert_fails env MOCK_TARGET="${target}" MOCK_FAILURE="${failure}" "${ENTRYPOINT}" validate --config "${TEST_DIR}/web config.yaml"
   done
+done
+
+# Run the downloaded Web installer through YAML generation and validation,
+# stopping before the privileged deployment.
+(
+  # shellcheck disable=SC2317,SC2329
+  id() { [[ "${1:-}" == -u ]] && printf '0\n'; }
+  # shellcheck disable=SC2317,SC2329
+  docker() { fail 'quick Web test must not run Docker'; }
+  export -f id docker fail
+  MOCK_DISPATCH=install.sh "${ENTRYPOINT}" web --hostname panel.example.com \
+    --email admin@example.com --output "${TEST_DIR}/quick-web.yaml"
+) >"${TEST_DIR}/out"
+grep -Fxq "arg:<${TEST_DIR}/quick-web.yaml>" "${TEST_DIR}/out"
+test "$(stat -c %a "${TEST_DIR}/quick-web.yaml")" = 600
+"${ENTRYPOINT}" validate --config "${TEST_DIR}/quick-web.yaml" >/dev/null
+assert_clean
+
+for action in web node; do
+  : >"${MOCK_REQUESTS}"
+  "${ENTRYPOINT}" "${action}" --help >/dev/null
+  grep -Fq "/v${MOCK_VERSION}/scripts/deploy/validate.sh" "${MOCK_REQUESTS}"
+  assert_clean
 done
 
 # A single dispatcher selects two- and three-component releases and keeps every

@@ -5,7 +5,7 @@
     :visible="dialogFormVisible"
     @close="$emit('update:dialogFormVisible', false)"
   >
-    <liquid-form ref="dataForm" :rules="rules" :model="temp" label-position="left">
+    <liquid-form v-show="!retry" ref="dataForm" :rules="rules" :model="temp" label-position="left">
       <liquid-form-item :label="label" prop="cover">
         <liquid-switch
           v-model="temp.cover"
@@ -43,6 +43,7 @@
         </div>
       </liquid-form-item>
     </liquid-form>
+    <slot name="retry" />
     <div slot="footer" class="dialog-footer">
       <liquid-button @click="$emit('update:dialogFormVisible', false)">
         {{ $t('table.cancel') }}
@@ -52,7 +53,7 @@
         @click="submitImport"
         :disabled="uploading || fileList.length === 0"
       >
-        {{ uploading ? $t('config.webFileUploading') : $t('table.confirm') }}
+        {{ uploading ? $t('config.webFileUploading') : retry ? $t('accountImport.retry') : $t('table.confirm') }}
       </liquid-button>
     </div>
   </ui-dialog>
@@ -68,6 +69,7 @@ export default {
       type: Boolean,
       required: true
     },
+    retry: Boolean,
     label: {
       type: String,
       required: true

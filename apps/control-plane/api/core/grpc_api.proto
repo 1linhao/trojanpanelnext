@@ -23,6 +23,7 @@ service ApiStateService {
 }
 
 service ApiKernelService {
+  rpc CheckXrayTemplates(XrayTemplatesRequest) returns (Response) {}
   rpc GetKernelInventory(KernelInventoryRequest) returns (Response) {}
   rpc StartKernelOperation(KernelOperationRequest) returns (Response) {}
   rpc GetKernelOperation(KernelOperationStateRequest) returns (Response) {}
@@ -173,4 +174,8 @@ message Response {
 
 message ClientTrustRequest {
   bytes caBundle = 1;
+}
+
+message XrayTemplatesRequest {
+  repeated string contents = 1;
 }

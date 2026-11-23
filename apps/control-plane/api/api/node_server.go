@@ -7,8 +7,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"io"
 	"net/http"
-	"strconv"
-	"strings"
 	"trojan-panel/dao"
 	"trojan-panel/model"
 	"trojan-panel/model/constant"
@@ -235,41 +233,30 @@ func GetNodeServerInfo(c *gin.Context) {
 
 // ExportNodeServer 导出服务器
 func ExportNodeServer(c *gin.Context) {
-	accountVo := service.GetCurrentAccount(c)
-	if err := service.ExportNodeServer(accountVo.Id, accountVo.Username); err != nil {
+	servers, err := dao.SelectNodeServerAll()
+	if err != nil {
 		vo.Fail(constant.SysError, c)
+		return
+	}
+	downloadJSON(c, exportFilename("nodeServerExport"), servers)
+}
+
+// ImportNodeServer 导入服务器
+func ImportNodeServer(c *gin.Context) {
+	cover, file := getImportFile(c)
+	if file == nil {
+		return
+	}
+	if err := service.ImportNodeServer(cover, file); err != nil {
+		vo.Fail(err.Error(), c)
 		return
 	}
 	vo.Success(nil, c)
 }
 
-// ImportNodeServer 导入服务器
-func ImportNodeServer(c *gin.Context) {
-	coverStr, b := c.GetPostForm("cover")
-	if !b {
-		vo.Fail(constant.ValidateFailed, c)
-		return
-	}
-	cover, err := strconv.ParseUint(coverStr, 10, 32)
-	file, err := c.FormFile("file")
-	if err != nil {
-		vo.Fail(constant.SysError, c)
-		return
-	}
-	// 文件大小 10MB
-	if file.Size > 1024*1024*10 {
-		vo.Fail(constant.FileSizeTooBig, c)
-		return
-	}
-	// 文件后缀.json
-	if !strings.HasSuffix(file.Filename, ".json") {
-		vo.Fail(constant.FileFormatError, c)
-		return
-	}
-	account := service.GetCurrentAccount(c)
-	if err := service.ImportNodeServer(uint(cover), file, account.Id, account.Username); err != nil {
-		vo.Fail(constant.SysError, c)
-		return
-	}
-	vo.Success(nil, c)
+func DownloadNodeServerImportTemplate(c *gin.Context) {
+	downloadJSON(c, "NodeServerTemplate.json", []map[string]any{{
+		"name": "example", "ip": "127.0.0.1", "grpcPort": 8100,
+		"grpcTlsServerName": "node.example.com",
+	}})
 }

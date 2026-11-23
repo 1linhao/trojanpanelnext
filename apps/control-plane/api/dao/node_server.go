@@ -272,7 +272,7 @@ func SelectNodeServersForControl() ([]model.NodeServer, error) {
 	return nodeServers, nil
 }
 
-func SelectNodeServersForCertificates() ([]model.NodeServer, error) {
+func SelectRegisteredNodeServers() ([]model.NodeServer, error) {
 	var nodes []model.NodeServer
 	rows, err := db.Query("SELECT id, ip, grpc_port, grpc_tls_mode, grpc_tls_server_name FROM node_server ORDER BY id")
 	if err != nil {

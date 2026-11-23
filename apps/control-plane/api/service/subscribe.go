@@ -25,14 +25,14 @@ Clash for windows 参考文档：
 2. https://github.com/crossutility/Quantumult/blob/master/extra-subscription-feature.md
 3. https://github.com/Dreamacro/clash/wiki/Configuration
 */
-func SubscribeClash(pass string) (*model.Account, string, []byte, vo.SystemVo, error) {
+func SubscribeClash(pass, templateID string) (*model.Account, string, []byte, error) {
 	account, err := dao.SelectAccountClashSubscribe(pass)
 	if err != nil {
-		return nil, "", []byte{}, vo.SystemVo{}, err
+		return nil, "", []byte{}, err
 	}
 	nodes, err := selectSubscriptionNodes(*account.Id)
 	if err != nil {
-		return nil, "", []byte{}, vo.SystemVo{}, err
+		return nil, "", []byte{}, err
 	}
 
 	userInfo := fmt.Sprintf("upload=%d; download=%d; total=%d; expire=%d",
@@ -41,9 +41,12 @@ func SubscribeClash(pass string) (*model.Account, string, []byte, vo.SystemVo, e
 		*account.Quota,
 		*account.ExpireTime/1000)
 
-	snapshot, err := loadRoutingProfile("default")
-	if err != nil {
-		return nil, "", nil, vo.SystemVo{}, err
+	var snapshot *clientrouting.Snapshot
+	if templateID == "default" {
+		snapshot, err = loadRoutingProfile("default")
+		if err != nil {
+			return nil, "", nil, err
+		}
 	}
 	var members []clientrouting.Member
 	clashConfig := bo.ClashConfig{}
@@ -61,21 +64,21 @@ func SubscribeClash(pass string) (*model.Account, string, []byte, vo.SystemVo, e
 		if *item.NodeTypeId == constant.Xray {
 			nodeXray, err := dao.SelectNodeXrayById(item.NodeSubId)
 			if err != nil {
-				return nil, "", []byte{}, vo.SystemVo{}, err
+				return nil, "", []byte{}, err
 			}
 
 			streamSettings := bo.StreamSettings{}
 			if nodeXray.StreamSettings != nil && *nodeXray.StreamSettings != "" {
 				if err = json.Unmarshal([]byte(*nodeXray.StreamSettings), &streamSettings); err != nil {
 					logrus.Errorln(fmt.Sprintf("SystemVo JSON反转失败 err: %v", err))
-					return nil, "", []byte{}, vo.SystemVo{}, errors.New(constant.SysError)
+					return nil, "", []byte{}, errors.New(constant.SysError)
 				}
 			}
 			settings := bo.Settings{}
 			if nodeXray.Settings != nil && *nodeXray.Settings != "" {
 				if err = json.Unmarshal([]byte(*nodeXray.Settings), &settings); err != nil {
 					logrus.Errorln(fmt.Sprintf("SystemVo JSON反转失败 err: %v", err))
-					return nil, "", []byte{}, vo.SystemVo{}, errors.New(constant.SysError)
+					return nil, "", []byte{}, errors.New(constant.SysError)
 				}
 			}
 			switch *nodeXray.Protocol {
@@ -199,13 +202,14 @@ func SubscribeClash(pass string) (*model.Account, string, []byte, vo.SystemVo, e
 				}
 				ClashConfigInterface = append(ClashConfigInterface, shadowsocks)
 			case constant.ProtocolSocks:
+				user, password := util.SocksCredentials(*account.Id, *account.Pass)
 				socks := bo.Socks{
 					Name:     *item.Name,
 					Type:     constant.ClashSocks5,
 					Server:   *item.Domain,
 					Port:     item.ClientPort(),
-					Username: settings.Accounts[0].User,
-					Password: settings.Accounts[0].Pass,
+					Username: user,
+					Password: password,
 					Udp:      settings.Udp,
 				}
 				if streamSettings.Security == "tls" {
@@ -220,7 +224,7 @@ func SubscribeClash(pass string) (*model.Account, string, []byte, vo.SystemVo, e
 		} else if *item.NodeTypeId == constant.TrojanGo {
 			nodeTrojanGo, err := dao.SelectNodeTrojanGoById(item.NodeSubId)
 			if err != nil {
-				return nil, "", []byte{}, vo.SystemVo{}, err
+				return nil, "", []byte{}, err
 			}
 			trojanGo := bo.TrojanGo{
 				Name:     *item.Name,
@@ -240,7 +244,7 @@ func SubscribeClash(pass string) (*model.Account, string, []byte, vo.SystemVo, e
 		} else if *item.NodeTypeId == constant.Hysteria {
 			nodeHysteria, err := dao.SelectNodeHysteriaById(item.NodeSubId)
 			if err != nil {
-				return nil, "", []byte{}, vo.SystemVo{}, err
+				return nil, "", []byte{}, err
 			}
 			hysteria := bo.Hysteria{
 				Name:           *item.Name,
@@ -260,7 +264,7 @@ func SubscribeClash(pass string) (*model.Account, string, []byte, vo.SystemVo, e
 		} else if *item.NodeTypeId == constant.Hysteria2 {
 			nodeHysteria2, err := dao.SelectNodeHysteria2ById(item.NodeSubId)
 			if err != nil {
-				return nil, "", []byte{}, vo.SystemVo{}, err
+				return nil, "", []byte{}, err
 			}
 			hysteria2 := bo.Hysteria2{
 				Name:           *item.Name,
@@ -295,7 +299,7 @@ func SubscribeClash(pass string) (*model.Account, string, []byte, vo.SystemVo, e
 	}
 	if snapshot != nil {
 		data, err := yaml.Marshal(snapshot.RenderClash(ClashConfigInterface, members))
-		return account, userInfo, data, vo.SystemVo{}, err
+		return account, userInfo, append(data, '\n'), err
 	}
 	if len(proxies) == 0 {
 		proxies = append(proxies, "DIRECT")
@@ -310,17 +314,29 @@ func SubscribeClash(pass string) (*model.Account, string, []byte, vo.SystemVo, e
 	clashConfig.ProxyGroups = proxyGroups
 	clashConfig.Proxies = ClashConfigInterface
 
-	clashConfigYaml, err := yaml.Marshal(&clashConfig)
-	if err != nil {
-		return nil, "", []byte{}, vo.SystemVo{}, errors.New(constant.SysError)
-	}
-
 	systemName := constant.SystemName
 	systemConfig, err := SelectSystemByName(&systemName)
 	if err != nil {
-		return nil, "", []byte{}, vo.SystemVo{}, errors.New(constant.SysError)
+		return nil, "", nil, err
 	}
-	return account, userInfo, clashConfigYaml, systemConfig, nil
+	if templateID == "default" {
+		data, err := yaml.Marshal(&clashConfig)
+		if err != nil {
+			return nil, "", nil, err
+		}
+		return account, userInfo, append(append(data, '\n'), systemConfig.ClashRule...), nil
+	}
+	template, found := model.FindTemplate(systemConfig.TemplateLibrary.Clash, templateID)
+	if !found {
+		return nil, "", nil, errors.New(constant.ValidateFailed)
+	}
+	config, err := parseClashTemplate(template.Content)
+	if err != nil {
+		return nil, "", nil, err
+	}
+	config["proxies"], config["proxy-groups"] = clashConfig.Proxies, clashConfig.ProxyGroups
+	data, err := yaml.Marshal(config)
+	return account, userInfo, data, err
 }
 
 func SubscribeSingBox(pass string, templateId string) (*model.Account, string, []byte, error) {
@@ -354,7 +370,7 @@ func SubscribeSingBox(pass string, templateId string) (*model.Account, string, [
 			tag := clientrouting.NodeTag(*item.Id, *item.Name)
 			item.Name = &tag
 		}
-		outbound, err := buildSingBoxOutbound(item, pass, *account.Username)
+		outbound, err := buildSingBoxOutbound(item, pass, *account.Username, *account.Id)
 		if err != nil {
 			return nil, "", []byte{}, err
 		}
@@ -498,7 +514,7 @@ func ExportOptions() ([]vo.ClientExportOptionVo, error) {
 		{
 			Id:        "clash-meta",
 			Name:      "Clash.Meta",
-			Templates: []vo.ClientTemplateVo{{Id: "default", Name: defaultName(systemConfig.ClashTemplateName, "Default")}},
+			Templates: clashTemplateOptions(systemConfig),
 			Formats:   []string{"link", "file"},
 		},
 		{
@@ -975,10 +991,10 @@ func defaultSingBoxRuleSet() []map[string]interface{} {
 	}
 }
 
-func buildSingBoxOutbound(item model.Node, pass string, username string) (map[string]interface{}, error) {
+func buildSingBoxOutbound(item model.Node, pass string, username string, accountID uint) (map[string]interface{}, error) {
 	switch *item.NodeTypeId {
 	case constant.Xray:
-		return buildSingBoxXrayOutbound(item, pass)
+		return buildSingBoxXrayOutbound(item, pass, accountID)
 	case constant.TrojanGo:
 		nodeTrojanGo, err := dao.SelectNodeTrojanGoById(item.NodeSubId)
 		if err != nil {
@@ -1087,7 +1103,7 @@ func buildSingBoxOutbound(item model.Node, pass string, username string) (map[st
 	return nil, nil
 }
 
-func buildSingBoxXrayOutbound(item model.Node, pass string) (map[string]interface{}, error) {
+func buildSingBoxXrayOutbound(item model.Node, pass string, accountID uint) (map[string]interface{}, error) {
 	nodeXray, err := dao.SelectNodeXrayById(item.NodeSubId)
 	if err != nil {
 		return nil, err
@@ -1099,14 +1115,6 @@ func buildSingBoxXrayOutbound(item model.Node, pass string) (map[string]interfac
 			return nil, errors.New(constant.SysError)
 		}
 	}
-	settings := bo.Settings{}
-	if nodeXray.Settings != nil && *nodeXray.Settings != "" {
-		if err = json.Unmarshal([]byte(*nodeXray.Settings), &settings); err != nil {
-			logrus.Errorln(fmt.Sprintf("Settings JSON deserialization err: %v", err))
-			return nil, errors.New(constant.SysError)
-		}
-	}
-
 	outbound := map[string]interface{}{
 		"type":        *nodeXray.Protocol,
 		"tag":         *item.Name,
@@ -1130,10 +1138,7 @@ func buildSingBoxXrayOutbound(item model.Node, pass string) (map[string]interfac
 		outbound["password"] = pass
 	case constant.ProtocolSocks:
 		outbound["type"] = "socks"
-		if len(settings.Accounts) > 0 {
-			outbound["username"] = settings.Accounts[0].User
-			outbound["password"] = settings.Accounts[0].Pass
-		}
+		outbound["username"], outbound["password"] = util.SocksCredentials(accountID, pass)
 	default:
 		return nil, nil
 	}

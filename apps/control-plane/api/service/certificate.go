@@ -40,7 +40,7 @@ func MaintainCertificates() {
 		return
 	}
 	// Include servers without proxy instances: they also need the new CA.
-	nodes, err := dao.SelectNodeServersForCertificates()
+	nodes, err := dao.SelectRegisteredNodeServers()
 	if err != nil {
 		logrus.Errorf("mTLS node inventory failed: %v", err)
 		return

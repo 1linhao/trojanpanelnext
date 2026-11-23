@@ -393,6 +393,53 @@ test('invalid active template blocks settings save before serialization or API w
   assert.equal(saves, 0)
 })
 
+test('named template edits retain their IDs, preserve the original files and save a global Xray choice', async () => {
+  const Vue = require('vue')
+  const calls = []
+  const request = (args) => { calls.push(args.data); return Promise.resolve() }
+  const api = loadModule(read('src/api/system.js'), { '@/utils/request': request })
+  const source = compiler.parse({ source: read('src/views/system/base/components/template-config.vue') })
+  const form = loadModule(source.script.content, {
+    '@/api/system': api, '@/components/ClientTemplateEditor': {}, 'js-yaml': require('js-yaml')
+  }, { crypto: require('node:crypto').webcrypto, Blob }).default
+  const config = {
+    clashRule: 'rules: []', clashTemplateName: 'Old Clash',
+    xrayTemplate: '{ "log" : {} }', xrayTemplateEntity: { log: {} }, xrayTemplateName: 'Old Xray',
+    singBoxTun: '{}', singBoxTunEntity: {}, singBoxTunTemplateName: 'TUN',
+    singBoxOutbound: '{}', singBoxOutboundEntity: {}, singBoxOutboundTemplateName: 'Outbound'
+  }
+  const parent = new Vue({ provide: { systemConfigModel: config } })
+  const vm = new Vue({ ...form, parent, methods: { ...form.methods, $t: (k) => k, $notify: () => {} } })
+  vm.$refs.templateEditor = { validate: () => true }
+  vm.$refs.dataForm = { validate: (done) => done(true), clearValidate: () => {} }
+  vm.createTemplate()
+  const clashId = vm.activeTemplateId
+  vm.updateTemplate({ templateId: clashId, patch: { name: 'Travel', content: 'mixed-port: 7899' } })
+  vm.activeClient = 'xray'
+  vm.createTemplate()
+  const xrayId = vm.activeTemplateId
+  vm.updateTemplate({ templateId: xrayId, patch: { name: 'Edge', content: '{"log":{}}' } })
+  vm.library.activeXray = xrayId
+  vm.updateData()
+  await Promise.resolve()
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].templateLibrary.clash[0].id, clashId)
+  assert.equal(calls[0].templateLibrary.clash[0].name, 'Travel')
+  assert.equal(calls[0].templateLibrary.xray[0].id, xrayId)
+  assert.equal(calls[0].templateLibrary.activeXray, xrayId)
+  for (const key of ['clashRule', 'xrayTemplate', 'singBoxTun', 'singBoxOutbound', 'xrayTemplateEntity']) {
+    assert.equal(key in calls[0], false, key)
+  }
+  await api.updateSystemById(config)
+  assert.equal('templateLibrary' in calls[1], false)
+  vm.activeClient = 'clash-meta'
+  vm.deleteTemplate(vm.activeTemplates.find((t) => t.id === clashId))
+  assert.equal(vm.activeTemplateId, 'default')
+  assert.equal(vm.activeTemplates.length, 1)
+  vm.$destroy()
+  parent.$destroy()
+})
+
 test('select/date tail geometry uses scalar horizontal tokens for every size', () => {
   const postcss = require('postcss')
   for (const name of ['LiquidSelect', 'LiquidDatePicker']) {
@@ -824,6 +871,52 @@ test('Node server registration opens once, preserves unrelated query values and 
   assert.equal(cleared, 1, 'permission failure cannot reset or open the form')
 })
 
+test('server status keeps only the selected request and allows retry after failure', async () => {
+  const requests = []
+  const component = loadModule(compiler.parse({ source: read('src/views/node-server/list/index.vue') }).script.content, new Proxy({}, {
+    has: () => true,
+    get: (_, name) => name === '@/api/node-server' ? {
+      nodeServerState({ id }, signal) {
+        return new Promise((resolve, reject) => requests.push({ id, signal, resolve, reject }))
+      }
+    } : {}
+  }), { AbortController }).default
+  const instance = { $nextTick() {} }
+  const open = (id) => component.methods.loadDetail.call(instance, { id })
+  const close = () => component.methods.closeDetail.call(instance)
+
+  const first = open(1)
+  const second = open(2)
+  assert.equal(requests[0].signal.aborted, true)
+  requests[0].resolve({ data: { cpuUsed: 11 } })
+  await first
+  assert.equal(instance.detailServer.id, 2)
+  assert.equal(instance.detailState, null)
+  assert.equal(instance.detailLoading, true)
+
+  close()
+  assert.equal(requests[1].signal.aborted, true)
+  requests[1].resolve({ data: { cpuUsed: 22 } })
+  await second
+  assert.equal(instance.detailServer, null)
+  assert.equal(instance.detailState, null)
+  assert.equal(instance.detailLoading, false)
+
+  const failed = open(2)
+  requests[2].reject(new Error('Network Error'))
+  await failed
+  assert.equal(instance.detailServer.id, 2)
+  assert.equal(instance.detailLoading, false)
+  assert.equal(instance.detailState, null)
+
+  const retry = open(2)
+  assert.equal(requests[3].id, 2)
+  requests[3].resolve({ data: { cpuUsed: 25 } })
+  await retry
+  assert.equal(instance.detailLoading, false)
+  assert.equal(instance.detailState.cpuUsed, 25)
+})
+
 test('server actions route Web-only delete and both uninstall modes to separate APIs', async () => {
   const calls = [], notices = []
   let allowed = true, failUninstall = false, refreshes = 0
@@ -874,7 +967,7 @@ test('server actions route Web-only delete and both uninstall modes to separate 
 
 test('server API keeps Web deletion short and gives remote uninstall its own timeout', async () => {
   const requests = []
-  const api = loadModule(read('src/api/node-server.js'), { '@/utils/request': (request) => { requests.push(request); return Promise.resolve() } })
+  const api = loadModule(read('src/api/node-server.js'), { '@/utils/download-json': () => {}, '@/utils/request': (request) => { requests.push(request); return Promise.resolve() } })
   await api.deleteNodeServerById({ id: 9 })
   await api.uninstallNodeServerById({ id: 9, purge: true })
   assert.equal(requests[0].url, '/nodeServer/deleteNodeServerById')
@@ -939,7 +1032,7 @@ test('deployment download rejects JSON errors, including Blob errors on HTTP fai
   let response = { data: new Blob([JSON.stringify({ code: 50008, message: 'Session expired' })], { type: 'application/json' }) }
   let rejectHTTP = false
   const api = loadModule(read('src/api/node-server.js'), {
-    '@/utils/request': async (request) => { requests.push(request); if (rejectHTTP) throw { response }; return response }
+    '@/utils/download-json': () => {}, '@/utils/request': async (request) => { requests.push(request); if (rejectHTTP) throw { response }; return response }
   }, { Blob })
   await assert.rejects(api.downloadNodeDeployment({ id: 42 }), (error) => error.message === 'Session expired' && error.code === 50008)
   rejectHTTP = true
@@ -1071,7 +1164,7 @@ const compileRender = (template) => {
   return vm.runInNewContext(`${result.code}; ({ render, staticRenderFns })`)
 }
 
-test('server list renders used traffic without reset controls and an accessible deployment icon', () => {
+test('server list renders used traffic without reset controls and labels the deployment menu item', () => {
   const Vue = require('vue/dist/vue.common.js')
   const descriptor = compiler.parse({ source: read('src/views/node-server/list/index.vue') })
   const component = loadModule(descriptor.script.content, new Proxy({}, {
@@ -1093,9 +1186,9 @@ test('server list renders used traffic without reset controls and an accessible 
   assert.equal(vnodeTree(rendered).some((node) => String(node.data && node.data.attrs && node.data.attrs.title).includes('重置')), false)
   const deploy = vnodeTree(cells[8]).find((node) => node.data && node.data.attrs && node.data.attrs.title === 'nodeDeployment.title')
   assert.equal(deploy.tag, 'button')
-  assert.equal(deploy.data.staticClass, 'icon-btn')
-  assert.equal(deploy.data.attrs['aria-label'], 'nodeDeployment.title')
-  assert.equal(vnodeText(deploy).trim(), '')
+  assert.ok(vnodeTree(cells[8]).some((node) => node.tag === 'liquid-action-menu'))
+  assert.equal(deploy.data.attrs.role, 'menuitem')
+  assert.equal(vnodeText(deploy).trim(), 'nodeDeployment.title')
   assert.ok(vnodeTree(deploy).some((node) => node.tag === 'app-icon' && node.data.attrs.name === 'download'))
   view.$destroy()
 })
@@ -1434,14 +1527,21 @@ test('account fetches and editors discard private fields for non-sysadmin, inclu
 
 test('account editing saves and clears remarks while omitted values preserve notes and other accounts', async () => {
   const requests = []
-  const { view, roles, Vue } = accountRemarkFixture({
-    updateAccountById: async (payload) => { requests.push({ action: 'update', ...payload }) },
-    createAccount: async (payload) => { requests.push({ action: 'create', ...payload }) }
-  })
-  view.list = [
+  const accounts = [
     { id: 42, username: 'sampleuser', quota: 1048576, remark: 'existing note' },
     { id: 43, username: 'otheruser', quota: 1048576, remark: 'other private note' }
   ]
+  const { view, roles, Vue } = accountRemarkFixture({
+    selectAccountPage: async () => ({ data: { accounts: accounts.map(row => ({ ...row })), total: accounts.length } }),
+    updateAccountById: async (payload) => {
+      requests.push({ action: 'update', ...payload })
+      const row = accounts.find(account => account.id === payload.id)
+      if ('remark' in payload) row.remark = payload.remark
+      return { data: { quota: row.quota, expireTime: row.expireTime } }
+    },
+    createAccount: async (payload) => { requests.push({ action: 'create', ...payload }) }
+  })
+  await view.getList()
   view.$refs.dataForm = { clearValidate() {}, validate(callback) { callback(true) } }
   const submit = async (action = 'updateData') => { view[action](); await new Promise((resolve) => setImmediate(resolve)) }
   view.handleUpdate(view.list[0])
@@ -1449,7 +1549,7 @@ test('account editing saves and clears remarks while omitted values preserve not
   await submit()
   assert.equal(requests[0].id, 42)
   assert.equal(requests[0].remark, 'new note\nwith detail')
-  assert.equal(requests[0].quota, 1)
+  assert.equal('quota' in requests[0], false, 'unchanged quota must be preserved on the server')
   assert.equal(view.list[0].remark, requests[0].remark)
   assert.equal(view.list[0].quota, 1048576)
   for (const preserved of [undefined, null]) {
@@ -1508,18 +1608,18 @@ test('account remark validation counts Unicode characters and blocks overlong sa
   view.$destroy()
 })
 
-test('account login-limit reset is an accessible sysadmin icon action separate from traffic reset', async () => {
+test('account login-limit reset is a labeled sysadmin menu item separate from traffic reset', async () => {
   const { view, roles, Vue } = accountRemarkFixture()
   view.list = [{ id: 42, username: 'sampleuser', roleId: 3, deleted: 0, quota: 1048576, lastLoginTime: 0 }]
   const resetButton = () => vnodeTree(view._render()).find((node) => node.tag === 'button' && node.data.attrs.title === '重置登录失败次数')
   const button = resetButton()
-  assert.equal(button.data.staticClass, 'icon-btn')
-  assert.equal(button.data.attrs['aria-label'], '重置登录失败次数')
-  assert.equal(vnodeText(button).trim(), '')
+  assert.equal(button.data.attrs.role, 'menuitem')
+  assert.equal(vnodeText(button).trim(), '重置登录失败次数')
   const loginIcon = vnodeTree(button).find((node) => node.tag === 'app-icon')
   assert.equal(loginIcon.data.attrs.name, 'reset-login')
   const traffic = vnodeTree(view._render()).find((node) => node.tag === 'button' && node.data.attrs.title === '重置流量')
-  assert.equal(traffic.data.attrs['aria-label'], '重置流量')
+  assert.equal(traffic.data.attrs.role, 'menuitem')
+  assert.equal(vnodeText(traffic).trim(), '重置流量')
   const trafficIcon = vnodeTree(traffic).find((node) => node.tag === 'app-icon')
   assert.equal(trafficIcon.data.attrs.name, 'reset-traffic')
   assert.notEqual(trafficIcon.data.attrs.name, loginIcon.data.attrs.name)
@@ -1535,6 +1635,49 @@ test('account login-limit reset is an accessible sysadmin icon action separate f
     assert.equal(resetButton(), undefined)
     assert.equal(vnodeTree(view._render()).find((node) => node.tag === 'button' && node.data.attrs.title === '重置流量'), undefined)
   }
+  view.$destroy()
+})
+
+test('reset all account usage needs confirmation and refreshes the list only after success', async () => {
+  let confirm
+  let cancel
+  const calls = []
+  const { view, roles, Vue } = accountRemarkFixture({
+    resetAllAccountDownloadAndUpload: async () => calls.push('reset'),
+    selectAccountPage: async () => {
+      calls.push('refresh')
+      return { data: { accounts: [], total: 0 } }
+    }
+  }, ['sysadmin'], {
+    MessageBox: {
+      confirm: () => new Promise((resolve, reject) => {
+        confirm = resolve
+        cancel = reject
+      })
+    }
+  })
+  const reset = () => view.handleResetAllAccountTraffic()
+  let pending = reset()
+  assert.equal(view.resettingAllTraffic, true)
+  cancel('cancel')
+  await pending
+  assert.deepEqual(calls, [])
+  assert.equal(view.resettingAllTraffic, false)
+
+  pending = reset()
+  await reset()
+  assert.deepEqual(calls, [])
+  confirm()
+  await pending
+  assert.deepEqual(calls, ['reset', 'refresh'])
+
+  pending = reset()
+  roles.value = ['admin']
+  await Vue.nextTick()
+  confirm()
+  await pending
+  assert.deepEqual(calls, ['reset', 'refresh'])
+  assert.equal(view.resettingAllTraffic, false)
   view.$destroy()
 })
 
@@ -1615,7 +1758,7 @@ test('login-limit reset confirms once, sends only its captured ID, and handles c
 
 test('the login-limit API only posts the account ID, excluding copied row fields', async () => {
   const requests = []
-  const api = loadModule(read('src/api/account.js'), { '@/utils/request': async (request) => { requests.push(request) } })
+  const api = loadModule(read('src/api/account.js'), { '@/utils/download-json': () => {}, '@/utils/request': async (request) => { requests.push(request) } })
   await api.resetAccountLoginLimit({ id: 42, username: 'sampleuser', remark: 'private note', pass: 'secret', deleted: 1, upload: 12 })
   assert.equal(requests[0].url, '/account/resetAccountLoginLimit')
   assert.equal(requests[0].method, 'post')
@@ -1978,7 +2121,7 @@ test('container API binds the target at the backend and suppresses repetitive re
   let onResponse, onError
   const service = { interceptors: { request: { use() {} }, response: { use(success, failure) { onResponse = success; onError = failure } } } }
   loadModule(read('src/utils/request.js').replace('import.meta.env.VITE_BASE_API', "'/api'"), {
-    axios: { create: () => service },
+    axios: { create: () => service, isCancel: require("axios").isCancel },
     '@/utils/liquid-feedback': { Message: (notice) => messages.push(notice), MessageBox: { confirm: (...args) => { confirmations.push(args); return Promise.resolve() } } },
     '@/store': { getters: {}, dispatch: () => Promise.resolve() }, '@/utils/auth': { getToken: () => '' }, '@/lang': { t: (key) => key }
   }, { Blob, location: { reload() {} } })
@@ -2197,4 +2340,73 @@ test('description layouts wrap long job IDs and image references while mobile sp
   imageCss.walkRules('.image-name', (current) => { imageWrap = Object.fromEntries(current.nodes.map((node) => [node.prop, node.value])) })
   assert.equal(imageWrap['overflow-wrap'], 'anywhere')
   assert.equal(imageWrap['word-break'], undefined, 'image references prefer natural break opportunities')
+})
+
+test('JSON downloads save attachments and send authentication errors to the shared response handler', async () => {
+  const messages = [], confirmations = [], downloads = [], released = []
+  let intercept
+  let data = new Blob(['[{"name":"example"}]'], { type: 'application/json' })
+  let headers = { 'content-disposition': 'attachment; filename=NodeServerTemplate.json' }
+  const service = (config) => intercept({ config, data, headers })
+  service.interceptors = {
+    request: { use() {} },
+    response: { use(success) { intercept = success } }
+  }
+  const request = loadModule(read('src/utils/request.js').replace('import.meta.env.VITE_BASE_API', "'/api'"), {
+    axios: { create: () => service, isCancel: require("axios").isCancel },
+    '@/utils/liquid-feedback': {
+      Message: (notice) => messages.push(notice),
+      MessageBox: { confirm: (...args) => { confirmations.push(args); return Promise.resolve() } }
+    },
+    '@/store': { getters: {}, dispatch: () => Promise.resolve() },
+    '@/utils/auth': { getToken: () => '' },
+    '@/lang': { t: (key) => key }
+  }, { Blob, location: { reload() {} } }).default
+  const downloadJSON = loadModule(read('src/utils/download-json.js'), { '@/utils/request': request }, {
+    window: { URL: { createObjectURL: () => 'blob:fixture', revokeObjectURL: (url) => released.push(url) } },
+    document: {
+      body: { appendChild() {} },
+      createElement: () => ({
+        click() { downloads.push({ name: this.download, url: this.href }) },
+        remove() {}
+      })
+    },
+    setTimeout: (release) => release()
+  }).default
+  await downloadJSON('/nodeServer/downloadImportTemplate')
+  assert.deepEqual(downloads, [{ name: 'NodeServerTemplate.json', url: 'blob:fixture' }])
+  assert.deepEqual(released, ['blob:fixture'])
+  data = new Blob(['{"code":50014,"message":"Session expired"}'], { type: 'application/json' })
+  headers = {}
+  await assert.rejects(downloadJSON('/nodeServer/downloadImportTemplate'), /Session expired/)
+  assert.equal(downloads.length, 1)
+  assert.equal(messages[0].message, 'Session expired')
+  assert.equal(confirmations.length, 1)
+})
+
+test('revoked node details refresh the stale card and discard an earlier successful response', async () => {
+  const pending = []
+  const errors = []
+  const descriptor = compiler.parse({ source: read('src/views/node/list/index.vue') })
+  const component = loadModule(descriptor.script.content, new Proxy({}, {
+    has: () => true,
+    get: (_, name) => name === '@/api/node'
+      ? { selectNodeInfo: () => new Promise((resolve, reject) => pending.push({ resolve, reject })) }
+      : {}
+  })).default
+  const row = { id: 4 }
+  let refreshes = 0
+  const view = { ...component.methods, detailId: 0, detailVersion: 0, list: [row], listRequestActive: true,
+    $message: { error: (message) => errors.push(message) }, $t: (key) => key,
+    getList() { refreshes++; this.list = [] } }
+  const old = view.handlePrototypeDetail(row)
+  const denied = view.handlePrototypeDetail(row)
+  pending[1].reject(Object.assign(new Error('permission denied'), { code: 50403 }))
+  await denied
+  pending[0].resolve({ data: { password: 'old' } })
+  await old
+  assert.equal(refreshes, 1)
+  assert.equal(errors.length, 1)
+  assert.equal(view.detailId, 0)
+  assert.equal(view.nodeDetail.password, undefined)
 })

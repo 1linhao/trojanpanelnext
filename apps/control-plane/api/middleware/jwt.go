@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/gin-gonic/gin"
 	"strings"
+	"trojan-panel/dao"
 	"trojan-panel/dao/redis"
 	"trojan-panel/model/constant"
 	"trojan-panel/model/vo"
@@ -35,7 +36,7 @@ func JWTHandler() gin.HandlerFunc {
 			return
 		}
 		if myClaims.AccountVo.Deleted != 0 {
-			vo.Fail(constant.AccountDisabled, c)
+			vo.DisabledSession(c)
 			c.Abort()
 			return
 		}
@@ -44,6 +45,16 @@ func JWTHandler() gin.HandlerFunc {
 		result, err := get.String()
 		if err != nil || result == "" {
 			vo.Fail(constant.IllegalTokenError, c)
+			c.Abort()
+			return
+		}
+		identity := myClaims.AccountVo
+		if err := dao.CheckAccountSession(identity.Id, identity.Username, identity.SessionVersion); err != nil {
+			if err.Error() == constant.AccountDisabled {
+				vo.DisabledSession(c)
+			} else {
+				vo.Fail(err.Error(), c)
+			}
 			c.Abort()
 			return
 		}

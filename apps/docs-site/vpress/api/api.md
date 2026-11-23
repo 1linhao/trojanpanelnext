@@ -11,6 +11,7 @@ Web API 位于面板 HTTPS 下的 `/api`。管理接口使用 `Authorization: Be
 - 订阅及客户端模板
 - 流量统计
 - Xray / Hysteria2 内核任务
-- 系统设置、黑名单、邮件与文件任务
+- 账号与服务器导入导出
+- 系统设置与邮件记录
 
 集成应用应绑定产品版本，并以该版本的 [router 源码](https://github.com/1linhao/trojanpanelnext/tree/v1.0.2-rc.13/apps/control-plane/api/router)及 DTO 为准。

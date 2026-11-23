@@ -5,9 +5,12 @@ import (
 	"fmt"
 	"github.com/gin-gonic/gin"
 	"github.com/skip2/go-qrcode"
+	"net"
+	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"trojan-panel/model"
 	"trojan-panel/model/constant"
 	"trojan-panel/model/vo"
 	"trojan-panel/service"
@@ -34,6 +37,18 @@ func ExportSubscribe(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if client == "clash-meta" && templateId != "default" {
+		name := constant.SystemName
+		config, err := service.SelectSystemByName(&name)
+		if err != nil {
+			vo.Fail(err.Error(), c)
+			return
+		}
+		if _, ok := model.FindTemplate(config.TemplateLibrary.Clash, templateId); !ok {
+			vo.Fail(constant.ValidateFailed, c)
+			return
+		}
+	}
 	password, err := service.SelectConnectPassword(accountId, username)
 	if err != nil {
 		vo.Fail(err.Error(), c)
@@ -58,15 +73,7 @@ func ExportQRCode(c *gin.Context) {
 		vo.Fail(err.Error(), c)
 		return
 	}
-	scheme := c.GetHeader("X-Forwarded-Proto")
-	if scheme == "" {
-		if c.Request.TLS != nil {
-			scheme = "https"
-		} else {
-			scheme = "http"
-		}
-	}
-	subscribeUrl := fmt.Sprintf("%s://%s%s", scheme, c.Request.Host, buildSubscribePath(password, client, templateId))
+	subscribeUrl := subscriptionQRCodeURL(c.Request, buildSubscribePath(password, client, templateId))
 	qrCode, err := qrcode.Encode(subscribeUrl, qrcode.Medium, 256)
 	if err != nil {
 		vo.Fail(constant.SysError, c)
@@ -75,8 +82,51 @@ func ExportQRCode(c *gin.Context) {
 	vo.Success(base64.StdEncoding.EncodeToString(qrCode), c)
 }
 
+func subscriptionQRCodeURL(req *http.Request, path string) string {
+	scheme := "http"
+	if req.TLS != nil {
+		scheme = "https"
+	}
+	if forwarded := req.Header.Get("X-Forwarded-Proto"); forwarded == "http" || forwarded == "https" {
+		scheme = forwarded
+	}
+	host := req.Host
+	// The bundled UI proxy connects through loopback and rewrites Host to
+	// the API listener. Caddy preserves the original authority in this header.
+	if loopbackAuthority(req.RemoteAddr) && loopbackAuthority(host) {
+		if values := req.Header.Values("X-Forwarded-Host"); len(values) == 1 && validForwardedAuthority(values[0]) {
+			host = values[0]
+		}
+	}
+	return scheme + "://" + host + path
+}
+
+func loopbackAuthority(authority string) bool {
+	host, _, err := net.SplitHostPort(authority)
+	if err != nil {
+		host = strings.Trim(authority, "[]")
+	}
+	return strings.EqualFold(host, "localhost") || net.ParseIP(host).IsLoopback()
+}
+
+func validForwardedAuthority(authority string) bool {
+	if authority == "" || len(authority) > 259 || strings.ContainsAny(authority, ",/\\?#@") || strings.HasSuffix(authority, ":") {
+		return false
+	}
+	parsed, err := url.Parse("//" + authority)
+	if err != nil || parsed.Host != authority || parsed.Hostname() == "" {
+		return false
+	}
+	if port := parsed.Port(); port != "" {
+		number, err := strconv.ParseUint(port, 10, 16)
+		return err == nil && number != 0
+	}
+	return true
+}
+
 // Subscribe 订阅
 func Subscribe(c *gin.Context) {
+	c.Header("Cache-Control", "private, no-store")
 	token := c.Param("token")
 	//userAgent := c.Request.Header.Get("User-Agent")
 	tokenDecode, err := base64.RawURLEncoding.DecodeString(token)
@@ -95,7 +145,7 @@ func Subscribe(c *gin.Context) {
 	if client == "sing-box" {
 		account, userInfo, singBoxConfigJson, err := service.SubscribeSingBox(pass, templateId)
 		if err != nil {
-			vo.Fail(err.Error(), c)
+			failSubscription(c, err)
 			return
 		}
 		c.Header("content-disposition", fmt.Sprintf("attachment; filename=%s-sing-box.json", *account.Username))
@@ -108,7 +158,7 @@ func Subscribe(c *gin.Context) {
 	if client == "v2ray" || client == "shadowrocket" {
 		account, userInfo, v2rayConfig, err := service.SubscribeURI(pass, c.GetHeader("User-Agent"), client)
 		if err != nil {
-			vo.Fail(err.Error(), c)
+			failSubscription(c, err)
 			return
 		}
 		c.Header("vary", "User-Agent")
@@ -120,22 +170,28 @@ func Subscribe(c *gin.Context) {
 		return
 	}
 
-	account, userInfo, clashConfigYaml, systemConfig, err := service.SubscribeClash(pass)
+	account, userInfo, clashConfigYaml, err := service.SubscribeClash(pass, templateId)
 	if err != nil {
-		vo.Fail(err.Error(), c)
+		failSubscription(c, err)
 		return
 	}
-	result := fmt.Sprintf(`%s
-%s`, string(clashConfigYaml), systemConfig.ClashRule)
 
 	c.Header("content-disposition", fmt.Sprintf("attachment; filename=%s.yaml", *account.Username))
 	c.Header("content-type", "application/yaml; charset=utf-8")
 	c.Header("profile-update-interval", "12")
 	c.Header("subscription-userinfo", userInfo)
-	c.String(200, result)
+	c.String(200, string(clashConfigYaml))
 	return
 	//}
 	//vo.Fail("This client is not supported", c)
+}
+
+func failSubscription(c *gin.Context, err error) {
+	if err.Error() == constant.AccountDisabled {
+		c.String(http.StatusForbidden, constant.AccountDisabled)
+		return
+	}
+	vo.Fail(err.Error(), c)
 }
 
 func exportAccount(c *gin.Context) (*uint, *string, bool) {
@@ -174,7 +230,9 @@ func validExportSelection(client string, templateId string) bool {
 	switch strings.ToLower(client) {
 	case "sing-box":
 		return templateId == "tun" || templateId == "outbound"
-	case "clash-meta", "v2ray", "shadowrocket":
+	case "clash-meta":
+		return templateId != "" && len(templateId) <= 64
+	case "v2ray", "shadowrocket":
 		return templateId == "default"
 	default:
 		return false

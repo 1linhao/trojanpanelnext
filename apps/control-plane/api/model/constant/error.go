@@ -27,12 +27,9 @@ const (
 	NodeTypeNotExist    string = "the node type does not exist"
 	RoleNotExist        string = "the role does not exist"
 	SystemNotExist      string = "this system setting does not exist"
-	FileTaskNotExist    string = "the file task does not exist"
-	FileNotExist        string = "the file does not exist"
 
 	AccountRegisterClosed string = "account registration is disabled"
 	AccountDisabled       string = "this account has been disabled"
-	FileTaskNotSuccess    string = "the task has not been executed yet"
 
 	FileSizeTooBig  string = "the file is too big"
 	FileFormatError string = "file format not supported"
@@ -42,7 +39,6 @@ const (
 
 	SystemEmailError string = "system mailbox is not set"
 
-	BlackListError      string = "because your recent abnormal operations are too frequent, access has been restricted. If you need to cancel the restriction, please contact the administrator"
 	RateLimiterError    string = "order too fast"
 	TelegramBotApiError string = "failed to initialize Telegram Bot Api"
 

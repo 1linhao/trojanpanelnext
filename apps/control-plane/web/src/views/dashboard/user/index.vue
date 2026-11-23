@@ -37,6 +37,8 @@
           </div>
         </div>
         <p class="muted">选择客户端和配置模板，复制订阅地址或生成二维码。</p>
+        <p v-if="expired" role="status">{{ $t('accountStatus.expiredSubscription') }}</p>
+        <p v-else-if="panelGroupData.quota === 0" role="status">{{ $t('accountStatus.zeroSubscription') }}</p>
         <div class="subscription-actions">
           <button
             class="cap primary"
@@ -69,6 +71,7 @@
 </template>
 
 <script>
+import accountExpiryClock from '@/mixins/account-expiry-clock'
 import { panelGroup } from '@/api/dashboard'
 import { getFlow } from '@/utils/account'
 import { timeStampToDate } from '@/utils'
@@ -78,6 +81,7 @@ import TrafficTable from '@/views/dashboard/admin/compoments/TrafficTable'
 export default {
   name: 'UserDashboard',
   components: { ExportNodeDialog, TrafficTable },
+  mixins: [accountExpiryClock],
   data() {
     return {
       panelGroupData: {
@@ -124,12 +128,16 @@ export default {
         ? timeStampToDate(this.panelGroupData.expireTime, false)
         : '—'
     },
+    expired() {
+      return this.panelGroupData.expireTime > 0 && this.panelGroupData.expireTime <= this.accountNow
+    },
     expireRelative() {
       if (!this.panelGroupData.expireTime) return '—'
+      if (this.expired) return this.$t('accountStatus.expired')
       const days = Math.ceil(
-        (this.panelGroupData.expireTime - Date.now()) / 86400000
+        (this.panelGroupData.expireTime - this.accountNow) / 86400000
       )
-      return days >= 0 ? `${days} 天` : '已到期'
+      return `${days} 天`
     },
     // WEB-026: consume the real system reset policy instead of asserting an
     // enabled monthly reset. Unknown/missing policy renders nothing.
@@ -145,7 +153,7 @@ export default {
   created() {
     panelGroup().then(({ data }) => {
       this.panelGroupData = data
-    })
+    }).catch(() => { /* The request interceptor displays the error. */ })
   }
 }
 </script>

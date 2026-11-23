@@ -109,7 +109,7 @@ func TestInitXraySanitizesTemplateServerTLS(t *testing.T) {
 	}
 	config := jsonDocument(t, data).(map[string]interface{})
 	inbounds := config["inbounds"].([]interface{})
-	if len(inbounds) != 3 {
+	if len(inbounds) != 2 || config[socksInboundKey] == nil {
 		t.Fatal("template, API or user inbound was lost")
 	}
 	template := inbounds[0].(map[string]interface{})

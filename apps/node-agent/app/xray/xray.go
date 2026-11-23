@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/sirupsen/logrus"
 	"os"
+	"strings"
 	"trojan-panel-core/core"
 	"trojan-panel-core/core/process"
 	"trojan-panel-core/model/bo"
@@ -27,6 +28,11 @@ func InitXrayApp() error {
 		}
 		if err = migrateServerTLSConfig(configPath); err != nil {
 			return err
+		}
+		if strings.HasSuffix(configPath, "-socks.json") {
+			if err = migrateConfig(configPath, func(data []byte) ([]byte, bool, error) { return prepareSocksConfig(data, apiPort-30000) }); err != nil {
+				return err
+			}
 		}
 		if err = xrayProcess.StartXray(apiPort); err != nil {
 			return err
@@ -80,6 +86,21 @@ func initXray(xrayConfigDto dto.XrayConfigDto) error {
 		}
 	}()
 
+	configContentByte, err := renderXrayConfig(xrayConfigDto)
+	if err != nil {
+		return err
+	}
+	if xrayConfigDto.Protocol == constant.ProtocolSocks {
+		configContentByte, _, err = prepareSocksConfig(configContentByte, xrayConfigDto.Port)
+		if err != nil {
+			return err
+		}
+	}
+	_, err = file.Write(configContentByte)
+	return err
+}
+
+func renderXrayConfig(xrayConfigDto dto.XrayConfigDto) ([]byte, error) {
 	// generate corresponding configuration files according to different protocols, and account information is created through a new synchronous coroutine
 	if xrayConfigDto.Template == "" {
 		xrayConfigDto.Template = `{
@@ -128,18 +149,18 @@ func initXray(xrayConfigDto dto.XrayConfigDto) error {
 	}
 	xrayConfig := &bo.XrayConfigBo{}
 	// map json strings to template objects
-	if err = json.Unmarshal([]byte(xrayConfigDto.Template), xrayConfig); err != nil {
+	if err := json.Unmarshal([]byte(xrayConfigDto.Template), xrayConfig); err != nil {
 		logrus.Errorf("xray template config deserialization err: %v", err)
-		return err
+		return nil, err
 	}
 
 	// set the streamSettings field
 	streamSettingsStr := []byte("{}")
 	if xrayConfigDto.StreamSettings != "" {
 		streamSettings := &bo.StreamSettings{}
-		if err = json.Unmarshal([]byte(xrayConfigDto.StreamSettings), streamSettings); err != nil {
+		if err := json.Unmarshal([]byte(xrayConfigDto.StreamSettings), streamSettings); err != nil {
 			logrus.Errorf("xray StreamSettings deserialization err: %v", err)
-			return err
+			return nil, err
 		}
 
 		if streamSettings.Security != "none" {
@@ -158,10 +179,11 @@ func initXray(xrayConfigDto dto.XrayConfigDto) error {
 			}
 		}
 
+		var err error
 		streamSettingsStr, err = json.MarshalIndent(streamSettings, "", "    ")
 		if err != nil {
 			logrus.Errorf("xray StreamSettings serialization err: %v", err)
-			return err
+			return nil, err
 		}
 	}
 
@@ -187,20 +209,15 @@ func initXray(xrayConfigDto dto.XrayConfigDto) error {
 	configContentByte, err := json.MarshalIndent(xrayConfig, "", "    ")
 	if err != nil {
 		logrus.Errorf("xray template config deserialization err: %v", err)
-		return err
+		return nil, err
 	}
 	// Sanitize every server inbound, including those supplied by the template;
 	// outbound client certificate verification options remain untouched.
 	configContentByte, _, err = withoutServerAllowInsecure(configContentByte)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	_, err = file.Write(configContentByte)
-	if err != nil {
-		logrus.Errorf("xray file config.json write err: %v", err)
-		return err
-	}
-	return nil
+	return configContentByte, nil
 }
 
 func InitXrayBinFile() error {

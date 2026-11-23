@@ -32,11 +32,33 @@ function navButton(component, h, item, mobile = false) {
   )
 }
 
+function brandButton(component, h, compact = false) {
+  const { brand } = component.model
+  return h(
+    'button',
+    {
+      class: ['tp-ui-shell__brand', { 'tp-ui-shell__topbar-brand': compact }],
+      attrs: { type: 'button', 'aria-label': compact ? brand.name : undefined },
+      on: { click: () => component.$emit('action', 'brand') }
+    },
+    component.$scopedSlots.brand
+      ? component.$scopedSlots.brand({ brand, compact })
+      : [
+          h('span', { class: 'tp-ui-shell__brand-mark' }, brand.mark),
+          h('span', { class: 'tp-ui-shell__brand-label' }, [
+            h('strong', brand.name),
+            h('small', brand.subtitle)
+          ])
+        ]
+  )
+}
+
 export const UiAppShell = {
   name: 'UiAppShell',
   props: {
     model: { type: Object, required: true },
     showUser: { type: Boolean, default: true },
+    showMobileBrand: { type: Boolean, default: false },
     labels: {
       type: Object,
       default: () => ({
@@ -97,27 +119,7 @@ export const UiAppShell = {
             }
           },
           [
-            h(
-              'button',
-              {
-                class: 'tp-ui-shell__brand',
-                attrs: { type: 'button' },
-                on: { click: () => this.$emit('action', 'brand') }
-              },
-              this.$scopedSlots.brand
-                ? this.$scopedSlots.brand({ brand: this.model.brand })
-                : [
-                    h(
-                      'span',
-                      { class: 'tp-ui-shell__brand-mark' },
-                      this.model.brand.mark
-                    ),
-                    h('span', [
-                      h('strong', this.model.brand.name),
-                      h('small', this.model.brand.subtitle)
-                    ])
-                  ]
-            ),
+            brandButton(this, h),
             ...this.model.groups.flatMap((group) => [
               h(
                 'div',
@@ -136,6 +138,7 @@ export const UiAppShell = {
               attrs: { 'data-ui-surface': 'raised', 'data-ui-tone': 'neutral' }
             },
             [
+              this.showMobileBrand ? brandButton(this, h, true) : null,
               h('h1', this.model.pageTitle),
               h('div', { class: 'tp-ui-shell__actions' }, [
                 ...(this.$slots.actions || []),

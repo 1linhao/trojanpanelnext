@@ -104,6 +104,26 @@ func title(value string) bool {
 
 func groupTag(g Group) string { return "组 · " + g.Name }
 
+// CheckMembers reports stale references without editing the published source or its fallback.
+func (t Traffic) CheckMembers(nodeServers map[uint]uint) error {
+	var missing []string
+	for _, group := range t.Groups {
+		var ids []string
+		for _, id := range group.NodeIDs {
+			if server, ok := nodeServers[id]; !ok || server != group.ServerID {
+				ids = append(ids, fmt.Sprintf("#%d", id))
+			}
+		}
+		if len(ids) > 0 {
+			missing = append(missing, fmt.Sprintf("%s (%s)", group.Name, strings.Join(ids, ", ")))
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("节点已移除或迁移：%s。组内无可用成员时规则将使用 %s。请在编辑器中更新节点后发布", strings.Join(missing, "、"), t.Empty)
+	}
+	return nil
+}
+
 // Compile validates the editable source against the live node catalog and
 // materializes the native bases, DNS and ordered destination rules on publish.
 func Compile(p Profile, nodeServers map[uint]uint) (*Snapshot, error) {
@@ -123,6 +143,9 @@ func Compile(p Profile, nodeServers map[uint]uint) (*Snapshot, error) {
 	}
 	if len(p.Traffic.Groups) > 256 || len(p.Traffic.Rules) > 4096 || len(p.DNS.Rules) > 256 {
 		return nil, fmt.Errorf("节点组或规则过多")
+	}
+	if err := p.Traffic.CheckMembers(nodeServers); err != nil {
+		return nil, err
 	}
 	targets := map[string]string{All: All, Direct: Direct, Reject: Reject}
 	names := map[string]bool{}

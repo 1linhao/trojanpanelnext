@@ -43,15 +43,7 @@ func CreateAccount(accountCreateDto dto.AccountCreateDto) error {
 	if err = dao.CreateAccount(&account); err != nil {
 		return err
 	}
-	if account.Deleted != nil && *account.Deleted == 1 {
-		if err = PullAccountWhiteOrBlackByUsername([]string{*account.Username}, true); err != nil {
-			return err
-		}
-	} else if *account.ExpireTime <= util.NowMilli() {
-		if err = DisableAccount([]string{*account.Username}); err != nil {
-			return err
-		}
-	}
+
 	return nil
 }
 
@@ -59,7 +51,7 @@ func SelectAccountById(id *uint, includeRemark ...bool) (*model.Account, error) 
 	return dao.SelectAccountById(id, includeRemark...)
 }
 
-func UpdateAccountNodeAccess(id uint, access dao.AccountNodeAccess) error {
+func UpdateAccountNodeAccess(id uint, access dao.AccountNodeAccess) (uint64, error) {
 	nodeLifecycle.Lock()
 	defer nodeLifecycle.Unlock()
 	return dao.UpdateAccountNodeAccess(id, access)
@@ -104,14 +96,15 @@ func SelectAccountByUsername(username *string) (*model.Account, error) {
 	return dao.SelectAccountByUsername(username)
 }
 
-func UpdateAccountPass(token string, oldPass *string, newPass *string, username *string) error {
+func UpdateAccountPass(token string, oldPass *string, newPass *string, id uint) error {
 	mutex, err := redis.RsLock(constant.UpdateAccountPassLock)
 	if err != nil {
 		return err
 	}
 
-	account, err := SelectAccountByUsername(username)
-	if err != nil || !util.Sha1Match(*account.Pass, fmt.Sprintf("%s%s", *username, *oldPass)) {
+	defer redis.RsUnLock(mutex)
+	account, err := dao.SelectAccountIdentity(id)
+	if err != nil || !util.Sha1Match(account.LoginVerifier(), fmt.Sprintf("%s%s", *account.Username, *oldPass)) {
 		return errors.New(constant.OriPassError)
 	}
 
@@ -119,33 +112,32 @@ func UpdateAccountPass(token string, oldPass *string, newPass *string, username 
 		return err
 	}
 
-	if err := dao.UpdateAccountPass(oldPass, newPass, username); err != nil {
+	if err := dao.UpdateAccountPass(account, *newPass); err != nil {
 		return err
 	}
-	redis.RsUnLock(mutex)
 	return nil
 }
 
-func UpdateAccountProperty(token string, oldUsername *string, pass *string, username *string, email *string) error {
+func UpdateAccountProperty(token string, id uint, pass *string, username *string, email *string) error {
 	mutex, err := redis.RsLock(constant.UpdateAccountPropertyLock)
 	if err != nil {
 		return err
 	}
-	account, err := SelectAccountByUsername(oldUsername)
-	if err != nil || !util.Sha1Match(*account.Pass, fmt.Sprintf("%s%s", *oldUsername, *pass)) {
+	defer redis.RsUnLock(mutex)
+	account, err := dao.SelectAccountIdentity(id)
+	if err != nil || !util.Sha1Match(account.LoginVerifier(), fmt.Sprintf("%s%s", *account.Username, *pass)) {
 		return errors.New(constant.OriPassError)
 	}
 
-	if pass != nil && *pass != "" && username != nil && *username != "" {
+	if pass != nil && *pass != "" && username != nil && *username != "" && *username != *account.Username {
 		if err = RemoveAccount(token, *account.Pass); err != nil {
 			return err
 		}
 	}
 
-	if err := dao.UpdateAccountProperty(oldUsername, pass, username, email); err != nil {
+	if err := dao.UpdateAccountProperty(account, pass, username, email); err != nil {
 		return err
 	}
-	redis.RsUnLock(mutex)
 	return nil
 }
 
@@ -202,6 +194,7 @@ func UpdateAccountById(token string, account *model.Account) error {
 	if err != nil {
 		return err
 	}
+	defer redis.RsUnLock(mutex)
 	if account.Pass != nil && *account.Pass != "" {
 		password, err := dao.SelectConnectPassword(account.Id, nil)
 		if err != nil {
@@ -214,16 +207,7 @@ func UpdateAccountById(token string, account *model.Account) error {
 	if err := dao.UpdateAccountById(account); err != nil {
 		return err
 	}
-	if account.Deleted != nil && *account.Deleted == 1 {
-		if err := PullAccountWhiteOrBlackByUsername([]string{*account.Username}, true); err != nil {
-			return err
-		}
-	} else if account.ExpireTime != nil && *account.ExpireTime <= util.NowMilli() {
-		if err := DisableAccount([]string{*account.Username}); err != nil {
-			return err
-		}
-	}
-	redis.RsUnLock(mutex)
+
 	return nil
 }
 
@@ -263,44 +247,10 @@ func Register(accountRegisterDto dto.AccountRegisterDto) error {
 	return nil
 }
 
-// PullAccountWhiteOrBlackByUsername 拉白或者拉黑用户 此操作会清空用户流量
-func PullAccountWhiteOrBlackByUsername(usernames []string, isBlack bool) error {
-	if len(usernames) > 0 {
-		var deleted uint
-		if isBlack {
-			deleted = 1
-		} else {
-			deleted = 0
-		}
-		if err := dao.UpdateAccountByUsernames(usernames, new(int), new(uint), new(uint), &deleted); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// DisableAccount 清空流量
-func DisableAccount(usernames []string) error {
-	if len(usernames) > 0 {
-		if err := dao.UpdateAccountByUsernames(usernames, new(int), new(uint), new(uint), nil); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// CronScanAccounts 定时任务：扫描无效用户
+// CronScanAccounts applies natural expiry without changing account login state.
 func CronScanAccounts() {
-	usernames, err := dao.SelectAccountUsernameByDeletedOrExpireTime()
-	if err != nil {
-		return
-	}
-
-	if len(usernames) > 0 {
-		if err = DisableAccount(usernames); err != nil {
-			logrus.Errorf("定时任务：扫描无效用户异常 usernames: %s error: %v", usernames, err)
-		}
-		logrus.Infof("定时任务：扫描无效用户 usernames: %s", usernames)
+	if err := dao.ClearExpiredQuotas(); err != nil {
+		logrus.WithError(err).Error("clear expired quotas")
 	}
 }
 
@@ -378,6 +328,17 @@ func ResetAccountDownloadAndUpload(id *uint, roleIds *[]uint) error {
 	return dao.ResetAccountDownloadAndUpload(id, roleIds)
 }
 
+func ResetAllAccountDownloadAndUpload(token string) error {
+	allowed, err := IsCurrentSysAdmin(token)
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return errors.New(constant.ForbiddenError)
+	}
+	return dao.ResetAccountDownloadAndUpload(nil, nil)
+}
+
 func ResetAccountLoginLimit(token string, id *uint) error {
 	if id == nil || *id == 0 {
 		return errors.New(constant.ValidateFailed)
@@ -427,8 +388,8 @@ func LoginVerify(username string) error {
 	return nil
 }
 
-func CreateAccountBatch(accountId uint, accountUsername string, dto dto.CreateAccountBatchDto) error {
-	var exportVos []vo.AccountUnusedExportVo
+func CreateAccountBatch(dto dto.CreateAccountBatchDto) ([]vo.AccountUnusedExportVo, error) {
+	exportVos := make([]vo.AccountUnusedExportVo, 0, *dto.Num)
 	for i := 0; i < *dto.Num; i++ {
 		randStr := util.RandString(12)
 		role := constant.USER
@@ -440,22 +401,19 @@ func CreateAccountBatch(accountId uint, accountUsername string, dto dto.CreateAc
 			PresetExpire: dto.PresetExpire,
 			PresetQuota:  &toByte,
 		}
-		exportVo := vo.AccountUnusedExportVo{
-			Username: randStr,
-			Pass:     randStr,
-		}
-		exportVos = append(exportVos, exportVo)
 		if err := dao.CreateAccount(&account); err != nil {
 			logrus.Errorf("batch create account err: %v", err)
 			continue
 		}
+		exportVos = append(exportVos, vo.AccountUnusedExportVo{
+			Username: randStr,
+			Pass:     randStr,
+		})
 	}
-	if len(exportVos) > 0 {
-		if err := ExportTaskJson(accountId, accountUsername, constant.TaskTypeAccountExport, "batchCreateAccountExport", exportVos); err != nil {
-			return err
-		}
+	if len(exportVos) == 0 {
+		return nil, errors.New(constant.SysError)
 	}
-	return nil
+	return exportVos, nil
 }
 
 // GetCurrentAccount 获取当前用户

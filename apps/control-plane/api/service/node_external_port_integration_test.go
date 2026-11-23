@@ -24,6 +24,7 @@ import (
 	"trojan-panel/core"
 	"trojan-panel/dao"
 	"trojan-panel/dao/redis"
+	"trojan-panel/model"
 	"trojan-panel/model/constant"
 	"trojan-panel/model/dto"
 	"trojan-panel/model/vo"
@@ -86,7 +87,9 @@ func TestNodeForwardingServiceIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { testDB.Close() })
-	system, err := json.Marshal(vo.SystemVo{ClashRule: "rules: []", SingBoxTun: "{}", SingBoxOutbound: "{}", XrayTemplate: "{}"})
+	const activeContent = `{"log":{"loglevel":"warning"}}`
+	library := model.TemplateLibrary{ActiveXray: "home", Xray: []model.NamedTemplate{{ID: "home", Name: "Home", Content: activeContent}}}
+	system, err := json.Marshal(vo.SystemVo{TemplateLibrary: library, ClashRule: "rules: []", SingBoxTun: "{}", SingBoxOutbound: "{}", XrayTemplate: "{}"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,6 +115,9 @@ func TestNodeForwardingServiceIntegration(t *testing.T) {
 		if err := CreateNode("fixture-token", create); err != nil {
 			t.Fatal(err)
 		}
+		if live.lastXrayTemplate() != activeContent {
+			t.Fatal("create did not use active Xray template")
+		}
 		id := forwardingID(t, testDB, "managed")
 		detail, err := SelectNodeById(&id)
 		if err != nil || detail.Port != 445 || detail.ExternalPort != 443 {
@@ -121,6 +127,18 @@ func TestNodeForwardingServiceIntegration(t *testing.T) {
 		if !strings.Contains(string(data), `"externalPort":443`) {
 			t.Fatalf("detail JSON does not include forwarding: %s", data)
 		}
+		var next vo.SystemVo
+		if err := json.Unmarshal(system, &next); err != nil {
+			t.Fatal(err)
+		}
+		next.TemplateLibrary.ActiveXray = "default"
+		changed, err := json.Marshal(next)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := redis.Client.String.Set("trojan-panel:system", changed).Result(); err != nil {
+			t.Fatal(err)
+		}
 		update := forwardingUpdateDTO(create, id, detail.NodeSubId)
 		for _, tc := range []struct {
 			external *uint
@@ -129,6 +147,9 @@ func TestNodeForwardingServiceIntegration(t *testing.T) {
 			update.ExternalPort = tc.external
 			if err := UpdateNodeById("fixture-token", &update); err != nil {
 				t.Fatal(err)
+			}
+			if live.lastXrayTemplate() != "{}" {
+				t.Fatal("rebuilt Xray node did not use the new global template")
 			}
 			detail, err = SelectNodeById(&id)
 			if err != nil || detail.Port != 445 || detail.ExternalPort != tc.want {
@@ -142,6 +163,9 @@ func TestNodeForwardingServiceIntegration(t *testing.T) {
 			t.Fatal(err)
 		}
 		detail, err = SelectNodeById(&id)
+		if live.lastXrayTemplate() != "" {
+			t.Fatal("Xray server template sent to a Hysteria node")
+		}
 		if err != nil || detail.ExternalPort != 65535 || detail.Port != 445 {
 			t.Fatalf("type change lost forwarding: %+v %v", detail, err)
 		}
@@ -205,7 +229,7 @@ func TestNodeForwardingServiceIntegration(t *testing.T) {
 				t.Fatalf("%s URI port=%d want %d", name, got, expected)
 			}
 		}
-		_, _, clash, _, err := SubscribeClash("port-export-fixture")
+		_, _, clash, err := SubscribeClash("port-export-fixture", "default")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -288,7 +312,7 @@ func TestNodeForwardingServiceIntegration(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		outbound, err := buildSingBoxOutbound(*node, "port-export-fixture", "fixture-user")
+		outbound, err := buildSingBoxOutbound(*node, "port-export-fixture", "fixture-user", 1)
 		if err != nil || !reflect.DeepEqual(outbound["server_ports"], []string{"21000:21010"}) {
 			t.Fatalf("hopping destinations=%v err=%v", outbound, err)
 		}
@@ -298,8 +322,9 @@ func TestNodeForwardingServiceIntegration(t *testing.T) {
 type forwardingNodeServer struct {
 	core.UnimplementedApiNodeServiceServer
 	core.UnimplementedApiStateServiceServer
-	mu     sync.Mutex
-	events []string
+	mu           sync.Mutex
+	events       []string
+	xrayTemplate string
 }
 
 func (server *forwardingNodeServer) record(operation string, port uint64) {
@@ -312,7 +337,16 @@ func (server *forwardingNodeServer) recorded() []string {
 	defer server.mu.Unlock()
 	return append([]string(nil), server.events...)
 }
+func (server *forwardingNodeServer) lastXrayTemplate() string {
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	return server.xrayTemplate
+}
+
 func (server *forwardingNodeServer) AddNode(_ context.Context, request *core.NodeAddDto) (*core.Response, error) {
+	server.mu.Lock()
+	server.xrayTemplate = request.XrayTemplate
+	server.mu.Unlock()
 	server.record("add", request.Port)
 	return &core.Response{Success: true}, nil
 }

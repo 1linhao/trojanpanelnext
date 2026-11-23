@@ -193,12 +193,6 @@
           @click="handleCreateFallbackProps"
       ></liquid-button>
     </liquid-form-item>
-    <liquid-form-item :label="$t('table.xraySocksUser').toString()" prop="xraySettingsEntity.accounts[0].user" v-if="isXraySocks(nodeForm)">
-      <liquid-input v-model="nodeForm.xraySettingsEntity.accounts[0].user" />
-    </liquid-form-item>
-    <liquid-form-item :label="$t('table.xraySocksPass').toString()" prop="xraySettingsEntity.accounts[0].pass" v-if="isXraySocks(nodeForm)">
-      <liquid-input v-model="nodeForm.xraySettingsEntity.accounts[0].pass" />
-    </liquid-form-item>
     <liquid-form-item
         :label="$t('table.xraySocksUdp').toString()"
         prop="xraySettingsEntity.udp"

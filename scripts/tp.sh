@@ -128,7 +128,7 @@ main() {
     download_script uninstall.sh SCRIPT_VERSION "${version}"
     ;;
   web | node)
-    for dependency in quick.sh config.sh install.sh uninstall.sh; do
+    for dependency in quick.sh config.sh validate.sh install.sh uninstall.sh; do
       download_script "${dependency}" SCRIPT_VERSION "${version}"
     done
     ;;

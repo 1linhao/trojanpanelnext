@@ -11,9 +11,7 @@ export const ADMIN_GROUPS = Object.freeze([
     { key: '/server-manage/kernel-upgrade', label: '版本管理', mobileLabel: '版本', icon: 'sysinfo', roles: ['sysadmin'] }
   ] },
   { key: 'operations', label: '运维', items: [
-    { key: '/taskManage/task-list', label: '文件任务', mobileLabel: '任务', icon: 'task', roles: ['sysadmin'] },
-    { key: '/emailManage/email-record', label: '邮件记录', mobileLabel: '邮件', icon: 'email', roles: ['sysadmin', 'admin'] },
-    { key: '/system/black-list', label: '黑名单', mobileLabel: '黑名单', icon: 'pass', roles: ['sysadmin'] }
+    { key: '/emailManage/email-record', label: '邮件记录', mobileLabel: '邮件', icon: 'email', roles: ['sysadmin', 'admin'] }
   ] },
   { key: 'system', label: '系统', items: [
     { key: '/system/base-config', label: '系统配置', mobileLabel: '设置', icon: 'system', roles: ['sysadmin'] },
@@ -35,9 +33,7 @@ export const PAGE_TITLES = Object.freeze({
   '/node-manage/node-list': '节点管理',
   '/server-manage/server-list': '服务器管理',
   '/server-manage/kernel-upgrade': '版本管理',
-  '/taskManage/task-list': '文件任务',
   '/emailManage/email-record': '邮件记录',
-  '/system/black-list': '黑名单',
   '/system/base-config': '系统配置',
   '/modify/index': '个人资料'
 })

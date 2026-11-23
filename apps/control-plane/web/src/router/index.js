@@ -69,7 +69,7 @@ export const constantRoutes = [
     children: [
       {
         path: 'index',
-        name: 'index',
+        name: 'modifyIndex',
         component: () =>
           import('@/views/account/modify'),
         meta: {
@@ -200,32 +200,6 @@ export const asyncRoutes = [
   },
 
   {
-    path: '/taskManage',
-    name: 'taskManage',
-    component: Layout,
-    redirect: '/taskManage/task-list',
-    meta: {
-      title: 'taskManage',
-      name: 'taskManage',
-      icon: 'task',
-      roles: ['sysadmin', 'admin']
-    },
-    children: [
-      {
-        path: 'task-list',
-        name: 'taskList',
-        component: () =>
-          import('@/views/task-manage/list'),
-        meta: {
-          title: 'taskList',
-          name: 'taskList',
-          roles: ['sysadmin']
-        }
-      }
-    ]
-  },
-
-  {
     path: '/system',
     name: 'system',
     component: Layout,
@@ -245,17 +219,6 @@ export const asyncRoutes = [
         meta: {
           title: 'baseConfig',
           name: 'baseConfig',
-          roles: ['sysadmin']
-        }
-      },
-      {
-        path: 'black-list',
-        name: 'blackList',
-        component: () =>
-          import('@/views/system/black'),
-        meta: {
-          title: 'blackList',
-          name: 'blackList',
           roles: ['sysadmin']
         }
       }

@@ -687,8 +687,6 @@ const server = http.createServer((req, res) => {
     },
     '/kernel/selectTaskPage': page('tasks', []),
     '/emailRecord/selectEmailRecordPage': page('emailRecords', []),
-    '/fileTask/selectFileTaskPage': page('fileTasks', []),
-    '/blackList/selectBlackListPage': page('blackLists', []),
     '/system/selectSystemByName': {
       id: 1,
       registerEnable: 1,

@@ -12,6 +12,23 @@ import (
 )
 
 func UpdateAccountFlowByPassOrHash(pass *string, hash *string, download int, upload int) error {
+	where, credential := "pass", ""
+	if pass != nil && *pass != "" {
+		credential = *pass
+	} else if hash != nil && *hash != "" {
+		where, credential = "hash", *hash
+	}
+	if credential == "" {
+		return errors.New(constant.SysError)
+	}
+	return updateAccountFlow(where, credential, download, upload)
+}
+
+func UpdateSocksAccountFlow(id uint64, download, upload int) error {
+	return updateAccountFlow("id", id, download, upload)
+}
+
+func updateAccountFlow(where string, credential any, download, upload int) error {
 	if download == 0 && upload == 0 {
 		return nil
 	}
@@ -31,15 +48,6 @@ func UpdateAccountFlowByPassOrHash(pass *string, hash *string, download int, upl
 	var lockedServerID uint
 	if err = tx.QueryRow(`SELECT id FROM node_server WHERE id=? FOR UPDATE`, serverID).Scan(&lockedServerID); err != nil {
 		logrus.Errorln(err)
-		return errors.New(constant.SysError)
-	}
-	where, credential := "pass", ""
-	if pass != nil && *pass != "" {
-		credential = *pass
-	} else if hash != nil && *hash != "" {
-		where, credential = "hash", *hash
-	}
-	if credential == "" {
 		return errors.New(constant.SysError)
 	}
 	var accountID uint
@@ -81,7 +89,7 @@ const listenerAccountAccess = ` AND (
 )`
 
 func SelectListenerAccounts(nodeType, port uint) ([]bo.AccountBo, error) {
-	query := fmt.Sprintf(`SELECT a.username,a.pass FROM %s a WHERE (a.quota < 0 OR a.quota > a.download + a.upload)`,
+	query := fmt.Sprintf(`SELECT a.id,a.username,a.pass FROM %s a WHERE a.pass<>'' AND a.deleted=0 AND a.expire_time>UNIX_TIMESTAMP(CURRENT_TIMESTAMP(3))*1000 AND (a.quota < 0 OR a.quota > a.download + a.upload)`,
 		core.Config.MySQLConfig.AccountTable)
 	rows, err := db.Query(query+listenerAccountAccess, core.Config.NodeConfig.ServerID, nodeType, port)
 	if missingNodeAccessTable(err, "account_node_policy") {
@@ -94,7 +102,7 @@ func SelectListenerAccounts(nodeType, port uint) ([]bo.AccountBo, error) {
 	var accounts []bo.AccountBo
 	for rows.Next() {
 		var account bo.AccountBo
-		if err := rows.Scan(&account.Username, &account.Pass); err != nil {
+		if err := rows.Scan(&account.ID, &account.Username, &account.Pass); err != nil {
 			return nil, err
 		}
 		accounts = append(accounts, account)
@@ -109,6 +117,52 @@ func AuthorizeHysteria2Account(pass string, port uint) error {
 	err := db.QueryRow(query+listenerAccountAccess, pass, core.Config.NodeConfig.ServerID, constant.Hysteria2, port).Scan(&id)
 	if missingNodeAccessTable(err, "account_node_policy") {
 		err = db.QueryRow(query, pass).Scan(&id)
+	}
+	return err
+}
+
+// Expected listeners prevent an empty or partially started process map from
+// acknowledging a revision for servers whose configured nodes are offline.
+type AccessListener struct{ Kind, Port uint }
+
+func ConfiguredAccessListeners() ([]AccessListener, error) {
+	rows, err := db.Query(`SELECT node_type_id,port FROM node WHERE node_server_id=? AND node_type_id IN (?,?,?)`, core.Config.NodeConfig.ServerID, constant.Xray, constant.NaiveProxy, constant.Hysteria2)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var listeners []AccessListener
+	for rows.Next() {
+		var listener AccessListener
+		if err := rows.Scan(&listener.Kind, &listener.Port); err != nil {
+			return nil, err
+		}
+		listeners = append(listeners, listener)
+	}
+	return listeners, rows.Err()
+}
+
+// Capture the committed revision before reading any listener permissions.
+// Legacy Web versions can still receive the original heartbeat.
+func NodeAccessRevision() (*uint64, error) {
+	var revision uint64
+	err := db.QueryRow("SELECT revision FROM node_access_generation WHERE id=1").Scan(&revision)
+	if missingNodeAccessTable(err, "node_access_generation") {
+		return nil, nil
+	}
+	return &revision, err
+}
+
+func ReportNodeAccess(revision *uint64) error {
+	serverID := core.Config.NodeConfig.ServerID
+	if serverID == 0 {
+		return nil
+	}
+	_, err := db.Exec(`INSERT INTO node_access_ack(node_server_id,revision,reported_at)
+		SELECT id,?,CURRENT_TIMESTAMP FROM node_server WHERE id=?
+		ON DUPLICATE KEY UPDATE revision=VALUES(revision),reported_at=CURRENT_TIMESTAMP`, revision, serverID)
+	if missingNodeAccessTable(err, "node_access_ack") {
+		return nil
 	}
 	return err
 }

@@ -1,5 +1,7 @@
 package dto
 
+import "trojan-panel/model"
+
 type SystemUpdateDto struct {
 	RequiredIdDto
 	RegisterEnable              *uint `json:"registerEnable" form:"registerEnable" validate:"required,oneof=0 1"`
@@ -23,8 +25,9 @@ type SystemUpdateDto struct {
 	SingBoxOutbound *string `json:"singBoxOutbound" form:"singBoxOutbound" validate:"omitempty,min=0,max=102400"`
 	XrayTemplate    *string `json:"xrayTemplate" form:"xrayTemplate" validate:"omitempty,min=0,max=10240"`
 
-	ClashTemplateName           *string `json:"clashTemplateName" form:"clashTemplateName" validate:"omitempty,min=1,max=32"`
-	SingBoxTunTemplateName      *string `json:"singBoxTunTemplateName" form:"singBoxTunTemplateName" validate:"omitempty,min=1,max=32"`
-	SingBoxOutboundTemplateName *string `json:"singBoxOutboundTemplateName" form:"singBoxOutboundTemplateName" validate:"omitempty,min=1,max=32"`
-	XrayTemplateName            *string `json:"xrayTemplateName" form:"xrayTemplateName" validate:"omitempty,min=1,max=32"`
+	TemplateLibrary             *model.TemplateLibrary `json:"templateLibrary"`
+	ClashTemplateName           *string                `json:"clashTemplateName" form:"clashTemplateName" validate:"omitempty,min=1,max=32"`
+	SingBoxTunTemplateName      *string                `json:"singBoxTunTemplateName" form:"singBoxTunTemplateName" validate:"omitempty,min=1,max=32"`
+	SingBoxOutboundTemplateName *string                `json:"singBoxOutboundTemplateName" form:"singBoxOutboundTemplateName" validate:"omitempty,min=1,max=32"`
+	XrayTemplateName            *string                `json:"xrayTemplateName" form:"xrayTemplateName" validate:"omitempty,min=1,max=32"`
 }

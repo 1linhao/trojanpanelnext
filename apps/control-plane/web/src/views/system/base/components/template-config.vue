@@ -16,8 +16,23 @@
       </div>
 
       <div :id="`subscription-template-client-panel-${activeClient}`" role="tabpanel" :aria-labelledby="`subscription-template-client-tab-${activeClient}`">
+      <p v-if="activeClient !== 'sing-box'" class="template-help">
+        {{ $t(activeClient === 'xray' ? 'config.xrayTemplateUse' : 'config.clashTemplateUse') }}
+      </p>
+      <liquid-form-item v-if="activeClient === 'xray'" :label="$t('config.activeXray')">
+        <liquid-select v-model="library.activeXray">
+          <option v-for="item in activeTemplates" :key="item.id" :value="item.id">{{ item.name }}</option>
+        </liquid-select>
+      </liquid-form-item>
       <client-template-editor
         ref="templateEditor"
+        :key="activeClient + '/' + activeTemplateId"
+        :can-create="activeClient !== 'sing-box' && activeTemplates.length < 17"
+        :can-delete="activeClient !== 'sing-box' && activeTemplateId !== 'default' && !(activeClient === 'xray' && library.activeXray === activeTemplateId)"
+        :create-label="$t('config.createTemplate')"
+        :delete-label="$t('config.deleteTemplate')"
+        @create-template="createTemplate"
+        @delete-template="deleteTemplate"
         :client-id="activeClient"
         :templates="activeTemplates"
         :active-template-id="activeTemplateId"
@@ -47,7 +62,7 @@ export default {
   name: 'TemplateConfigForm',
   components: { ClientTemplateEditor },
   inject: {
-    systemConfig: {
+    savedConfig: {
       from: 'systemConfigModel'
     }
   },
@@ -65,7 +80,14 @@ export default {
         trigger: ['change', 'blur']
       }
     ]
+    const saved = this.savedConfig.templateLibrary || {}
     return {
+      systemConfig: { ...this.savedConfig },
+      library: {
+        clash: (saved.clash || []).map((item) => ({ ...item })),
+        xray: (saved.xray || []).map((item) => ({ ...item })),
+        activeXray: saved.activeXray || 'default'
+      },
       activeClient: 'clash-meta',
       clients: [
         { value: 'clash-meta', label: 'Clash.Meta' },
@@ -130,7 +152,8 @@ export default {
             contentLabel: this.$t('config.clashRule'),
             languageLabel: 'YAML',
             format: 'yaml'
-          }
+          },
+          ...this.namedEditors('clash')
         ],
         'sing-box': [
           {
@@ -164,7 +187,8 @@ export default {
             contentLabel: this.$t('config.xrayTemplate'),
             languageLabel: 'JSON',
             format: 'json'
-          }
+          },
+          ...this.namedEditors('xray')
         ]
       }
     },
@@ -179,6 +203,32 @@ export default {
     }
   },
   methods: {
+    namedEditors(group) {
+      const yaml = group === 'clash'
+      return this.library[group].map((entry) => ({
+        ...entry,
+        entry,
+        format: yaml ? 'yaml' : 'json',
+        languageLabel: yaml ? 'YAML' : 'JSON',
+        contentLabel: this.$t(yaml ? 'config.clashRule' : 'config.xrayTemplate')
+      }))
+    },
+    createTemplate() {
+      const group = this.activeClient === 'xray' ? 'xray' : 'clash'
+      const source = this.activeTemplates.find((entry) => entry.id === this.activeTemplateId)
+      const bytes = crypto.getRandomValues(new Uint8Array(12))
+      const id = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
+      const content = typeof source.content === 'string' ? source.content.trim() || '{}' : JSON.stringify(source.content, null, 2)
+      this.library[group].push({ id, name: this.$t('config.newTemplate'), content })
+      this.selectTemplate(id)
+    },
+    deleteTemplate(template) {
+      const entries = this.activeClient === 'xray' ? this.library.xray : this.library.clash
+      const index = entries.findIndex((t) => t.id === template.id)
+      if (index < 0) return
+      entries.splice(index, 1)
+      this.selectTemplate('default')
+    },
     selectTemplate(templateId) {
       this.$set(this.activeTemplateIds, this.activeClient, templateId)
     },
@@ -187,6 +237,10 @@ export default {
         (candidate) => candidate.id === templateId
       )
       if (!template) return
+      if (template.entry) {
+        Object.assign(template.entry, patch)
+        return
+      }
       if (Object.prototype.hasOwnProperty.call(patch, 'name')) {
         this.systemConfig[template.nameProp] = patch.name
       }
@@ -205,6 +259,29 @@ export default {
     },
     updateData() {
       if (!this.$refs.templateEditor.validate()) return
+      for (const client of ['clash-meta', 'xray']) {
+        for (const template of this.templateCatalog[client]) {
+          let error
+          if (!template.name || !template.name.trim() || Array.from(template.name).length > 32) {
+            error = this.$t('valid.templateNameRange')
+          } else if (client === 'xray' && template.entry && new Blob([template.content]).size > 10240) {
+            error = this.$t('valid.namedXraySize', { name: template.name })
+          } else if (template.entry) {
+            try {
+              const value = client === 'xray' ? JSON.parse(template.content) : jsYaml.safeLoad(template.content)
+              if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error()
+            } catch {
+              error = this.$t(client === 'xray' ? 'valid.jsonFormat' : 'valid.yamlFormat')
+            }
+          }
+          if (error) {
+            this.activeClient = client
+            this.selectTemplate(template.id)
+            this.$message.error(error)
+            return
+          }
+        }
+      }
       try {
         if (String(this.systemConfig.clashRule || '').trim()) {
           jsYaml.safeLoad(this.systemConfig.clashRule)
@@ -229,7 +306,15 @@ export default {
       }
       this.$refs.dataForm.validate((valid) => {
         if (!valid) return
-        updateSystemById(Object.assign({}, this.systemConfig)).then(() => {
+        const templateLibrary = JSON.parse(JSON.stringify(this.library))
+        const data = { ...this.systemConfig, templateLibrary }
+        // Avoid rewriting legacy template files when only the catalog changes.
+        if (data.clashRule === this.savedConfig.clashRule) delete data.clashRule
+        for (const key of ['singBoxTun', 'singBoxOutbound', 'xrayTemplate']) {
+          if (data[key] === JSON.stringify(JSON.parse(this.savedConfig[key]))) delete data[key]
+        }
+        updateSystemById(data, true).then(() => {
+          Object.assign(this.savedConfig, data)
           this.$nextTick(() => {
             this.$refs.dataForm.clearValidate()
           })
@@ -239,6 +324,8 @@ export default {
             type: 'success',
             duration: 2000
           })
+        }).catch(() => {
+          // Request feedback already shows the server or network error. Keep the editor open.
         })
       })
     }
@@ -255,6 +342,11 @@ export default {
 
 .template-mode-switches > .liquid-tabs {
   margin-bottom: 0;
+}
+
+.template-help {
+  color: var(--supporting-text-ink);
+  margin: 0 0 16px;
 }
 
 .actions {

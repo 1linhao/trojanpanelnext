@@ -9,7 +9,7 @@ import (
 
 func TestForwardedNaiveOutboundUsesPublicPort(t *testing.T) {
 	node := model.Node{NodeTypeId: uintPtr(constant.NaiveProxy), Name: stringPtr("forwarded"), Domain: stringPtr("node.example.test"), Port: uintPtr(445), ExternalPort: uintPtr(443)}
-	outbound, err := buildSingBoxOutbound(node, "fixture-pass", "fixture-user")
+	outbound, err := buildSingBoxOutbound(node, "fixture-pass", "fixture-user", 1)
 	if err != nil {
 		t.Fatal(err)
 	}

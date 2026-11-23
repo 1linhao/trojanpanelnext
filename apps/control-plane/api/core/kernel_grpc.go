@@ -90,3 +90,22 @@ func ProbeKernelMTLS(ctx context.Context, ip string, grpcPort uint, serverName s
 	}
 	return nil
 }
+
+func CheckXrayTemplates(ctx context.Context, token, ip string, grpcPort uint, transport NodeTransport, templates []string) error {
+	conn, _, closeConnection, err := newGrpcInstance(token, ip, grpcPort, 13*time.Second, transport)
+	defer closeConnection()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, 13*time.Second)
+	defer cancel()
+
+	response, err := NewApiKernelServiceClient(conn).CheckXrayTemplates(ctx, &XrayTemplatesRequest{Contents: templates})
+	if err != nil {
+		return err
+	}
+	if !response.Success {
+		return errors.New(response.Msg)
+	}
+	return nil
+}

@@ -1,4 +1,15 @@
 export default {
+  accountImport: {
+    summary: 'واردشده {imported}، نادیده‌گرفته‌شده {skipped}، ناموفق {failed}',
+    row: 'ردیف {row}: {reason}',
+    usernameRequired: 'نام کاربری حساب را وارد کنید',
+    roleRequired: 'نقش حساب را انتخاب کنید',
+    invalidRow: 'نوع فیلدهای حساب نامعتبر است',
+    writeFailed: 'ذخیرهٔ حساب انجام نشد. مقادیر فیلدها را بررسی و دوباره تلاش کنید.',
+    invalidJSON: 'یک فایل JSON معتبر حاوی حداقل یک ردیف انتخاب کنید',
+    requestFailed: 'درخواست وارد کردن ناموفق بود. دوباره تلاش کنید.',
+    retry: 'تلاش مجدد برای ردیف‌های ناموفق',
+  },
   route: {
     dashboard: 'صفحه اول',
     serverManage: 'مدیریت سرور',
@@ -10,12 +21,9 @@ export default {
     modifyPass: 'تغییر رمز عبور',
     system: 'تنظیمات سیستم',
     baseConfig: 'تنظیمات پایه',
-    blackList: 'لیست سیاه',
     emailManage: 'مدیریت ایمیل',
     emailRecord: 'ارسال رکورد',
     profile: 'مرکز شخصی',
-    taskManage: 'مدیریت کارها',
-    taskList: 'فهرست وظیفه یا لیست کار',
     modify: 'اصلاح خواص'
   },
   navbar: {
@@ -23,6 +31,7 @@ export default {
     profile: 'مرکز شخصی',
     github: 'آدرس پروژه',
     doc: 'مستندات پروژه',
+    loggedOutElsewhere: 'در زبانهٔ دیگری از حساب خارج شدید.',
     logout: 'خروج از سیستم'
   },
   login: {
@@ -138,7 +147,6 @@ export default {
     nodeQRCode: 'کد QR ایجاد کنید',
     nodeURL: 'URL را کپی کنید',
     detail: 'جزئیات',
-    blackListIp: 'IP',
     toEmail: 'گیرنده',
     subject: 'موضوع',
     content: 'محتوا',
@@ -153,23 +161,9 @@ export default {
     import: 'وارد كردن',
     export: 'صادرات',
     coverByAccountName: 'اینکه آیا با نام کاربری لغو شود یا نه',
-    coverByNodeServerName: 'اینکه آیا بر اساس نام سرور لغو شود',
+    coverByNodeServerIp: 'بازنویسی سرورها با IP یکسان',
     yes: 'آره',
     no: 'نه',
-    fileTaskName: 'نام',
-    fileTaskType: 'نوع',
-    fileTaskStatus: 'حالت',
-    fileTaskErrMsg: 'پیغام خطا',
-    taskTypeAccountExport: 'صادرات حساب',
-    taskTypeNodeServerExport: 'صادرات سرور',
-    taskTypeAccountImport: 'واردات حساب',
-    taskTypeNodeServerImport: 'واردات سرور',
-    taskFail: 'شکست',
-    taskWait: 'صبر کن',
-    taskDoing: 'در حال پیش رفت',
-    taskSuccess: 'موفقیت',
-    fileTaskAccountUsername: 'موسس',
-    fileTaskDownload: 'دانلود',
     downloadTemplate: 'دانلود قالب',
     deleted: 'غیرفعال کردن',
     fingerprint: 'اثر انگشت',
@@ -414,10 +408,8 @@ export default {
       'آیا مطمئن هستید که ترافیک دانلود و آپلود کاربر را بازنشانی می کنید؟',
     deleteNode: 'آیا مطمئن هستید که این گره را حذف می کنید؟',
     deleteNodeServer: 'آیا مطمئن هستید که می خواهید این سرور را حذف کنید؟',
-    deleteBlack: 'آیا مطمئن هستید که این IP را حذف می کنید؟',
-    taskSubmitSuccess:
-      'کار با موفقیت ارسال شد، لطفاً بعداً آن را در مدیریت کار بررسی کنید',
-    taskDownloadSuccess: 'دانلود با موفقیت',
+    importSuccess: 'وارد کردن موفقیت‌آمیز بود',
+    downloadSuccess: 'دانلود با موفقیت',
     alreadyExists: 'درحال حاضر وجود دارد'
   },
   remark: {

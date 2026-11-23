@@ -2,8 +2,11 @@ package dao
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
+	"trojan-panel/service/clientrouting"
 
 	"trojan-panel/model/constant"
 )
@@ -47,7 +50,15 @@ type RoutingNode struct {
 }
 
 func RoutingNodes() ([]RoutingNode, error) {
-	rows, err := db.Query(`SELECT n.id,n.name,s.id,s.name FROM node n JOIN node_server s ON s.id=n.node_server_id
+	return routingNodes(db)
+}
+
+type routingReader interface {
+	Query(string, ...interface{}) (*sql.Rows, error)
+}
+
+func routingNodes(reader routingReader) ([]RoutingNode, error) {
+	rows, err := reader.Query(`SELECT n.id,n.name,s.id,s.name FROM node n JOIN node_server s ON s.id=n.node_server_id
 		WHERE n.node_type_id NOT IN (?,?) ORDER BY s.name,n.priority DESC,n.id`, constant.TrojanGo, constant.Hysteria)
 	if err != nil {
 		return nil, err
@@ -62,6 +73,65 @@ func RoutingNodes() ([]RoutingNode, error) {
 		nodes = append(nodes, n)
 	}
 	return nodes, rows.Err()
+}
+
+func RoutingNodeServers(nodes []RoutingNode) map[uint]uint {
+	servers := make(map[uint]uint, len(nodes))
+	for _, node := range nodes {
+		servers[node.ID] = node.ServerID
+	}
+	return servers
+}
+
+type RoutingDeleteImpact struct {
+	Empty       string   `json:"empty"`
+	EmptyGroups []string `json:"emptyGroups"`
+	OtherGroups []string `json:"otherGroups"`
+}
+
+func NodeRoutingDeleteImpact(id uint) (RoutingDeleteImpact, error) {
+	impact := RoutingDeleteImpact{EmptyGroups: []string{}, OtherGroups: []string{}}
+	tx, err := db.Begin()
+	if err != nil {
+		return impact, err
+	}
+	defer tx.Rollback()
+	var data []byte
+	err = tx.QueryRow(`SELECT r.snapshot FROM client_routing_state s LEFT JOIN client_routing_release r ON s.release_id=r.id WHERE s.id=1`).Scan(&data)
+	if err != nil || len(data) == 0 {
+		return impact, err
+	}
+	var snapshot clientrouting.Snapshot
+	if err := json.Unmarshal(data, &snapshot); err != nil {
+		return impact, err
+	}
+	nodes, err := routingNodes(tx)
+	if err != nil {
+		return impact, err
+	}
+	servers := RoutingNodeServers(nodes)
+	impact.Empty = snapshot.Empty
+	for _, g := range snapshot.Groups {
+		var affected, remaining bool
+		for _, member := range g.NodeIDs {
+			if servers[member] != g.ServerID {
+				continue
+			}
+			if member == id {
+				affected = true
+			} else {
+				remaining = true
+			}
+		}
+		if affected {
+			if remaining {
+				impact.OtherGroups = append(impact.OtherGroups, g.Name)
+			} else {
+				impact.EmptyGroups = append(impact.EmptyGroups, g.Name)
+			}
+		}
+	}
+	return impact, nil
 }
 
 type RoutingRelease struct {
@@ -131,6 +201,8 @@ func PublishRouting(name string, source, snapshot []byte) (uint, error) {
 	return uint(id), tx.Commit()
 }
 
+var ErrStaleRouting = errors.New("stale routing references")
+
 var ErrActiveRouting = errors.New("活动版本不能删除")
 
 // An ID of zero on activation restores the built-in client templates.
@@ -147,7 +219,23 @@ func ChangeRoutingRelease(id uint, remove bool) error {
 	if remove && id == active {
 		return ErrActiveRouting
 	}
-	if id != 0 {
+	if id != 0 && !remove {
+		var source []byte
+		if err := tx.QueryRow("SELECT source FROM client_routing_release WHERE id=?", id).Scan(&source); err != nil {
+			return err
+		}
+		var p clientrouting.Profile
+		if err := json.Unmarshal(source, &p); err != nil {
+			return err
+		}
+		nodes, err := routingNodes(tx)
+		if err != nil {
+			return err
+		}
+		if err := p.Traffic.CheckMembers(RoutingNodeServers(nodes)); err != nil {
+			return fmt.Errorf("%w: %v", ErrStaleRouting, err)
+		}
+	} else if id != 0 {
 		var found uint
 		if err := tx.QueryRow("SELECT id FROM client_routing_release WHERE id=?", id).Scan(&found); err != nil {
 			return err

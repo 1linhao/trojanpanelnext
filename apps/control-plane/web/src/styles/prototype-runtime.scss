@@ -802,24 +802,6 @@ h3 {
   white-space: nowrap;
 }
 
-.traffic-reset-column {
-  min-width: 190px;
-}
-
-.traffic-reset-column-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.traffic-reset-button {
-  flex: 0 0 auto;
-  white-space: nowrap;
-  letter-spacing: normal;
-  text-transform: none;
-}
-
 .tbl td {
   padding: 12px 14px;
   border-top: 1px solid var(--hairline);
@@ -853,6 +835,16 @@ h3 {
   display: flex;
   gap: 2px;
   justify-content: flex-end;
+}
+
+.tbl .sticky-row-actions {
+  position: sticky;
+  z-index: 1;
+  right: 0;
+  padding-inline: 8px;
+  text-align: right;
+  background: linear-gradient(var(--glass-popover), var(--glass-popover)), var(--bg-base);
+  box-shadow: -4px 0 8px -8px var(--ink);
 }
 
 /* ---------- 工具栏 / 分页 ---------- */
@@ -2139,5 +2131,11 @@ h3 {
   .pagination-container {
     padding-left: 0;
     padding-right: 0;
+  }
+}
+
+@media (max-width: 380px) {
+  .prototype-profile-entry > strong {
+    display: none;
   }
 }

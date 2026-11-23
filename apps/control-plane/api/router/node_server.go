@@ -33,5 +33,6 @@ func initNodeServerRouter(trojanApi *gin.RouterGroup) {
 		nodeServer.POST("/exportNodeServer", api.ExportNodeServer)
 		// 导入服务器
 		nodeServer.POST("/importNodeServer", api.ImportNodeServer)
+		nodeServer.POST("/downloadImportTemplate", api.DownloadNodeServerImportTemplate)
 	}
 }

@@ -61,7 +61,13 @@
     </ui-panel>
 
     <ui-panel motion-key="server-list">
-      <div class="tbl-wrap" v-liquid-loading="listLoading">
+      <div
+        v-liquid-loading="listLoading"
+        class="tbl-wrap"
+        role="region"
+        :aria-label="$t('route.serverList')"
+        tabindex="0"
+      >
         <table class="tbl">
           <thead>
             <tr>
@@ -73,7 +79,7 @@
               <th>Core</th>
               <th>状态</th>
               <th>{{ $t('dashboard.trafficUsed') }}</th>
-              <th class="table-actions">操作</th>
+              <th scope="col" class="sticky-row-actions">{{ $t('table.actions') }}</th>
             </tr>
           </thead>
           <tbody>
@@ -154,56 +160,67 @@
               <td class="mono num">
                 {{ row.trafficStatus ? getFlow(row.trafficStatus.totalUsed) : '—' }}
               </td>
-              <td>
-                <div class="row-actions">
+              <td class="sticky-row-actions">
+                <liquid-action-menu
+                  :label="$t('table.actionsFor', { name: row.name })"
+                >
                   <button
                     v-if="checkPermission(['sysadmin'])"
-                    class="icon-btn"
                     type="button"
+                    role="menuitem"
+                    tabindex="-1"
                     :title="$t('nodeDeployment.title')"
-                    :aria-label="$t('nodeDeployment.title')"
                     @click="handleDeployment(row)"
                   >
-                    <app-icon name="download" />
+                    <app-icon name="download" aria-hidden="true" />
+                    {{ $t('nodeDeployment.title') }}
                   </button>
                   <button
-                    class="icon-btn"
                     type="button"
-                    title="运行状态"
+                    role="menuitem"
+                    tabindex="-1"
+                    :title="$t('table.serverState')"
                     @click="handleDetail(row)"
                   >
-                    <app-icon name="view" />
+                    <app-icon name="view" aria-hidden="true" />
+                    {{ $t('table.serverState') }}
                   </button>
                   <button
                     v-if="checkPermission(['sysadmin'])"
-                    class="icon-btn"
                     type="button"
+                    role="menuitem"
+                    tabindex="-1"
                     :title="$t('kernel.manage')"
-                    :aria-label="$t('kernel.manage')"
                     @click="handleKernelManage(row)"
                   >
-                    <app-icon name="top" />
+                    <app-icon name="top" aria-hidden="true" />
+                    {{ $t('kernel.manage') }}
                   </button>
                   <button
                     v-if="checkPermission(['sysadmin'])"
-                    class="icon-btn"
                     type="button"
-                    title="编辑"
+                    role="menuitem"
+                    tabindex="-1"
+                    :title="$t('table.edit')"
                     @click="handleUpdate(row)"
                   >
-                    <app-icon name="edit" />
+                    <app-icon name="edit" aria-hidden="true" />
+                    {{ $t('table.edit') }}
                   </button>
                   <button
                     v-if="checkPermission(['sysadmin'])"
-                    class="icon-btn danger"
+                    class="danger"
                     type="button"
-                    title="删除"
-                    @click="handleDelete(row)"
+                    role="menuitem"
+                    tabindex="-1"
+                    :title="$t('table.delete')"
                     :disabled="deletingServerId !== 0"
+                    @click="handleDelete(row)"
                   >
-                    <app-icon name="delete" />
+                    <app-icon name="delete" aria-hidden="true" />
+                    {{ $t('table.delete') }}
                   </button>
-                </div>
+                </liquid-action-menu>
               </td>
             </tr>
           </tbody>
@@ -220,24 +237,35 @@
 
     <ui-sheet
       v-if="detailServer"
+      aria-labelledby="server-state-title"
       motion-role="shared"
       :motion-key="'server-' + detailServer.id"
+      @keydown.esc.stop.prevent="closeDetail"
     >
       <div class="card-head">
         <div>
           <span class="kicker">Server State</span>
-          <h2>{{ detailServer.name }} · 运行状态</h2>
+          <h2 id="server-state-title" ref="detailHeading" tabindex="-1">
+            {{ detailServer.name }} · {{ $t('table.serverState') }}
+          </h2>
         </div>
         <button
           class="icon-btn"
           type="button"
-          aria-label="关闭服务器详情"
-          @click="detailServer = null"
+          :aria-label="$t('serverState.close')"
+          @click="closeDetail"
         >
           <app-icon name="close" />
         </button>
       </div>
-      <div class="server-detail-layout">
+      <p v-if="detailLoading" role="status">{{ $t('serverState.loading') }}</p>
+      <div v-else-if="!detailState">
+        <p role="alert">{{ $t('serverState.loadFailed') }}</p>
+        <button class="cap small" type="button" @click="loadDetail(detailServer)">
+          {{ $t('serverState.retry') }}
+        </button>
+      </div>
+      <div v-else class="server-detail-layout">
         <div class="rings-row">
           <div
             v-for="ring in [
@@ -354,7 +382,7 @@
     <import-tip
       ref="importTip"
       :dialog-form-visible.sync="importVisible"
-      :label="$t('table.coverByNodeServerName')"
+      :label="$t('table.coverByNodeServerIp')"
       :import-data="importData"
       :download-template="downloadTemplate"
     />
@@ -364,6 +392,7 @@
 <script>
 import { timeStampToDate } from '@/utils'
 import Pagination from '@/components/Pagination'
+import LiquidActionMenu from '@/components/LiquidActionMenu'
 import ImportTip from '@/components/ImportTip'
 import latestListRequest from '@/mixins/latest-list-request'
 import { MessageBox } from '@/utils/liquid-feedback'
@@ -371,6 +400,7 @@ import checkPermission from '@/utils/permission'
 import {
   deleteNodeServerById,
   uninstallNodeServerById,
+  downloadNodeServerImportTemplate,
   exportNodeServer,
   importNodeServer,
   selectNodeServerPage,
@@ -379,12 +409,11 @@ import {
 } from '@/api/node-server'
 import NodeServerForm from '@/views/node-server/list/compoments/NodeServerForm'
 import NodeServerDeployment from '@/views/node-server/list/compoments/NodeServerDeployment'
-import { downloadTemplate } from '@/api/file-task'
 import { getFlow } from '@/utils/account'
 
 export default {
   name: 'NodeServer',
-  components: { NodeServerForm, NodeServerDeployment, Pagination, ImportTip },
+  components: { NodeServerForm, NodeServerDeployment, Pagination, ImportTip, LiquidActionMenu },
   mixins: [latestListRequest],
   data() {
     return {
@@ -426,7 +455,8 @@ export default {
       deleteServer: null,
       deploymentServer: null,
       detailServer: null,
-      detailState: { cpuUsed: 0, memUsed: 0, diskUsed: 0 }
+      detailLoading: false,
+      detailState: null
     }
   },
   created() {
@@ -434,6 +464,9 @@ export default {
   },
   mounted() {
     this.openRegistrationFromRoute()
+  },
+  beforeDestroy() {
+    this.detailRequest?.abort()
   },
   watch: {
     '$route.query.action'() {
@@ -627,14 +660,41 @@ export default {
       this.$refs.nodeServerForm.clearValidate()
     },
     handleDetail(row) {
-      if (this.detailServer && this.detailServer.id === row.id) {
-        this.detailServer = null
+      if (this.detailServer?.id === row.id && this.detailState) {
+        this.closeDetail()
         return
       }
-      nodeServerState({ id: row.id }).then(({ data }) => {
-        this.detailServer = row
-        this.detailState = data
+      this.detailTrigger = document.activeElement
+      this.loadDetail(row)
+    },
+    async loadDetail(row) {
+      this.detailRequest?.abort()
+      const controller = new AbortController()
+      this.detailRequest = controller
+      this.detailServer = row
+      this.detailState = null
+      this.detailLoading = true
+      this.$nextTick(() => {
+        if (controller.signal.aborted) return
+        this.$refs.detailHeading.focus({ preventScroll: true })
+        this.$refs.detailHeading.scrollIntoView({ block: 'start', inline: 'nearest' })
       })
+      try {
+        const { data } = await nodeServerState({ id: row.id }, controller.signal)
+        if (!controller.signal.aborted) this.detailState = data
+      } catch (_) {
+        // The selected sheet displays the retry action when there is no result.
+      } finally {
+        if (!controller.signal.aborted) this.detailLoading = false
+      }
+    },
+    closeDetail() {
+      this.detailRequest?.abort()
+      this.detailRequest = null
+      this.detailServer = null
+      this.detailState = null
+      this.detailLoading = false
+      this.$nextTick(() => this.detailTrigger?.focus())
     },
     handleKernelManage(row) {
       this.$router.push({
@@ -653,9 +713,10 @@ export default {
       formData.append('cover', this.$refs.importTip.temp.cover)
       await importNodeServer(formData)
       this.importVisible = false
+      this.getList()
       this.$notify({
         title: 'Success',
-        message: this.$t('confirm.taskSubmitSuccess'),
+        message: this.$t('confirm.importSuccess'),
         type: 'success',
         duration: 2000
       })
@@ -665,37 +726,17 @@ export default {
       this.importVisible = true
     },
     handleExport() {
-      exportNodeServer().then(() => {
-        this.importVisible = false
-        this.$notify({
-          title: 'Success',
-          message: this.$t('confirm.taskSubmitSuccess'),
-          type: 'success',
-          duration: 2000
-        })
-      })
+      return exportNodeServer().then(this.notifyDownload)
     },
     downloadTemplate() {
-      downloadTemplate({ id: 2 }).then((res) => {
-        // 将二进制文件转化为可访问的url
-        const blob = new Blob([res.data], {
-          type: 'application/octet-stream'
-        })
-        let url = window.URL.createObjectURL(blob)
-        let a = document.createElement('a')
-        document.body.appendChild(a)
-        a.href = url
-        let dis = res.headers['content-disposition']
-        a.download = dis.split('attachment; filename=')[1]
-        // 模拟点击下载
-        a.click()
-        window.URL.revokeObjectURL(url)
-        this.$notify({
-          title: 'Success',
-          message: this.$t('confirm.taskDownloadSuccess'),
-          type: 'success',
-          duration: 2000
-        })
+      return downloadNodeServerImportTemplate().then(this.notifyDownload)
+    },
+    notifyDownload() {
+      this.$notify({
+        title: 'Success',
+        message: this.$t('confirm.downloadSuccess'),
+        type: 'success',
+        duration: 2000
       })
     }
   }
@@ -742,5 +783,11 @@ export default {
 }
 .row-actions .liquid-button {
   margin-left: 0;
+}
+#server-state-title {
+  scroll-margin-top: 88px;
+}
+.server-detail-layout {
+  align-items: flex-start;
 }
 </style>

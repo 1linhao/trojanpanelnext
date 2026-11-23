@@ -40,7 +40,7 @@ type AccountCreateDto struct {
 type AccountUpdateDto struct {
 	RequiredIdDto
 	Remark     *string `json:"remark" form:"remark" validate:"omitempty,max=500"`
-	Quota      *int    `json:"quota" form:"quota" validate:"required,gte=-1,lte=1024000"`
+	Quota      *int    `json:"quota" form:"quota" validate:"omitempty,gte=-1,lte=1024000"`
 	Username   *string `json:"username" form:"username" validate:"required,min=0,max=20,validateStr"`
 	Pass       *string `json:"pass" form:"pass" validate:"omitempty,min=6,max=20,validateStr"`
 	RoleId     *uint   `json:"roleId" form:"roleId" validate:"required,oneof=1 2 3"`

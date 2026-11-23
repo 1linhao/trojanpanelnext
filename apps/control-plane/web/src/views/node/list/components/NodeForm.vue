@@ -530,32 +530,6 @@ export default {
             trigger: ['change', 'blur']
           }
         ],
-        'xraySettingsEntity.accounts[0].user': [
-          {
-            required: true,
-            message: this.$t('valid.xraySocksUser'),
-            trigger: ['change', 'blur']
-          },
-          {
-            min: 2,
-            max: 64,
-            message: this.$t('valid.xraySocksUserRange'),
-            trigger: ['change', 'blur']
-          }
-        ],
-        'xraySettingsEntity.accounts[0].pass': [
-          {
-            required: true,
-            message: this.$t('valid.xraySocksPass'),
-            trigger: ['change', 'blur']
-          },
-          {
-            min: 2,
-            max: 64,
-            message: this.$t('valid.xraySocksPassRange'),
-            trigger: ['change', 'blur']
-          }
-        ],
         'xrayStreamSettingsEntity.network': [
           {
             validator: validateXrayStreamSettingsEntityNetwork,
@@ -952,32 +926,6 @@ export default {
           {
             required: true,
             message: this.$t('valid.xraySocksUdp'),
-            trigger: ['change', 'blur']
-          }
-        ],
-        'xraySettingsEntity.accounts[0].user': [
-          {
-            required: true,
-            message: this.$t('valid.xraySocksUser'),
-            trigger: ['change', 'blur']
-          },
-          {
-            min: 2,
-            max: 64,
-            message: this.$t('valid.xraySocksUserRange'),
-            trigger: ['change', 'blur']
-          }
-        ],
-        'xraySettingsEntity.accounts[0].pass': [
-          {
-            required: true,
-            message: this.$t('valid.xraySocksPass'),
-            trigger: ['change', 'blur']
-          },
-          {
-            min: 2,
-            max: 64,
-            message: this.$t('valid.xraySocksPassRange'),
             trigger: ['change', 'blur']
           }
         ],

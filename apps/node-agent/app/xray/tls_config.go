@@ -62,6 +62,10 @@ func withoutServerAllowInsecure(data []byte) ([]byte, bool, error) {
 }
 
 func migrateServerTLSConfig(path string) error {
+	return migrateConfig(path, withoutServerAllowInsecure)
+}
+
+func migrateConfig(path string, transform func([]byte) ([]byte, bool, error)) error {
 	info, err := os.Lstat(path)
 	if err != nil {
 		return err
@@ -73,9 +77,9 @@ func migrateServerTLSConfig(path string) error {
 	if err != nil {
 		return err
 	}
-	migrated, changed, err := withoutServerAllowInsecure(original)
+	migrated, changed, err := transform(original)
 	if err != nil {
-		return fmt.Errorf("migrate Xray server TLS config %s: %w", path, err)
+		return fmt.Errorf("migrate Xray config %s: %w", path, err)
 	}
 	if !changed {
 		return nil
@@ -112,7 +116,7 @@ func migrateServerTLSConfig(path string) error {
 		return err
 	}
 	if !os.SameFile(info, currentInfo) || info.Mode() != currentInfo.Mode() || !bytes.Equal(current, original) {
-		return fmt.Errorf("Xray config %s changed during TLS migration", path)
+		return fmt.Errorf("Xray config %s changed during migration", path)
 	}
 	return os.Rename(file.Name(), path)
 }

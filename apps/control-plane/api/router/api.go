@@ -15,9 +15,7 @@ func initApiRouter(router *gin.Engine) {
 		initNodeRouter(trojanApi)
 		initNodeTypeRouter(trojanApi)
 		initSystemRouter(trojanApi)
-		initBlackListRouter(trojanApi)
 		initEmailRecordRouter(trojanApi)
-		initFileTaskRouter(trojanApi)
 		initKernelUpgradeRouter(trojanApi)
 		initNodeContainerRouter(trojanApi)
 	}
