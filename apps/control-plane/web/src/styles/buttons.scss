@@ -77,6 +77,7 @@
 .liquid-tabs button,
 .liquid-code-editor__toolbar button,
 .liquid-palette-picker__menu button,
+.liquid-action-menu__popup [role='menuitem'],
 .liquid-select__option {
   min-height: 32px;
   padding: 0 13px;
@@ -104,6 +105,7 @@
   .liquid-tabs button:hover:not(:disabled):not(.on),
   .liquid-code-editor__toolbar button:hover:not(:disabled),
   .liquid-palette-picker__menu button:hover:not(:disabled),
+  .liquid-action-menu__popup [role='menuitem']:hover:not(:disabled),
   .liquid-select__option:hover:not(:disabled) {
     background: var(--ui-navigation-item-hover-bg);
   }
@@ -112,6 +114,7 @@
 .liquid-tabs button:disabled,
 .liquid-code-editor__toolbar button:disabled,
 .liquid-palette-picker__menu button:disabled,
+.liquid-action-menu__popup [role='menuitem']:disabled,
 .liquid-select__option:disabled {
   cursor: not-allowed;
   opacity: 0.5;

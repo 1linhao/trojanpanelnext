@@ -48,7 +48,7 @@
       ref="menu"
       :id="`liquid-select-menu-${_uid}`"
       @keydown="handleMenuKeydown"
-      class="liquid-select__menu"
+      class="liquid-select__menu liquid-menu-surface"
       popover="manual"
       :style="menuStyle"
       role="listbox"
@@ -357,32 +357,8 @@ export default {
   background: var(--neutral-bg);
 }
 .liquid-select__menu {
-  --liquid-select-counterstroke: color-mix(
-    in srgb,
-    var(--bg-base) 88%,
-    transparent
-  );
   position: fixed;
   z-index: 5000;
-  box-sizing: border-box;
-  margin: 0;
-  padding: 7px;
-  border: 1px solid var(--rim);
-  border-radius: var(--r-md);
-  color: var(--ink);
-  background: linear-gradient(
-      150deg,
-      var(--spec-soft),
-      transparent 46%
-    ),
-    var(--glass);
-  box-shadow: var(--shadow), inset 0 1px 0 var(--spec),
-    inset 0 -1px 0 var(--spec-soft);
-  -webkit-backdrop-filter: var(--ui-backdrop-surface);
-  backdrop-filter: var(--ui-backdrop-surface);
-  -webkit-text-stroke: 0.25px var(--liquid-select-counterstroke);
-  paint-order: stroke fill;
-  text-shadow: 0 0 0.45px var(--liquid-select-counterstroke);
   overflow: hidden;
 }
 .liquid-select__search-wrap {
@@ -408,8 +384,8 @@ export default {
   font: inherit;
 }
 .liquid-select__search::placeholder {
-  -webkit-text-stroke: 0.25px var(--liquid-select-counterstroke);
-  text-shadow: 0 0 0.45px var(--liquid-select-counterstroke);
+  -webkit-text-stroke: 0.25px var(--liquid-menu-counterstroke);
+  text-shadow: 0 0 0.45px var(--liquid-menu-counterstroke);
 }
 .liquid-select__options {
   max-height: 258px;

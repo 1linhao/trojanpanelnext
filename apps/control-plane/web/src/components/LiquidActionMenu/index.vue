@@ -1,24 +1,22 @@
 <template>
   <div class="row-actions">
-    <button
+    <liquid-button
       ref="trigger"
-      class="icon-btn liquid-action-menu__trigger"
-      type="button"
+      class="liquid-action-menu__trigger"
+      icon="arrow-down"
       :title="$t('table.actions')"
       :aria-label="label"
       :aria-controls="menuId"
       :aria-expanded="String(open)"
       aria-haspopup="menu"
       @click="toggleMenu"
-      @keydown.down.prevent="openMenu(false)"
-      @keydown.up.prevent="openMenu(true)"
-    >
-      <app-icon name="arrow-down" aria-hidden="true" />
-    </button>
+      @keydown.native.down.prevent="openMenu(false)"
+      @keydown.native.up.prevent="openMenu(true)"
+    />
     <div
       :id="menuId"
       ref="menu"
-      class="liquid-action-menu__popup"
+      class="liquid-action-menu__popup liquid-menu-surface"
       popover="auto"
       role="menu"
       :aria-label="label"
@@ -56,7 +54,7 @@ export default {
       if (this.open) return
       const { menu, trigger } = this.$refs
       this.open = true
-      menu.showPopover({ source: trigger })
+      menu.showPopover({ source: trigger.$el })
       this.updatePosition()
       if (!this.open) return
       window.addEventListener('scroll', this.updatePosition, true)
@@ -68,7 +66,7 @@ export default {
       if (!this.open) return
       this.$refs.menu.hidePopover()
       this.stopTracking()
-      if (restoreFocus) this.$refs.trigger.focus({ preventScroll: true })
+      if (restoreFocus) this.$refs.trigger.$el.focus({ preventScroll: true })
     },
     stopTracking() {
       this.open = false
@@ -79,7 +77,8 @@ export default {
       if (!this.$refs.menu.matches(':popover-open')) this.stopTracking()
     },
     updatePosition() {
-      const { menu, trigger } = this.$refs
+      const { menu } = this.$refs
+      const trigger = this.$refs.trigger.$el
       const anchor = trigger.getBoundingClientRect()
       const scrollArea = trigger.closest('.tbl-wrap')?.getBoundingClientRect()
       const { clientWidth, clientHeight } = document.documentElement
@@ -127,27 +126,26 @@ export default {
 </script>
 
 <style scoped>
-.liquid-action-menu__trigger {
-  width: 40px;
-  height: 40px;
+.liquid-action-menu__trigger ::v-deep .app-icon {
+  transition: transform var(--ui-motion-fast) var(--ui-motion-easing-standard);
+}
+
+.liquid-action-menu__trigger[aria-expanded='true'] {
+  color: var(--accent);
+  background: var(--glass-strong);
+}
+
+.liquid-action-menu__trigger[aria-expanded='true'] ::v-deep .app-icon {
+  transform: rotate(180deg);
 }
 
 .liquid-action-menu__popup {
   position: fixed;
   inset: auto;
-  box-sizing: border-box;
   min-width: 160px;
   max-width: calc(100vw - 24px);
-  margin: 0;
-  padding: 5px;
   overflow: auto;
   overscroll-behavior: contain;
-  border: 1px solid var(--rim);
-  border-radius: 14px;
-  color: var(--ink);
-  background: var(--glass-popover);
-  box-shadow: var(--shadow-soft);
-  backdrop-filter: var(--ui-backdrop-surface);
 }
 
 .liquid-action-menu__popup ::v-deep [role='menuitem'] {
@@ -156,27 +154,8 @@ export default {
   gap: 8px;
   width: 100%;
   min-height: 38px;
-  padding: 6px 10px;
-  border: 0;
-  border-radius: 9px;
-  color: inherit;
-  background: transparent;
-  font: inherit;
+  padding: 8px 11px;
   text-align: left;
-  cursor: pointer;
-}
-
-.liquid-action-menu__popup ::v-deep [role='menuitem'] .app-icon {
-  flex: 0 0 auto;
-}
-
-.liquid-action-menu__popup ::v-deep [role='menuitem']:enabled:is(:hover, :focus-visible) {
-  background: var(--control-fill);
-}
-
-.liquid-action-menu__popup ::v-deep [role='menuitem']:disabled {
-  opacity: 0.55;
-  cursor: default;
 }
 
 .liquid-action-menu__popup ::v-deep [role='menuitem'].danger {

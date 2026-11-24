@@ -58,6 +58,25 @@ body {
   color: var(--accent);
 }
 
+.liquid-menu-surface {
+  --liquid-menu-counterstroke: color-mix(in srgb, var(--bg-base) 88%, transparent);
+  box-sizing: border-box;
+  margin: 0;
+  padding: 7px;
+  border: 1px solid var(--rim);
+  border-radius: var(--r-md);
+  color: var(--ink);
+  background: linear-gradient(150deg, var(--spec-soft), transparent 46%),
+    var(--glass);
+  box-shadow: var(--shadow), inset 0 1px 0 var(--spec),
+    inset 0 -1px 0 var(--spec-soft);
+  -webkit-backdrop-filter: var(--ui-backdrop-surface);
+  backdrop-filter: var(--ui-backdrop-surface);
+  -webkit-text-stroke: 0.25px var(--liquid-menu-counterstroke);
+  paint-order: stroke fill;
+  text-shadow: 0 0 0.45px var(--liquid-menu-counterstroke);
+}
+
 @media (max-width: 992px) {
   #app .app-container,
   #app .dashboard-container {
