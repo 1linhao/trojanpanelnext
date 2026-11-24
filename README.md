@@ -62,7 +62,7 @@
 
 1. 在防火墙中允许 Node VPS 访问 Web VPS 的 TCP `9507`、`6378`，允许 Web VPS 访问 Node VPS 的 TCP `8100`、`8101`。Node 使用 Caddy 签证时对公网开放 TCP `80`。 [网络要求](docs/deployment.md#network)
 2. 在面板打开 **服务器管理 → 新增 Node 服务器**。填写 2–20 个字符的**服务器名称**，**Node 连接地址**填写 Web 能访问的 Node 地址，**gRPC 端口**填 `8100`，**gRPC 证书域名**填 Node 域名。
-3. 保存后，在 **部署 Node** 向导选择 **Caddy 自动签发与续签** 并填邮箱。若向导已关闭，可从该服务器的操作菜单重新打开。**Node 可连接的 Web 地址**填写 Node 能访问的面板域名或 Web 私网地址。点 **下一步 → 下载部署包**，上传到 Node VPS 的管理员私有目录。
+3. 保存后，在 **部署 Node** 向导选择 **Caddy 自动签发与续签** 并填邮箱。若向导已关闭，在该服务器行点击 **部署 Node**，按钮折叠时先展开 **操作**。**Node 可连接的 Web 地址**填写 Node 能访问的面板域名或 Web 私网地址。点 **下一步 → 下载部署包**，上传到 Node VPS 的管理员私有目录。
 
 <a id="quick-install-colocated"></a>
 ### 2B. 单机部署，在面板登记本机 Node
